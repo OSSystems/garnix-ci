@@ -24,7 +24,6 @@ import Garnix.Build.Types (derivation)
 import Garnix.BuildLogs.Types (LogLine (LogLine))
 import Garnix.DB qualified as DB
 import Garnix.Duration
-import Garnix.Entitlements (addDefaultEntitlements, hasRemainingCiTime, setExtraUsageLimits)
 import Garnix.Monad
 import Garnix.Monad.Async (resolve)
 import Garnix.Nix.Types qualified as Nix
@@ -46,6 +45,7 @@ import Network.Wai (Application, getRequestBodyChunk, responseLBS)
 import Network.Wai.Handler.Warp (testWithApplication)
 import Network.Wai.Handler.Warp qualified as Warp
 import System.Directory (copyFile, createDirectoryIfMissing)
+import System.Environment (setEnv, unsetEnv)
 import System.Random
 import Test.HUnit
 import Test.Hspec hiding (shouldReturn)
@@ -626,43 +626,6 @@ spec = do
             build <- fromSingleton <$> DB.getBuilds user
             void $ getBuild' Nothing (build ^. id)
 
-      it "returns an error if a user has exhausted their quota" $ do
-        -- FIXME: This currently does not get reported to the user
-        let flake = "{ outputs = {self}: { packages = {}; }; }"
-        GH.withFakeGithubInterface $ \ghState -> do
-          GH.withLocalRepo ghState "owner" "repo" identity defaultCommitInfo (GH.simpleSetup flake) $ \commitInfo -> do
-            useUpAllBuildQuota "owner"
-            result <- try $ testHandleCommit commitInfo
-            (result & _Left %~ err) `shouldBeM` Left (EntitlementError "You have exhausted your monthly CI quota")
-
-      it "notifies the user when the CI minutes quota is exhausted" $ do
-        let flake = "{ outputs = {self}: { packages = {}; }; }"
-        GH.withFakeGithubInterface $ \ghState -> do
-          GH.withLocalRepo ghState "owner" "repo" identity defaultCommitInfo (GH.simpleSetup flake) $ \commitInfo -> do
-            useUpAllBuildQuota "owner"
-            void . try $ testHandleCommit commitInfo
-            logs <- GH.getAllReportLogs ghState
-            logs `shouldContainM` ["You have exhausted your monthly CI quota\n"]
-
-      it "allows builds to be comped" $ do
-        let flake = "{ outputs = {self}: { packages = {}; }; }"
-        GH.withFakeGithubInterface $ \ghState -> do
-          GH.withLocalRepo ghState "owner" "repo" identity defaultCommitInfo (GH.simpleSetup flake) $ \commitInfo -> do
-            useUpAllBuildQuota "owner"
-            compAllUserBuilds "owner"
-            testHandleCommit commitInfo
-
-      it "respects the extra ci minutes if all plan minutes are used" $ do
-        let flake = "{ outputs = {self}: { packages = {}; }; }"
-        GH.withFakeGithubInterface $ \ghState -> do
-          user <- DB.newUser (GhLogin "owner") "owner@owner.com" FreeSubscription True
-          GH.withLocalRepo ghState "owner" "repo" identity defaultCommitInfo (GH.simpleSetup flake) $ \commitInfo -> do
-            useUpAllBuildQuota "owner"
-            setExtraUsageLimits "owner" (emptyUsageLimits & #ciTime .~ fromHours @Int 3)
-            testHandleCommit commitInfo
-            build <- fromSingleton <$> DB.getBuilds user
-            (build ^. status) `shouldBeM` Just Success
-
       it "does not log Critical errors when building src derivations" $ do
         let flake =
               cs
@@ -700,13 +663,11 @@ spec = do
                   }|]
         GH.withFakeGithubInterface $ \ghState -> do
           GH.withLocalRepo ghState "owner" "repo" identity defaultCommitInfo (GH.simpleSetup flake) $ \commitInfo -> do
-            useUpAllBuildQuota "owner"
-            result <- try $ testHandleCommit commitInfo
+            testHandleCommit commitInfo
             calls <- getMockCalls #s3CacheUploadMock
-            liftIO $ map (_1 .~ ()) calls `shouldBe` []
-            (result & _Left %~ err) `shouldBeM` Left (EntitlementError "You have exhausted your monthly CI quota")
+            liftIO $ length calls `shouldBe` 1
 
-      it "returns an error if the flake has more than 100 packages" $ do
+      it "returns an error if the flake exceeds the configured package limit" $ do
         let flake =
               cs
                 [i|
@@ -722,71 +683,15 @@ spec = do
                           if count == 0 then {}
                           else { "pkg${toString count}" = someDrv; } // mkPkgs (count - 1);
                       in
-                        { packages.x86_64-linux = mkPkgs 101; };
+                        { packages.x86_64-linux = mkPkgs 3; };
                   }
                 |]
+        liftIO $ setEnv "GARNIX_MAX_PACKAGES_PER_FLAKE" "2"
         GH.withFakeGithubInterface $ \ghState -> do
           GH.withLocalRepo ghState "owner" "repo" identity defaultCommitInfo (GH.simpleSetup flake) $ \commitInfo -> do
             result <- try $ testHandleCommit commitInfo
-            (result & _Left %~ err) `shouldBeM` Left (OtherError "Number of packages too large. Maximum is 100, you have 101")
-
-      it "builds more than 100 packages if the entitlements allow it @slow" $ do
-        withTestEntitlement "test" (maximumPackagesPerFlake .~ 110) "mock-user" $ do
-          let flake =
-                cs
-                  [i|
-                    {
-                      outputs = {self}:
-                        let
-                          someDrv = derivation {
-                            name = "some-pkg";
-                            builder = "/bin/bash";
-                            system = "x86_64-linux";
-                          };
-                          mkPkgs = count:
-                            if count == 0 then {}
-                            else { "pkg${toString count}" = someDrv; } // mkPkgs (count - 1);
-                        in
-                          { packages.x86_64-linux = mkPkgs 110; };
-                    }
-                  |]
-          GH.withFakeGithubInterface $ \ghState -> do
-            let commitInfo =
-                  defaultCommitInfo
-                    & Garnix.Types.reqUser .~ "mock-user"
-                    & repoInfo . ghRepoOwner .~ "mock-user"
-            GH.withLocalRepo ghState "mock-user" "repo" identity commitInfo (GH.simpleSetup flake) $ \commitInfo -> do
-              result <- try $ testHandleCommit commitInfo
-              (result & _Left %~ err) `shouldBeM` Right ()
-
-      it "shows the correct limit with custom package limit entitlements" $ do
-        withTestEntitlement "test" (maximumPackagesPerFlake .~ 115) "mock-user" $ do
-          let flake =
-                cs
-                  [i|
-                    {
-                      outputs = {self}:
-                        let
-                          someDrv = derivation {
-                            name = "some-pkg";
-                            builder = "/bin/bash";
-                            system = "x86_64-linux";
-                          };
-                          mkPkgs = count:
-                            if count == 0 then {}
-                            else { "pkg${toString count}" = someDrv; } // mkPkgs (count - 1);
-                        in
-                          { packages.x86_64-linux = mkPkgs 116; };
-                    }
-                  |]
-          GH.withFakeGithubInterface $ \ghState -> do
-            let commitInfo =
-                  defaultCommitInfo
-                    & Garnix.Types.reqUser .~ "mock-user"
-                    & repoInfo . ghRepoOwner .~ "mock-user"
-            GH.withLocalRepo ghState "mock-user" "repo" identity commitInfo (GH.simpleSetup flake) $ \commitInfo -> do
-              result <- try $ testHandleCommit commitInfo
-              (result & _Left %~ err) `shouldBeM` Left (OtherError "Number of packages too large. Maximum is 115, you have 116")
+            liftIO $ unsetEnv "GARNIX_MAX_PACKAGES_PER_FLAKE"
+            (result & _Left %~ err) `shouldBeM` Left (OtherError "Number of packages too large. Maximum is 2, you have 3")
 
       it "updates github" $ GH.withFakeGithubInterface $ \ghState -> do
         let flake =
@@ -860,7 +765,7 @@ spec = do
       let mockBuildPkg mResult =
             withMock
               #buildPkgMock
-              ( \(_, _, _, _, _, _, b) -> do
+              ( \(_, _, _, _, _, b) -> do
                   st <- mResult
                   pure $ b & status ?~ st
               )
@@ -1210,15 +1115,6 @@ testHandleCommit :: CommitInfo -> M ()
 testHandleCommit commitInfo = do
   let reporter = mkGithubReporter (commitInfo ^. repoInfo) (commitInfo ^. commit) <> openSearchReporter
   resolve =<< handleCommit reporter True commitInfo
-
-useUpAllBuildQuota :: GhRepoOwner -> M ()
-useUpAllBuildQuota owner = do
-  addDefaultEntitlements owner
-  ended <- liftIO getCurrentTime
-  let started = subTime (fromHours @Int 2) ended
-  _ <- testBuild ((repoUser .~ "owner") . (startTime .~ started) . (endTime ?~ ended))
-  hasCiTime <- hasRemainingCiTime owner
-  if not hasCiTime then pure () else useUpAllBuildQuota owner
 
 shouldMatchOnce ::
   (HasCallStack) =>

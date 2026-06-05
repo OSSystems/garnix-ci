@@ -16,6 +16,7 @@ import Garnix.BuildLogs
 import Garnix.BuildLogs.Types (LogLine (LogLine), mkLogLine)
 import Garnix.DB qualified as DB
 import Garnix.Duration
+import Garnix.Limits qualified as Limits
 import Garnix.Monad
 import Garnix.Monad.Concurrency
 import Garnix.Monad.Metrics
@@ -28,8 +29,8 @@ import Garnix.Sandbox
 import Garnix.Types as Types
 import System.Random (randomIO)
 
-doBuild :: Maybe FodChecker -> RunReporter -> BuildKind -> FlakeDir -> RepoConfig -> ProductPlan -> Build -> M Build
-doBuild fodChecker runReporter buildKind flakeDir repoConfig plan initialBuild = do
+doBuild :: Maybe FodChecker -> RunReporter -> BuildKind -> FlakeDir -> RepoConfig -> Build -> M Build
+doBuild fodChecker runReporter buildKind flakeDir repoConfig initialBuild = do
   attr <- localAttr flakeDir (attribute initialBuild)
   withMessage ("Running build for " <> attr) $ do
     withSpan (initialBuild ^. id, initialBuild ^. packageType, initialBuild ^. system, initialBuild ^. package) $ do
@@ -50,7 +51,7 @@ doBuild fodChecker runReporter buildKind flakeDir repoConfig plan initialBuild =
 
     runBuild :: M Build
     runBuild = do
-      build <- buildPkg fodChecker runReporter buildKind flakeDir repoConfig plan initialBuild <?> "Starting build"
+      build <- buildPkg fodChecker runReporter buildKind flakeDir repoConfig initialBuild <?> "Starting build"
       persistence <- getPersistenceName flakeDir build
       let updatedBuild = build & persistenceName .~ persistence
       reportBuildResult runReporter updatedBuild <?> "Reporting final build result"
@@ -96,17 +97,16 @@ buildPkg ::
   BuildKind ->
   FlakeDir ->
   RepoConfig ->
-  ProductPlan ->
   Build ->
   M Build
-buildPkg = curry7
+buildPkg = curry6
   $ mockable #buildPkgMock
-  $ \(fodChecker, runReporter, buildKind, flakeDir, repoConfig, productPlan, build) -> do
+  $ \(fodChecker, runReporter, buildKind, flakeDir, repoConfig, build) -> do
     incrementEvent #packageBuildsAttempted
     cacheDir <- getNixXdgCacheDir
     attr <- localAttr flakeDir . addNixosExtension . attribute $ build
     workingDir <- view #workingDir
-    evalRes <- evaluateAttribute repoConfig productPlan cacheDir workingDir build attr
+    evalRes <- evaluateAttribute repoConfig cacheDir workingDir build attr
     case evalRes of
       Right evaluationResult -> do
         let drvPath' = evaluationResult ^. #derivation
@@ -120,7 +120,7 @@ buildPkg = curry7
                 & status ?~ Success
                 & alreadyBuilt ?~ True
             else do
-              let builder = runNixBuild runReporter productPlan cacheDir workingDir build drvPath'
+              let builder = runNixBuild runReporter cacheDir workingDir build drvPath'
               status' <- withAsync builder $ \q -> do
                 abortOnCancellation build q
               log Informational "buildPkg: build finished, checking status"
@@ -225,18 +225,19 @@ abortOnCancellation build builder = do
       Left status -> status
       Right _ -> Cancelled
 
-runNixBuild :: RunReporter -> ProductPlan -> String -> FilePath -> Build -> DrvPath -> M Status
-runNixBuild runReporter productPlan cacheDir workingDir build drvPath = do
+runNixBuild :: RunReporter -> String -> FilePath -> Build -> DrvPath -> M Status
+runNixBuild runReporter cacheDir workingDir build drvPath = do
   nixConfig <- view #userNixConfig
   log Informational $ "runNixBuild: using nixConfig '" <> show nixConfig <> "'"
   processor <- buildInternalLogProcessor (reportLogs runReporter) <$> mkInternalLogProcessorState <?> "runNixBuild: buildInternalLogProcessor"
   -- This is a unique ID for the outlink (which is stored in the working dir) so
   -- that nothing gets garbage collected until the working dir is.
   uuid :: UUID <- randomIO
+  buildTimeoutDuration <- liftIO Limits.buildTimeout
   mExitCode <-
     withTextSpan ("phase", "build") $ do
       withUtf8LinesStream processor $ \logHandle -> do
-        timeout (fromMinutes $ productPlan ^. packageBuildTimeout)
+        timeout buildTimeoutDuration
           $ (>>= run)
           $ cmd "comment"
           & addArgs

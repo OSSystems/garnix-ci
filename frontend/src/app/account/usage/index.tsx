@@ -1,6 +1,5 @@
 "use client";
 import { P, match } from "ts-pattern";
-import Image from "next/image";
 import { Text } from "@/components/text";
 import { useLoading } from "@/hooks/useLoading";
 import { getAccountUsage } from "@/services/account";
@@ -9,7 +8,6 @@ import { Err, Ok } from "@/services";
 import { Table } from "@/components/table";
 import { Berlin } from "@/utils/fonts";
 import { Link } from "@/components/link";
-import arrowRight from "@/components/icons/arrow-right.svg";
 import { Loading } from "@/components/loading";
 import styles from "./styles.module.css";
 
@@ -22,23 +20,21 @@ export const UsageComponent = () => {
         <thead>
           <tr>
             <th>Organization</th>
-            <th>Plan</th>
-            <th>CI minutes (used{nonBreakingSlash}max)</th>
-            <th>PR deployment minutes (used{nonBreakingSlash}max)</th>
+            <th>CI minutes</th>
           </tr>
         </thead>
         <tbody>
           {match(usage)
             .with({ loading: true }, () => (
               <tr>
-                <td colSpan={5}>
+                <td colSpan={2}>
                   <Loading />
                 </td>
               </tr>
             ))
             .with({ data: Err(P.select()) }, (error) => (
               <tr>
-                <td colSpan={5}>
+                <td colSpan={2}>
                   <Text className={styles.error}>
                     Sorry, there was an error!
                   </Text>
@@ -50,35 +46,14 @@ export const UsageComponent = () => {
             ))
             .with({ data: Ok(P.select()) }, (usage) => (
               <>
-                {Object.entries(usage.byOrg).map(([name, usage]) => {
-                  return (
-                    <tr key={name}>
-                      <td>
-                        <Link href={`https://github.com/${name}`}>{name}</Link>
-                      </td>
-                      <td>{usage.plan ? usage.plan.display_name : "-"}</td>
-                      <td>
-                        {formatMinutes(usage.ci_time)}
-                        {nonBreakingSlash}
-                        {formatMinutes(usage.plan.base_ci_time)}
-                      </td>
-                      <td>
-                        {formatMinutes(usage.pr_deployment_time)}
-                        {nonBreakingSlash}
-                        {formatMinutes(usage.plan.maximum_pr_deployment_time)}
-                      </td>
-                      <td>
-                        <Link
-                          className={styles.manageButton}
-                          href={`/account/gh/${name}`}
-                          title="Manage organization"
-                        >
-                          <Image src={arrowRight} alt="Manage organization" />
-                        </Link>
-                      </td>
-                    </tr>
-                  );
-                })}
+                {Object.entries(usage.by_org).map(([name, orgUsage]) => (
+                  <tr key={name}>
+                    <td>
+                      <Link href={`https://github.com/${name}`}>{name}</Link>
+                    </td>
+                    <td>{formatMinutes(orgUsage.ci_time)}</td>
+                  </tr>
+                ))}
               </>
             ))
             .exhaustive()}
@@ -94,5 +69,3 @@ export const UsageComponent = () => {
     </>
   );
 };
-
-const nonBreakingSlash = <>&#8288;/&#8288;</>;

@@ -19,7 +19,6 @@ import Garnix.Build.Package (doBuild)
 import Garnix.Build.Reporting
 import Garnix.DB qualified as DB
 import Garnix.DB.ModuleValues qualified as ModuleValues
-import Garnix.Entitlements qualified as Entitlements
 import Garnix.Monad
 import Garnix.Monad.Async (emptyPromise, spawn)
 import Garnix.Monad.Concurrency
@@ -71,11 +70,10 @@ rerunBuild reporter build commitInfo = do
   DB.reportBuildResultDB build' <?> "Adding build github ID to DB"
   reportOnError runReporter build' commitInfo $ do
     repoConfig <- DB.getRepoConfig (commitInfo ^. repoInfo . ghRepoOwner) (commitInfo ^. repoInfo . ghRepoName)
-    plan <- Entitlements.getPlan (build ^. repoUser)
     Checkout.runWithCheckout Checkout.remoteWithConfig commitInfo $ \config -> do
       withAuthorization (config ^. flakeDir) repoConfig commitInfo $ do
         reportBuildResult runReporter build'
         void $ withInternalCacheToken (commitInfo ^. reqUser) $ do
-          FodCheck.withFodChecker reporter commitInfo plan $ \fodChecker -> do
-            doBuild fodChecker runReporter Webhook (config ^. flakeDir) repoConfig plan build'
+          FodCheck.withFodChecker reporter commitInfo $ \fodChecker -> do
+            doBuild fodChecker runReporter Webhook (config ^. flakeDir) repoConfig build'
         MetaCheck.update reporter commitInfo

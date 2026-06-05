@@ -15,7 +15,7 @@ where
 import Control.Lens
 import Control.Lens.Regex.Text qualified as RE
 import Control.Monad (mzero)
-import Data.Aeson (defaultOptions, genericParseJSON, withObject)
+import Data.Aeson (withObject)
 import Data.Aeson qualified as Aeson
 import Data.Aeson.Encode.Pretty (encodePretty)
 import Data.Aeson.Encoding qualified as Aeson
@@ -31,8 +31,6 @@ import Data.Pool (Pool)
 import Data.Text qualified as T
 import Data.Text.Encoding (decodeUtf8)
 import Database.PostgreSQL.Typed.Types (PGStringType)
-import Garnix.Duration
-import Garnix.MonetaryCost
 import Garnix.Nix.Types qualified as Nix
 import Garnix.Prelude
 import Garnix.Types.ExternalLenses
@@ -989,7 +987,6 @@ data Error
   | SshTimeout {command :: Text}
   | InvalidEmail
   | InvalidAccessToken
-  | EntitlementError {message :: Text}
   | DevModeOnly
   | DeploymentWantsNixosConfigurationsThatDontExist [PackageName]
   | NameIsNotValidSubdomain SubdomainKind Text
@@ -1090,8 +1087,6 @@ instance Pretty Error where
           )
     InvalidEmail -> "Invalid email address"
     InvalidAccessToken -> "Invalid access token"
-    EntitlementError {message} ->
-      pretty message
     DevModeOnly -> "dev mode only"
     DeploymentWantsNixosConfigurationsThatDontExist packages -> "Deployment wants package(s) that have not been built: " <> pretty packages
     NameIsNotValidSubdomain kind name -> pretty kind <+> "name" <+> Pretty.squotes (pretty name) <+> "is not a valid subdomain name."
@@ -1190,8 +1185,6 @@ toErrorDetails e = case err e of
     errorDetails 500 $ "Timeout: ssh command " <> command
   OtherError errMsg ->
     errorDetails 500 errMsg
-  EntitlementError message ->
-    errorDetails 403 message
   DevModeOnly -> fromStatusCode 404
   DeploymentWantsNixosConfigurationsThatDontExist packages ->
     errorDetails 400
@@ -1537,47 +1530,6 @@ newtype Memory = Memory Int64
       PGParameter "bigint"
     )
 
-data ProductPlan = ProductPlan
-  { _productPlanDisplayName :: Text,
-    _productPlanDescription :: Maybe Text,
-    _productPlanBaseCiTime :: Duration,
-    _productPlanMaximumPrDeploymentTime :: Duration,
-    _productPlanIncludedBranchDeploymentHosts :: Int64,
-    _productPlanMaximumPackagesPerFlake :: Int32,
-    _productPlanPackageEvaluationTimeout :: Int16,
-    _productPlanPackageBuildTimeout :: Int16,
-    _productPlanExtraUsage :: ExtraUsageLimits,
-    _productPlanIsPaid :: Bool
-  }
-  deriving stock (Eq, Show, Generic)
-
-instance ToJSON ProductPlan where
-  toEncoding = ourToEncoding
-  toJSON = ourToJSON
-
-data ExtraUsageLimits = ExtraUsageLimits
-  { ciTime :: Duration,
-    prDeployTime :: Duration,
-    hostingSpend :: MonetaryCost
-  }
-  deriving (Eq, Show, Generic, ToJSON)
-
-instance FromJSON ExtraUsageLimits where
-  parseJSON = withObject "ExtraUsageLimits" $ \v -> do
-    limits <- genericParseJSON defaultOptions $ Aeson.Object v
-    when (limits ^. #ciTime < emptyDuration) $ fail "CI time cannot be negative"
-    when (limits ^. #prDeployTime < emptyDuration) $ fail "PR deploy time cannot be negative"
-    when (limits ^. #hostingSpend < usd 0) $ fail "Hosting spend cannot be negative"
-    pure limits
-
-emptyUsageLimits :: ExtraUsageLimits
-emptyUsageLimits =
-  ExtraUsageLimits
-    { ciTime = emptyDuration,
-      prDeployTime = emptyDuration,
-      hostingSpend = usd 0
-    }
-
 toBytes :: Memory -> Int64
 toBytes (Memory bytes) = bytes
 
@@ -1605,7 +1557,6 @@ makeFields ''CommitSummary
 makeFields ''BuildUpdate
 makeFields ''Commit
 makeFields ''Run
-makeFields ''ProductPlan
 
 makePrisms ''User
 makePrisms ''Repo

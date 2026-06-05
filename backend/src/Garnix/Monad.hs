@@ -149,7 +149,7 @@ data EnvMocks = EnvMocks
       Maybe
         (Mock (Value, Value) BSL.ByteString),
     getBuildPlanMock :: Maybe (Mock ByteString Nix.Plan),
-    buildPkgMock :: Maybe (Mock (Maybe FodChecker, RunReporter, BuildKind, FlakeDir, RepoConfig, ProductPlan, Build) Build),
+    buildPkgMock :: Maybe (Mock (Maybe FodChecker, RunReporter, BuildKind, FlakeDir, RepoConfig, Build) Build),
     s3CacheUploadMock :: Maybe (Mock (RunReporter, GhRepoOwner, GhRepoName, EvaluationResult, RepoPublicity) ()),
     fodCheckMock :: Maybe (Mock (Maybe FodChecker, Nix.DrvPath) ()),
     rebuildFodMock :: Maybe (Mock (System, Nix.DrvPath) (Either Text Text))

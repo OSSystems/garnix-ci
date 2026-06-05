@@ -1,6 +1,5 @@
 module Garnix.TestHelpers where
 
-import Control.Exception.Lifted qualified
 import Control.Exception.Safe (throwIO)
 import Control.Exception.Safe qualified
 import Cradle
@@ -191,22 +190,7 @@ truncateDBMNoInsert = do
       |]
 
 truncateDBM :: M ()
-truncateDBM = do
-  truncateDBMNoInsert
-  void
-    $ DB.pgExec
-      [pgSQL|
-        INSERT INTO products
-          (name, ci_minutes) VALUES
-          ('free-v1', 50000)
-      |]
-  void
-    $ DB.pgExec
-      [pgSQL|
-        INSERT INTO products
-          (name, hosting) VALUES
-          ('hosting-beta', 2)
-      |]
+truncateDBM = truncateDBMNoInsert
 
 runTestM :: (HasCallStack) => M a -> IO a
 runTestM action = do
@@ -414,78 +398,6 @@ testCommit f = do
 
 parseTimestamp :: (HasCallStack) => String -> UTCTime
 parseTimestamp timestamp = fromJust $ iso8601ParseM timestamp
-
-withTestProduct ::
-  (MonadIO m, MonadBaseControl IO m) =>
-  Text ->
-  (ProductPlan -> ProductPlan) ->
-  m a ->
-  m a
-withTestProduct product modify action = do
-  let plan =
-        modify
-          $ ProductPlan
-            { _productPlanDisplayName = product,
-              _productPlanDescription = Just (product <> " plan description"),
-              _productPlanBaseCiTime = fromMinutes @Int 200000,
-              _productPlanMaximumPrDeploymentTime = fromMinutes @Int 100,
-              _productPlanIncludedBranchDeploymentHosts = 2,
-              _productPlanMaximumPackagesPerFlake = 100,
-              _productPlanPackageEvaluationTimeout = 30,
-              _productPlanPackageBuildTimeout = 120,
-              _productPlanExtraUsage = emptyUsageLimits,
-              _productPlanIsPaid = True
-            }
-  Control.Exception.Lifted.bracket (add plan) remove (const action)
-  where
-    add plan = liftIO $ runTestM $ do
-      void
-        $ DB.pgExec
-          [pgSQL|
-             INSERT INTO products
-               (name, title, description, price_id, hosting, pr_hosting, ci_minutes, packages_per_flake, visible, token)
-               VALUES
-               (${plan ^. displayName}, ${"Plan Title for " <> plan ^. displayName}, ${plan ^. description}, ${if plan ^. isPaid then (Just $ plan ^. displayName <> "-price") else Nothing}, ${plan ^. includedBranchDeploymentHosts} , ${round (toMinutes (plan ^. maximumPrDeploymentTime)) :: Int64}, ${round (toMinutes (plan ^. baseCiTime)) :: Int64}, ${plan ^. maximumPackagesPerFlake}, true, ${plan ^. displayName <> "-product-token"});
-          |]
-      pure $ plan ^. displayName
-    remove productName = liftIO $ runTestM $ do
-      void
-        $ DB.pgExec
-          [pgSQL|
-             DELETE FROM repo_owner_has_product where product = ${productName}
-          |]
-      void
-        $ DB.pgExec
-          [pgSQL|
-             DELETE FROM products where name = ${productName}
-          |]
-
-withTestEntitlement ::
-  (MonadIO m, MonadBaseControl IO m) =>
-  Text ->
-  (ProductPlan -> ProductPlan) ->
-  GhRepoOwner ->
-  m a ->
-  m a
-withTestEntitlement product modify repoOwner action =
-  withTestProduct product modify $ do
-    Control.Exception.Lifted.bracket add remove (const action)
-  where
-    add = liftIO $ runTestM $ do
-      void
-        $ DB.pgExec
-          [pgSQL|
-            INSERT INTO repo_owner_has_product
-              (repo_owner, product)
-              VALUES
-              (${repoOwner}, ${product})
-          |]
-    remove _ = liftIO $ runTestM $ do
-      void
-        $ DB.pgExec
-          [pgSQL|
-             DELETE FROM repo_owner_has_product where product = ${product}
-          |]
 
 withFeatureFlags :: FeatureFlagConfigDbo -> M a -> M a
 withFeatureFlags config action = do

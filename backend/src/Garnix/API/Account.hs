@@ -8,19 +8,15 @@ import Garnix.AccessToken
 import Garnix.AccessToken.Types
 import Garnix.DB qualified as DB
 import Garnix.Duration
-import Garnix.Entitlements (getPlans, setExtraUsageLimits)
-import Garnix.Entitlements qualified as Entitlements
 import Garnix.GithubInterface.Types
 import Garnix.Monad
 import Garnix.Prelude
 import Garnix.Types hiding (Admin, installationId)
-import Servant (Put)
 import Servant.Auth.Server
 
 data AccountAPI route = AccountAPI
   { _accountAPIUsage :: route :- "usage" :> Get '[JSON] UsageOverview,
     _accountAPIOrgUsage :: route :- "usage" :> Capture "org" GhRepoOwner :> Get '[JSON] OrgUsage,
-    _accountAPISetUsageLimits :: route :- "usage" :> Capture "org" GhRepoOwner :> ReqBody '[JSON] ExtraUsageLimits :> Put '[JSON] NoContent,
     _accountAPIEnabledRepos :: route :- "repos" :> Get '[JSON] EnabledRepos,
     _accountAPIGetAccessTokens :: route :- "tokens" :> Get '[JSON] GetTokensResponseBody,
     _accountAPICreateAccessToken :: route :- "tokens" :> ReqBody '[JSON] CreateTokenRequestBody :> Post '[JSON] CreateTokenResponseBody,
@@ -33,7 +29,6 @@ accountAPI user =
   AccountAPI
     { _accountAPIUsage = usageOverview user,
       _accountAPIOrgUsage = orgUsage user,
-      _accountAPISetUsageLimits = setUsageLimits user,
       _accountAPIEnabledRepos = enabledReposOf user,
       _accountAPIGetAccessTokens = getAccessTokens user,
       _accountAPICreateAccessToken = createAccessToken user,
@@ -50,8 +45,7 @@ instance ToJSON UsageOverview where
   toJSON = ourToJSON
 
 data OrgUsage = OrgUsage
-  { _orgUsagePlan :: ProductPlan,
-    _orgUsageCiTime :: Duration,
+  { _orgUsageCiTime :: Duration,
     _orgUsagePrDeploymentTime :: Duration,
     _orgUsageInstallationStatus :: InstallationStatus
   }
@@ -68,17 +62,13 @@ getOrgsUserIsAdminIn user token =
     . filter (\membership -> role membership == Admin)
     <$> getInstalledOrgs token
 
-getUsageForOrg :: Map.Map GhRepoOwner Duration -> Map.Map GhRepoOwner ProductPlan -> GhRepoOwner -> M OrgUsage
-getUsageForOrg usage plans org = do
+getUsageForOrg :: Map.Map GhRepoOwner Duration -> GhRepoOwner -> M OrgUsage
+getUsageForOrg usage org = do
   prDeploymentTime <- DB.getPrDeployDurationForOwner org
-  plan <- case Map.lookup org plans of
-    Just plan -> pure plan
-    Nothing -> throw $ OtherError "Impossible: plan missing for org passed into getPlans"
   installationStatus <- DB.getInstallationStatus org
   pure
     OrgUsage
-      { _orgUsagePlan = plan,
-        _orgUsageCiTime = fromMaybe emptyDuration $ Map.lookup org usage,
+      { _orgUsageCiTime = fromMaybe emptyDuration $ Map.lookup org usage,
         _orgUsagePrDeploymentTime = prDeploymentTime,
         _orgUsageInstallationStatus = installationStatus
       }
@@ -87,8 +77,7 @@ usageOverview :: AuthResult AuthJwtPayload -> M UsageOverview
 usageOverview (Authenticated (WebSession user ghToken)) = do
   orgs <- getOrgsUserIsAdminIn user ghToken
   usage <- DB.getCurrentMonthUsages (GhRepoOwner (user ^. githubLogin) : orgs)
-  plans <- getPlans orgs
-  map <- mkMapM orgs $ getUsageForOrg usage plans
+  map <- mkMapM orgs $ getUsageForOrg usage
   pure $ UsageOverview map
 usageOverview _ = throw Unauthorized
 
@@ -107,20 +96,8 @@ orgUsage (Authenticated (WebSession user ghToken)) org = do
   orgsUserIsAdminIn <- getOrgsUserIsAdminIn user ghToken
   when (org `notElem` orgsUserIsAdminIn) $ throw NotFound
   usage <- DB.getCurrentMonthUsages [org]
-  plans <- getPlans [org]
-  getUsageForOrg usage plans org
+  getUsageForOrg usage org
 orgUsage _ _ = throw Unauthorized
-
-setUsageLimits :: AuthResult AuthJwtPayload -> GhRepoOwner -> ExtraUsageLimits -> M NoContent
-setUsageLimits (Authenticated (WebSession user ghToken)) org newLimits = do
-  orgsUserIsAdminIn <- getOrgsUserIsAdminIn user ghToken
-  when (org `notElem` orgsUserIsAdminIn) $ throw Unauthorized
-  plan <- Entitlements.getPlan org
-  unless (plan ^. isPaid) $ do
-    throw $ BadRequest "User does not have an active plan"
-  setExtraUsageLimits org newLimits
-  pure NoContent
-setUsageLimits _ _ _ = throw Unauthorized
 
 
 data GetTokensResponseBody = GetTokensResponseBody

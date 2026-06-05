@@ -20,10 +20,11 @@ import Data.Maybe
 import Data.Row (Rec, type (.+), type (.==))
 import Data.Set qualified as Set
 import Data.Text.IO qualified as T
-import Garnix.BuildLogs.Types (LogLine (LogLine), mkLogLine)
+import Garnix.BuildLogs.Types (LogLine (LogLine))
 import Garnix.DB qualified as DB
 import Garnix.DB.FeatureFlags qualified as FeatureFlags
 import Garnix.DB.FeatureFlags.Types qualified as FeatureFlags
+import Garnix.Limits qualified as Limits
 import Garnix.Monad
 import Garnix.Monad.Async (joinAll, resolve, spawn)
 import Garnix.Monad.Bubbling
@@ -37,9 +38,9 @@ import Garnix.Types
 import Garnix.YamlConfig qualified as YamlConfig
 import System.Metrics.Prometheus.Metric.Histogram qualified as Prometheus
 
-withFodChecker :: Reporter -> CommitInfo -> ProductPlan -> (Maybe FodChecker -> M a) -> M a
-withFodChecker reporter commitInfo plan action = do
-  fodChecker <- getFodChecker reporter commitInfo plan
+withFodChecker :: Reporter -> CommitInfo -> (Maybe FodChecker -> M a) -> M a
+withFodChecker reporter commitInfo action = do
+  fodChecker <- getFodChecker reporter commitInfo
   let reportToSummary = case fodChecker of
         Just fodChecker -> \logLine -> reportLogs (fodChecker ^. #runReporter) $ LogLine (Just $ PackageName "FOD Summary") Nothing logLine
         Nothing -> const $ pure ()
@@ -69,20 +70,18 @@ withFodChecker reporter commitInfo plan action = do
           reportComplete (fodChecker ^. #runReporter) RunReportStatusFailure
   pure a
 
-getFodChecker :: Reporter -> CommitInfo -> ProductPlan -> M (Maybe FodChecker)
-getFodChecker reporter commitInfo plan = do
+getFodChecker :: Reporter -> CommitInfo -> M (Maybe FodChecker)
+getFodChecker reporter commitInfo = do
   garnixConfig <- YamlConfig.getConfig
   if garnixConfig ^. YamlConfig.fodChecks
     then do
-      run <- DB.newRun "FOD checks" commitInfo
-      runReporter <- createNewRun reporter (ReportRun run)
-      if plan ^. isPaid || (commitInfo ^. repoInfo . ghRepoOwner == "garnix-io")
+      enabled <- liftIO Limits.fodCheckEnabled
+      if enabled
         then do
+          run <- DB.newRun "FOD checks" commitInfo
+          runReporter <- createNewRun reporter (ReportRun run)
           Just <$> mkFodChecker runReporter
-        else do
-          reportLogs runReporter $ mkLogLine "`fodChecks` are enabled in your garnix.yaml, but that feature requires a paid plan."
-          reportComplete runReporter RunReportStatusFailure
-          pure Nothing
+        else pure Nothing
     else do
       randomlyEnabled <- FeatureFlags.isFeatureOn FeatureFlags.FodChecks
       if randomlyEnabled

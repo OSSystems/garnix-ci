@@ -13,8 +13,8 @@ import Garnix.Build.MetaCheck qualified as MetaCheck
 import Garnix.Build.Package (doBuild)
 import Garnix.Build.Reporting
 import Garnix.DB qualified as DB
-import Garnix.Entitlements (addDefaultEntitlements, getPlan, hasRemainingCiTime)
 import Garnix.GetAttributes
+import Garnix.Limits qualified as Limits
 import Garnix.Modules qualified as Modules
 import Garnix.Monad
 import Garnix.Monad.Async (joinAll, joinAll_, resolve, spawn)
@@ -24,22 +24,15 @@ import Garnix.YamlConfig (Action, ExcludeBranches (..), GarnixConfig, Incrementa
 
 runBuildFlake :: (HasCallStack) => Reporter -> BuildKind -> CommitInfo -> Remote -> M ()
 runBuildFlake reporter buildKind commitInfo withCheckout = do
-  let repoOwner = commitInfo ^. repoInfo . ghRepoOwner
-  addDefaultEntitlements repoOwner
   (startingBuild, startingBuildRunReporter) <- newBuild reporter commitInfo (PackageInfo TypeOverall NoSystem buildStarting) False
   withInternalCacheToken (commitInfo ^. reqUser) $ do
     metaCheckRun <- MetaCheck.newReport reporter commitInfo
     flip catchEither (\err -> MetaCheck.updateFail commitInfo metaCheckRun (Just err) >> rethrowEither err) $ do
       reportOnError startingBuildRunReporter startingBuild commitInfo $ do
-        hasCiTime <- hasRemainingCiTime repoOwner
-        when (not hasCiTime) $ do
-          log Notice $ show (commitInfo ^. repoInfo . ghRepoOwner) <> " ran out of CI time."
-          throw $ EntitlementError "You have exhausted your monthly CI quota"
         repoConfig <- DB.getRepoConfig (commitInfo ^. repoInfo . ghRepoOwner) (commitInfo ^. repoInfo . ghRepoName)
         runWithCheckout withCheckout commitInfo $ \config -> do
           withAuthorization (config ^. flakeDir) repoConfig commitInfo $ do
-            plan <- getPlan repoOwner
-            initialBuilds <- setupBuilds reporter commitInfo config plan
+            initialBuilds <- setupBuilds reporter commitInfo config
             initialActions <- setupActions reporter commitInfo config
             updatedBuild <-
               liftIO getCurrentTime <&> \now ->
@@ -49,9 +42,9 @@ runBuildFlake reporter buildKind commitInfo withCheckout = do
             DB.setCommitStatus (commitInfo ^. repoInfo . ghRepoOwner) (commitInfo ^. repoInfo . ghRepoName) (commitInfo ^. commit) Evaluated
             reportBuildResult startingBuildRunReporter updatedBuild
 
-            FodCheck.withFodChecker reporter commitInfo plan $ \fodChecker -> do
+            FodCheck.withFodChecker reporter commitInfo $ \fodChecker -> do
               buildPromises <- forM initialBuilds $ \(initialBuild, runReporter) -> do
-                spawn $ doBuild fodChecker runReporter buildKind (config ^. flakeDir) repoConfig plan initialBuild
+                spawn $ doBuild fodChecker runReporter buildKind (config ^. flakeDir) repoConfig initialBuild
               actionPromises <- forM initialActions $ \(initialBuild, runReporter, actionConfig) -> do
                 spawn
                   $ buildAndRunAction
@@ -60,7 +53,6 @@ runBuildFlake reporter buildKind commitInfo withCheckout = do
                     runReporter
                     commitInfo
                     buildKind
-                    plan
                     (config ^. flakeDir)
                     repoConfig
                     initialBuild
@@ -77,15 +69,16 @@ runBuildFlake reporter buildKind commitInfo withCheckout = do
                 then MetaCheck.updateSuccess commitInfo metaCheckRun
                 else MetaCheck.updateFail commitInfo metaCheckRun Nothing
 
-setupBuilds :: Reporter -> CommitInfo -> GarnixConfig -> ProductPlan -> M [(Build, RunReporter)]
-setupBuilds reporter commitInfo config plan = do
+setupBuilds :: Reporter -> CommitInfo -> GarnixConfig -> M [(Build, RunReporter)]
+setupBuilds reporter commitInfo config = do
   toBuild <- do
     attributes <- getAttributesToBuild commitInfo config
-    when (length attributes > fromIntegral (plan ^. maximumPackagesPerFlake)) $ do
+    maxPackages <- liftIO Limits.maxPackagesPerFlake
+    when (length attributes > fromIntegral maxPackages) $ do
       throw
         $ OtherError
         $ "Number of packages too large. Maximum is "
-        <> show (plan ^. maximumPackagesPerFlake)
+        <> show maxPackages
         <> ", you have "
         <> show (length attributes)
     pure attributes
@@ -106,14 +99,13 @@ buildAndRunAction ::
   RunReporter ->
   CommitInfo ->
   BuildKind ->
-  ProductPlan ->
   FlakeDir ->
   RepoConfig ->
   Build ->
   Action ->
   M ()
-buildAndRunAction reporter fodChecker runReporter commitInfo buildKind plan flakeDir repoConfig initialBuild actionConfig = do
-  build <- doBuild fodChecker runReporter buildKind flakeDir repoConfig plan initialBuild
+buildAndRunAction reporter fodChecker runReporter commitInfo buildKind flakeDir repoConfig initialBuild actionConfig = do
+  build <- doBuild fodChecker runReporter buildKind flakeDir repoConfig initialBuild
   Action.run flakeDir repoConfig reporter commitInfo (attribute build) actionConfig build
 
 newBuild :: Reporter -> CommitInfo -> PackageInfo -> Bool -> M (Build, RunReporter)

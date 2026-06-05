@@ -26,8 +26,8 @@ import Data.ByteString (ByteString)
 import Data.Either.Extra (mapLeft)
 import Garnix.Async
 import Garnix.Build.Types (EvaluationResult (..))
-import Garnix.Duration
 import Garnix.Incremental
+import Garnix.Limits qualified as Limits
 import Garnix.Monad
 import Garnix.Monad.Bubbling
 import Garnix.Monad.Metrics
@@ -87,19 +87,19 @@ instance FromJSON NixBuildPackage where
 
 evaluateAttribute ::
   RepoConfig ->
-  ProductPlan ->
   String ->
   FilePath ->
   Build ->
   Text ->
   M (Either EvaluateError EvaluationResult)
-evaluateAttribute repoConfig plan cacheDir workingDir build attr = withBubbling $ \bubble -> do
+evaluateAttribute repoConfig cacheDir workingDir build attr = withBubbling $ \bubble -> do
+  evalTimeoutDuration <- liftIO Limits.evalTimeout
   evalRes <-
     timingAs #evalDrvPathTime
       $ withPoolM nixEvalPool (build ^. repoUser)
       $ logDuration "nix eval for drvPath"
       $ withTextSpan ("phase", "eval")
-      $ timeout (fromMinutes $ plan ^. packageEvaluationTimeout)
+      $ timeout evalTimeoutDuration
       $ do
         mDrvPath <-
           if build ^. packageType == TypeApp

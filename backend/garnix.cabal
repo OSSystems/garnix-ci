@@ -68,13 +68,13 @@ library
       Garnix.DB.FeatureFlags.Types
       Garnix.DB.ModuleValues
       Garnix.Duration
-      Garnix.Entitlements
       Garnix.ExpiringCache
       Garnix.FlakeInputAuthorization
       Garnix.GetAttributes
       Garnix.GithubInterface
       Garnix.GithubInterface.Types
       Garnix.Incremental
+      Garnix.Limits
       Garnix.Log
       Garnix.Modules
       Garnix.Modules.Schema
@@ -90,7 +90,6 @@ library
       Garnix.Monad.Pool
       Garnix.Monad.SubProcess
       Garnix.Monad.SubProcess.Deprecated
-      Garnix.MonetaryCost
       Garnix.Nix.PathInfo
       Garnix.Nix.Plan
       Garnix.Nix.StorePath
@@ -720,7 +719,6 @@ test-suite spec
       Garnix.BuildSpec
       Garnix.DB.FeatureFlagsSpec
       Garnix.DBSpec
-      Garnix.EntitlementsSpec
       Garnix.ExpiringCacheSpec
       Garnix.FlakeInputAuthorizationSpec
       Garnix.GetAttributesSpec
@@ -804,13 +802,13 @@ test-suite spec
       Garnix.DB.FeatureFlags.Types
       Garnix.DB.ModuleValues
       Garnix.Duration
-      Garnix.Entitlements
       Garnix.ExpiringCache
       Garnix.FlakeInputAuthorization
       Garnix.GetAttributes
       Garnix.GithubInterface
       Garnix.GithubInterface.Types
       Garnix.Incremental
+      Garnix.Limits
       Garnix.Log
       Garnix.Modules
       Garnix.Modules.Schema
@@ -826,7 +824,6 @@ test-suite spec
       Garnix.Monad.Pool
       Garnix.Monad.SubProcess
       Garnix.Monad.SubProcess.Deprecated
-      Garnix.MonetaryCost
       Garnix.Nix.PathInfo
       Garnix.Nix.Plan
       Garnix.Nix.StorePath

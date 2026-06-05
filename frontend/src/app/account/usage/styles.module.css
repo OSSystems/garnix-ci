@@ -18,11 +18,3 @@
 .errorSmall {
   font-size: 14px;
 }
-
-.manageButton {
-  display: block;
-  width: 34px;
-  height: 34px;
-  background: #fff;
-  border: 1px solid #000;
-}
