@@ -89,7 +89,7 @@ in
           example = "https://<opensearch-ip>/_msearch";
         };
         testFeatures = lib.mkOption {
-          type = lib.types.listOf (lib.types.enum [ "DevApi" "OpenSearchMocks" "StripeMocks" "CacheUploadMocks" ]);
+          type = lib.types.listOf (lib.types.enum [ "DevApi" "OpenSearchMocks" "CacheUploadMocks" ]);
           default = [ ];
         };
         provisionServerPool = lib.mkOption {
@@ -577,18 +577,6 @@ in
         owner = config.users.users.garnix.name;
       };
       repo-secrets-key-pub = {
-        mode = "0400";
-        owner = config.users.users.garnix.name;
-      };
-      stripe-publishable-key = {
-        mode = "0400";
-        owner = config.users.users.garnix.name;
-      };
-      stripe-secret-key = {
-        mode = "0400";
-        owner = config.users.users.garnix.name;
-      };
-      stripe-webhook-secret = {
         mode = "0400";
         owner = config.users.users.garnix.name;
       };

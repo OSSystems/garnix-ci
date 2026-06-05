@@ -1601,18 +1601,6 @@ getCurrentMonthUsages owners = do
         GROUP BY repo_user
       |]
 
-updatePeriodForCustomer :: CustomerId -> UTCTime -> UTCTime -> M ()
-updatePeriodForCustomer (CustomerId customerId) startDate endDate =
-  void
-    $ pgExec
-      [pgSQL|
-      UPDATE installations
-        SET current_period_start = ${startDate},
-            current_period_end = ${endDate}
-        WHERE
-          stripe_customer = ${customerId}
-    |]
-
 getRepoKeyDB :: GhRepoOwner -> GhRepoName -> M (Maybe (PublicKey, PrivateKey))
 getRepoKeyDB owner name = do
   results <-
@@ -1732,56 +1720,6 @@ addToWaitlist email = do
       |]
 
 -- * Installations
-
-getRepoOwnerForStripeCustomer :: CustomerId -> M (Maybe GhRepoOwner)
-getRepoOwnerForStripeCustomer customer = do
-  res :: [Maybe GhRepoOwner] <-
-    pgQuery
-      [pgSQL|
-        SELECT repo_owner
-        FROM installations
-        WHERE stripe_customer = ${getCustomerId customer}
-      |]
-  case res of
-    [Just owner] -> pure $ Just owner
-    [Nothing] -> pure Nothing
-    [] -> pure Nothing
-    _ : _ : _ -> throw $ OtherError "impossible: stripe_customer is unique"
-
-getInstallationStripeCustomer :: GhRepoOwner -> M (Maybe CustomerId)
-getInstallationStripeCustomer repoOwner = do
-  res :: [Maybe Text] <-
-    pgQuery
-      [pgSQL|
-        SELECT stripe_customer
-        FROM installations
-        WHERE repo_owner = ${repoOwner}
-      |]
-  case res of
-    [Just id] -> pure $ Just $ CustomerId id
-    [Nothing] -> pure Nothing
-    [] -> pure Nothing
-    _ : _ : _ -> throw $ OtherError "impossible: repo_owner is unique"
-
-setStripeCustomerId :: GhRepoOwner -> CustomerId -> M ()
-setStripeCustomerId repoOwner stripeCustomerId = do
-  void
-    $ pgExec
-      [pgSQL|
-        INSERT INTO installations
-        (repo_owner, stripe_customer) VALUES
-        (${repoOwner}, ${getCustomerId stripeCustomerId})
-      |]
-
-setRequestedCancellation :: GhRepoOwner -> Bool -> M ()
-setRequestedCancellation repoOwner requestedCancelation = do
-  void
-    $ pgExec
-      [pgSQL|
-        UPDATE installations
-        SET requested_cancellation = ${requestedCancelation}
-        WHERE repo_owner = ${repoOwner}
-      |]
 
 getInstallationStatus :: GhRepoOwner -> M InstallationStatus
 getInstallationStatus repoOwner = do

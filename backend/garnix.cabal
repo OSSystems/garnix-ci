@@ -47,7 +47,6 @@ library
       Garnix.API.Keys
       Garnix.API.Modules
       Garnix.API.Runs
-      Garnix.API.Stripe
       Garnix.Async
       Garnix.Attribute
       Garnix.Build
@@ -114,8 +113,6 @@ library
       Garnix.S3Cache
       Garnix.SafeUnix
       Garnix.Sandbox
-      Garnix.StripeLib
-      Garnix.StripeLib.Types
       Garnix.Types
       Garnix.Types.ExternalLenses
       Garnix.Types.Keys
@@ -245,8 +242,6 @@ library
     , streaming-bytestring
     , string-conversions
     , strip-ansi-escape
-    , stripe-concepts
-    , stripe-signature
     , systemd
     , tagged
     , template-haskell
@@ -392,8 +387,6 @@ executable convert-hashids
     , streaming-bytestring
     , string-conversions
     , strip-ansi-escape
-    , stripe-concepts
-    , stripe-signature
     , systemd
     , tagged
     , template-haskell
@@ -540,8 +533,6 @@ executable generate-yaml-config-docs
     , streaming-bytestring
     , string-conversions
     , strip-ansi-escape
-    , stripe-concepts
-    , stripe-signature
     , systemd
     , tagged
     , template-haskell
@@ -687,8 +678,6 @@ executable server
     , streaming-bytestring
     , string-conversions
     , strip-ansi-escape
-    , stripe-concepts
-    , stripe-signature
     , systemd
     , tagged
     , template-haskell
@@ -767,7 +756,6 @@ test-suite spec
       Garnix.Reporters.UtilsSpec
       Garnix.S3CacheSpec
       Garnix.SandboxSpec
-      Garnix.StripeLibSpec
       Garnix.TestHelpers
       Garnix.TestHelpers.Common
       Garnix.TestHelpers.Deprecated
@@ -809,7 +797,6 @@ test-suite spec
       Garnix.API.Keys
       Garnix.API.Modules
       Garnix.API.Runs
-      Garnix.API.Stripe
       Garnix.Async
       Garnix.Attribute
       Garnix.Build
@@ -876,8 +863,6 @@ test-suite spec
       Garnix.S3Cache
       Garnix.SafeUnix
       Garnix.Sandbox
-      Garnix.StripeLib
-      Garnix.StripeLib.Types
       Garnix.Types
       Garnix.Types.ExternalLenses
       Garnix.Types.Keys
@@ -1022,8 +1007,6 @@ test-suite spec
     , streaming-bytestring
     , string-conversions
     , strip-ansi-escape
-    , stripe-concepts
-    , stripe-signature
     , systemd
     , tagged
     , template-haskell

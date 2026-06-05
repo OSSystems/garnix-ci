@@ -41,7 +41,6 @@ import Garnix.Monad.Pool (Pool)
 import Garnix.Nix.Types (StoreHash)
 import Garnix.Nix.Types qualified as Nix
 import Garnix.Prelude
-import Garnix.StripeLib.Types qualified as StripeLib
 import Garnix.Types hiding (ghRunId, statusCode)
 import GitHub qualified as GH
 import GitHub.App.Auth (InstallationAuth)
@@ -92,7 +91,6 @@ data Env = Env
     opensearchPassword :: ByteString,
     nixEvalPool :: Garnix.Monad.Pool.Pool GhRepoOwner,
     s3UploadPool :: Garnix.Monad.Pool.Pool GhRepoOwner,
-    stripe :: StripeEnv,
     mocks :: Maybe EnvMocks,
     emptyDir :: FilePath,
     spanCtx :: [(Text, Text)],
@@ -107,7 +105,6 @@ data Env = Env
 data TestFeature
   = DevApi
   | OpenSearchMocks
-  | StripeMocks
   | CacheUploadMocks
   | FodCheckMocks
   deriving stock (Eq, Show, Read, Ord, Generic, Enum, Bounded)
@@ -145,13 +142,6 @@ data ActionEnv = ActionEnv
   }
   deriving (Generic)
 
-data StripeEnv = StripeEnv
-  { publishableKey :: Text,
-    secretKey :: Text,
-    webhookSecret :: Text
-  }
-  deriving stock (Generic)
-
 data EnvMocks = EnvMocks
   { executeDeployPlanMock ::
       Maybe
@@ -173,12 +163,6 @@ data EnvMocks = EnvMocks
     makeOpenSearchMsearchRequestMock ::
       Maybe
         (Mock (Value, Value) BSL.ByteString),
-    createCustomerMock :: Maybe (Mock (GhRepoOwner, StripeLib.Name, Email) StripeLib.CustomerDto),
-    createSubscriptionMock :: Maybe (Mock (CustomerId, StripeLib.PriceId, Text, Text) StripeLib.SubscriptionDto),
-    createInvoiceItemMock :: Maybe (Mock (CustomerId, InvoiceId, Text, StripeLib.UnitAmount, Int64) ()),
-    listSubscriptionsMock :: Maybe (Mock CustomerId StripeLib.SubscriptionListDto),
-    cancelSubscriptionMock :: Maybe (Mock SubscriptionId ()),
-    getPriceMock :: Maybe (Mock StripeLib.PriceId StripeLib.PriceDto),
     getBuildPlanMock :: Maybe (Mock ByteString Nix.Plan),
     buildPkgMock :: Maybe (Mock (Maybe FodChecker, RunReporter, BuildKind, FlakeDir, RepoConfig, ProductPlan, Build) Build),
     s3CacheUploadMock :: Maybe (Mock (RunReporter, GhRepoOwner, GhRepoName, EvaluationResult, RepoPublicity) ()),
@@ -197,12 +181,6 @@ emptyMocks =
       queryOpenSearchMock = Nothing,
       startServerMock = Nothing,
       makeOpenSearchMsearchRequestMock = Nothing,
-      createCustomerMock = Nothing,
-      createSubscriptionMock = Nothing,
-      createInvoiceItemMock = Nothing,
-      listSubscriptionsMock = Nothing,
-      cancelSubscriptionMock = Nothing,
-      getPriceMock = Nothing,
       getBuildPlanMock = Nothing,
       setupServerMock = Nothing,
       buildPkgMock = Nothing,

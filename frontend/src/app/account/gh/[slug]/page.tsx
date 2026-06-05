@@ -4,12 +4,7 @@ import React from "react";
 import { match, P } from "ts-pattern";
 import { Link } from "@/components/link";
 import { Berlin } from "@/utils/fonts";
-import {
-  Plan,
-  cancelPlan,
-  getOrgUsage,
-  setUsageLimits,
-} from "@/services/account";
+import { Plan, getOrgUsage, setUsageLimits } from "@/services/account";
 import {
   add,
   fromMinutes,
@@ -23,11 +18,9 @@ import { useLoading } from "@/hooks/useLoading";
 import { AppPage } from "@/utils/appPage";
 import { Button } from "@/components/button";
 import { useField, useForm } from "@/hooks/useForm";
-import { Text } from "@/components/text";
 import { UnstyledIntInput } from "@/components/input";
 import { Err, Ok } from "@/services";
 import { FormSubmitResult } from "@/components/formSubmitResult";
-import { FloatingModal, ModalActions, ModalSection } from "@/components/modal";
 import styles from "./styles.module.css";
 
 const Page = ({ params }: { params: Record<string, string> }) => {
@@ -95,29 +88,12 @@ const Page = ({ params }: { params: Record<string, string> }) => {
             .with(
               { tag: "InstallationRenewing", contents: P.select() },
               (renewalDate) => (
-                <>
-                  <span className={styles.installationStatus}>
-                    Your subscription will renew on {renewalDate.toDateString()}
-                  </span>{" "}
-                  <CancelPlanButton
-                    plan={usage.plan}
-                    endDate={renewalDate}
-                    org={orgName}
-                    onSuccessfulCancellation={() => usageLoading.reload()}
-                  />
-                </>
+                <span className={styles.installationStatus}>
+                  Your subscription will renew on {renewalDate.toDateString()}
+                </span>
               ),
             )
             .exhaustive()}
-          {usage.upgrade_option ? (
-            <Link
-              href={`/account/manage_plans?account=${orgName}&product_token=${usage.upgrade_option.product_token}`}
-              className={styles.upgradeButton}
-              eventName="plan-upgrade"
-            >
-              Upgrade to {usage.upgrade_option.plan.display_name}
-            </Link>
-          ) : null}
         </header>
         <div className={`${styles.box} ${styles.planFeatures}`}>
           <header>Plan features</header>
@@ -293,77 +269,6 @@ const UsageLimits = ({ org, plan }: { org: string; plan: Plan }) => {
         </div>
       </form>
     </div>
-  );
-};
-
-const CancelPlanButton = (props: {
-  org: string;
-  plan: Plan;
-  endDate: Date;
-  onSuccessfulCancellation: () => void;
-}) => {
-  const [modalOpen, setModalOpen] = React.useState(false);
-  const form = useForm({}, async () => {
-    const result = await cancelPlan(props.org);
-    if (!result.ok) return result;
-    props.onSuccessfulCancellation();
-    return Ok(null);
-  });
-
-  return (
-    <>
-      {modalOpen && (
-        <FloatingModal onRequestClose={() => setModalOpen(false)}>
-          <form {...form.props}>
-            <ModalSection>
-              <Text type="h1">
-                Cancel your garnix {props.plan.display_name}
-              </Text>
-            </ModalSection>
-            <ModalSection>
-              <Text type="p">
-                This will cancel your plan for{" "}
-                <span
-                  style={{
-                    fontFamily: "monospace",
-                    background: "#eee",
-                    padding: "2px",
-                  }}
-                >
-                  {props.org}
-                </span>{" "}
-                GitHub user. You will not be billed again. Your plan will remain
-                active until {props.endDate.toDateString()}.
-              </Text>
-              {match(form.result)
-                .with(null, () => null)
-                .with(Ok(P._), () => null)
-                .with(Err({ message: P.select() }), (message) => (
-                  <div className={styles.error}>
-                    Failed to cancel your subscription:
-                    <br />
-                    {message}
-                    <br />
-                    If this persists, please contact us to cancel your plan.
-                  </div>
-                ))
-                .exhaustive()}
-            </ModalSection>
-            <ModalSection>
-              <ModalActions align="right">
-                <Button onClick={() => setModalOpen(false)}>Nevermind</Button>
-                <Button style="warning" submit loading={form.loading}>
-                  Cancel my {props.plan.display_name}
-                </Button>
-              </ModalActions>
-            </ModalSection>
-          </form>
-        </FloatingModal>
-      )}
-      <Button style="warning" onClick={() => setModalOpen(true)}>
-        Cancel {props.plan.display_name}
-      </Button>
-    </>
   );
 };
 

@@ -40,7 +40,6 @@ import Garnix.Types.ExternalLenses
 import Garnix.Types.Keys
 import GitHub.App.Auth (InstallationAuth)
 import Network.HTTP.Types (Header, statusMessage)
-import Network.Wreq qualified as Wreq
 import Prettyprinter qualified as Pretty
 import Servant qualified
 import System.Log.FastLogger as FastLogger
@@ -1339,18 +1338,6 @@ instance FromJSON AuthJwtPayload where
     user <- parseJSON (Aeson.Object obj)
     token <- obj Aeson..:? "github_token"
     pure $ maybe (ApiSession user) (WebSession user) token
-
-newtype CustomerId = CustomerId {getCustomerId :: Text}
-  deriving stock (Generic, Show, Eq)
-  deriving newtype (ToJSON, FromJSON, Wreq.FormValue)
-
-newtype InvoiceId = InvoiceId {getInvoiceId :: Text}
-  deriving stock (Generic, Show, Eq)
-  deriving newtype (ToJSON, FromJSON, Wreq.FormValue)
-
-newtype SubscriptionId = SubscriptionId {getSubscriptionId :: Text}
-  deriving stock (Generic, Show, Eq, Ord)
-  deriving newtype (ToJSON, FromJSON, Wreq.FormValue)
 
 data InstallationStatus
   = NoActiveInstallation

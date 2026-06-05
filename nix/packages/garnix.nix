@@ -95,8 +95,6 @@
 , streaming-bytestring
 , string-conversions
 , strip-ansi-escape
-, stripe-concepts
-, stripe-signature
 , systemd
 , tagged
 , template-haskell
@@ -204,8 +202,6 @@ mkDerivation {
     streaming-bytestring
     string-conversions
     strip-ansi-escape
-    stripe-concepts
-    stripe-signature
     systemd
     tagged
     template-haskell
@@ -307,8 +303,6 @@ mkDerivation {
     streaming-bytestring
     string-conversions
     strip-ansi-escape
-    stripe-concepts
-    stripe-signature
     systemd
     tagged
     template-haskell
@@ -424,8 +418,6 @@ mkDerivation {
     streaming-bytestring
     string-conversions
     strip-ansi-escape
-    stripe-concepts
-    stripe-signature
     systemd
     tagged
     template-haskell

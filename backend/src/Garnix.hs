@@ -35,7 +35,6 @@ import Garnix.Monad.Metrics (registerMetrics, serveMetrics)
 import Garnix.Monad.Pool qualified
 import Garnix.NixConfig (defaultNixConfig)
 import Garnix.Prelude
-import Garnix.StripeLib qualified
 import Garnix.Types
 import Garnix.UserLogs
 import GitHub.App.Auth (AppAuth (..))
@@ -53,7 +52,6 @@ import Servant.Auth.Server
     fromSecret,
   )
 import Servant.GitHub.Webhook
-import Stripe.Concepts qualified
 import System.Directory
 import System.Environment (getEnv)
 import System.Systemd.Daemon (notifyReady)
@@ -89,19 +87,6 @@ envMocks testFeatures = do
           $ envMocks
             { storeLogLineMock = Just storeLogLineMock,
               queryOpenSearchMock = Just queryOpenSearchMock
-            }
-      StripeMocks -> do
-        let envMocks = fromMaybe emptyMocks mEnvMocks
-        (createCustomerMock, createSubscriptionMock, createInvoiceMock, listSubscriptionsMock, cancelSubscriptionMock, getPriceMock) <- Garnix.StripeLib.testImplementation
-        pure
-          $ Just
-          $ envMocks
-            { createCustomerMock = Just createCustomerMock,
-              createSubscriptionMock = Just createSubscriptionMock,
-              createInvoiceItemMock = Just createInvoiceMock,
-              listSubscriptionsMock = Just listSubscriptionsMock,
-              cancelSubscriptionMock = Just cancelSubscriptionMock,
-              getPriceMock = Just getPriceMock
             }
       CacheUploadMocks -> do
         let envMocks = fromMaybe emptyMocks mEnvMocks
@@ -245,22 +230,6 @@ withEnv testFeatures buildLogsDir buildLogsReportingPort action = do
   metrics <- registerMetrics
   nixEvalPool <- Garnix.Monad.Pool.newPool 50 metrics #evalQueueWaitTime #evalQueueLen
   s3UploadPool <- Garnix.Monad.Pool.newPool 100 metrics #s3QueueWaitTime #s3QueueLen
-  stripe <- do
-    publishableKey <-
-      lookupEnv "STRIPE_PUBLISHABLE_KEY"
-        >>= maybe (T.readFile "/run/secrets/stripe-publishable-key") (pure . cs)
-    secretKey <-
-      lookupEnv "STRIPE_SECRET_KEY"
-        >>= maybe (T.readFile "/run/secrets/stripe-secret-key") (pure . cs)
-    webhookSecret <-
-      lookupEnv "STRIPE_WEBHOOK_SECRET"
-        >>= maybe (T.readFile "/run/secrets/stripe-webhook-secret") (pure . cs)
-    pure
-      $ StripeEnv
-        { publishableKey,
-          secretKey,
-          webhookSecret
-        }
   Cradle.StdoutTrimmed hostname <- Cradle.run $ Cradle.cmd "hostname"
   mocks <- envMocks testFeatures
   featureFlagConfig <- getFeatureFlagConfig
@@ -313,7 +282,6 @@ withEnv testFeatures buildLogsDir buildLogsReportingPort action = do
                   },
               nixEvalPool = nixEvalPool,
               s3UploadPool = s3UploadPool,
-              stripe = stripe,
               mocks = mocks,
               spanCtx = [],
               metrics = metrics,
@@ -367,8 +335,7 @@ type ContextList =
      GitHubKey CheckSuiteEvent,
      GitHubKey CheckRunEvent,
      GitHubKey PullRequestEvent,
-     GitHubKey PushEvent,
-     Stripe.Concepts.WebhookSecretKey
+     GitHubKey PushEvent
    ]
 
 toApplication :: Env -> Application
@@ -383,7 +350,6 @@ toApplication env =
           :. ghKey
           :. ghKey
           :. ghKey
-          :. Stripe.Concepts.textToWebhookSecretKey (env ^. #stripe . #webhookSecret)
           :. EmptyContext
       contextProxy :: Proxy ContextList
       contextProxy = Proxy

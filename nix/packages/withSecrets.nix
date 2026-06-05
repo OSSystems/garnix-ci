@@ -28,9 +28,6 @@ pkgs.writeShellScriptBin "withSecrets" ''
     export OPENSEARCH_API=$(extract opensearch-garnix)
     export REPO_SECRETS_KEY_PATH=$REPO_ROOT/backend/test/spec/data/repo-secrets.key
     export REPO_SECRETS_PUB_KEY=age107r0e6nxchkrqdxg42tzdxeauez2ce7cpsajcggjwmpjgrlrnqfqy6tnlf
-    export STRIPE_PUBLISHABLE_KEY=$(extract stripe-publishable-key)
-    export STRIPE_SECRET_KEY=$(extract stripe-secret-key)
-    export STRIPE_WEBHOOK_SECRET=$(extract stripe-webhook-secret)
     export S3_CACHE_ACCESS_KEY_ID=$(extract s3-cache-access-key-id)
     export S3_CACHE_SECRET_ACCESS_KEY=$(extract s3-cache-secret-access-key)
     export S3_CACHE_PUBLIC_BUCKET="test-public"

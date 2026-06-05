@@ -73,8 +73,8 @@ spec = do
           (hostname, last_heartbeat)
           VALUES ('test', NOW())
           |]
-        void $ DB.setStripeCustomerId "conflict" (CustomerId "conflict")
-        void $ DB.setStripeCustomerId "conflict" (CustomerId "conflict")
+        void $ DB.newUser (GhLogin "conflict") (Email "a@a") FreeSubscription True
+        void $ DB.newUser (GhLogin "conflict") (Email "a@a") FreeSubscription True
       hb <- DB.getRecentHeartbeats
       liftIO $ hb `shouldBe` []
 

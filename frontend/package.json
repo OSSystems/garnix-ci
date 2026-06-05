@@ -14,8 +14,6 @@
   },
   "dependencies": {
     "@nextui-org/react": "^2.2.9",
-    "@stripe/react-stripe-js": "^2.7.0",
-    "@stripe/stripe-js": "^3.3.0",
     "dompurify": "^3.2.3",
     "endent": "^2.1.0",
     "marked": "^15.0.6",

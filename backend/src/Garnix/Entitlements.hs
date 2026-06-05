@@ -2,13 +2,13 @@ module Garnix.Entitlements
   ( Hosting (..),
     addDefaultEntitlements,
     addProduct,
-    addProductByPriceId,
     getHosting,
     queryCiTimeEntitlements,
     hasRemainingCiTime,
 
     -- * products
     ProductToken (..),
+    PriceId (..),
     displayName,
     title,
     baseCiTime,
@@ -33,9 +33,10 @@ import Garnix.Duration
 import Garnix.Monad (M, throw)
 import Garnix.MonetaryCost
 import Garnix.Prelude
-import Garnix.StripeLib (PriceId (..))
-import Garnix.StripeLib qualified as StripeLib
 import Garnix.Types
+
+newtype PriceId = PriceId {getPriceId :: Text}
+  deriving newtype (Eq, Show)
 
 defaultPlanName :: Text
 defaultPlanName = "free-v1"
@@ -63,20 +64,6 @@ addProduct owner product = do
           ( ${owner}, ${product} )
         ON CONFLICT DO NOTHING
       |]
-
-addProductByPriceId :: GhRepoOwner -> StripeLib.PriceId -> M ()
-addProductByPriceId owner priceId = do
-  res :: [Text] <-
-    DB.pgQuery
-      [pgSQL|
-        SELECT name
-        FROM products
-        WHERE price_id = ${StripeLib.getPriceId priceId}
-      |]
-  case res of
-    [name] -> addProduct owner name
-    [] -> throw $ OtherError $ "Cannot find product with price_id: " <> StripeLib.getPriceId priceId
-    _ -> throw $ OtherError "impossible: price_id should be unique"
 
 data Hosting = Hosting
   { planIncludedBranchDeploymentHosts :: Int64,
