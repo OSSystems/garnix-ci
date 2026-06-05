@@ -9,7 +9,6 @@ import { Text } from "@/components/text";
 import logoIcon from "@/components/icons/logo.svg";
 import { BuildsIcon } from "@/components/icons/builds";
 import { ModulesIcon } from "@/components/icons/modules";
-import { ServerIcon } from "@/components/icons/servers";
 import { DocumentationIcon } from "@/components/icons/documentation";
 import { DiscordIcon } from "@/components/icons/discord";
 import { MatrixIcon } from "@/components/icons/matrix";
@@ -53,11 +52,6 @@ const MAIN_LINK_GROUP: Array<LinkProps> = filterNull([
     icon: <BuildsIcon className={styles.icon} />,
     label: "Builds",
     href: "/",
-  },
-  {
-    icon: <ServerIcon className={styles.icon} />,
-    label: "Servers",
-    href: "/servers",
   },
   {
     icon: <ModulesIcon className={styles.icon} />,

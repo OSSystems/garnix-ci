@@ -59,13 +59,12 @@ import Garnix.Monad.Pool qualified
 import Garnix.NixConfig (defaultNixConfig)
 import Garnix.Prelude
 import Garnix.TestHelpers.GithubInterface.Deprecated qualified as Deprecated
-import Garnix.TestHelpers.HetznerMock (testHetznerInterface)
 import Garnix.Types hiding (pending)
 import GitHub.App.Auth (AppAuth (..))
 import GitHub.Data.Id (Id (..))
 import Network.HTTP.Client.TLS (newTlsManager)
 import Servant.Auth.Server (CookieSettings (..), defaultCookieSettings, defaultJWTSettings, fromSecret)
-import System.Directory (canonicalizePath, createDirectory, doesFileExist, makeAbsolute)
+import System.Directory (createDirectory, doesFileExist, makeAbsolute)
 import System.Environment (getEnv)
 import System.IO.Temp (withSystemTempDirectory)
 import System.IO.Unsafe qualified
@@ -248,7 +247,6 @@ withTestEnvironment tempDir action = do
         dir <- makeAbsolute (tempDir </> "build-logs")
         createDirectory dir
         pure dir
-      sshKey <- canonicalizePath "ssh-key-for-tests"
       metrics <- registerMetrics
       nixEvalPool <- Garnix.Monad.Pool.newPool 120 metrics #evalQueueWaitTime #evalQueueLen
       s3UploadPool <- Garnix.Monad.Pool.newPool 80 metrics #s3QueueWaitTime #s3QueueLen
@@ -272,8 +270,6 @@ withTestEnvironment tempDir action = do
                   userNixConfig = defaultNixConfig,
                   githubWebhookSecret = "github-webhook-secret",
                   githubInterface = ghInterface,
-                  hetznerInterface = testHetznerInterface,
-                  serverPoolConfig = [],
                   cookieSettings = defaultCookieSettings {cookieXsrfSetting = Nothing},
                   jwtSettings = defaultJWTSettings $ fromSecret $ cs jwtKey,
                   repoSecretsEncryptionKeyPath = repoSecretsEncryptionKeyPath,
@@ -283,10 +279,8 @@ withTestEnvironment tempDir action = do
                   baseUrl = "https://garnix.io",
                   logger = defaultLogger,
                   buildLogsDir = buildLogsDir,
-                  hetznerToken = "hetzner-token",
                   opensearchQueryUrl = "http://example.com/_msearch",
                   opensearchPassword = "opensearch-api",
-                  sshUserHostingKeys = [sshKey],
                   s3CacheEnv = error "s3CacheEnv: cache uploading should be mocked",
                   action =
                     ActionEnv

@@ -11,21 +11,16 @@ module Garnix.YamlConfig
     withRepoContents,
     AttributeMatcher (..),
     BuildSection (..),
-    DeploySection (OnBranch, OnPullRequest),
     ExcludeBranches (..),
     GarnixConfig,
     IncrementalizeBuildsSection (..),
     ModuleSection (..),
-    ServerSection (..),
     _garnixConfigActions,
     actions,
     asAttributeMatcher,
     branchSection,
     buildSections,
-    configuration,
     decodeConfig,
-    deploySection,
-    deployTypeExplanation,
     excludeBranches,
     excludeSection,
     firstPart,
@@ -35,7 +30,6 @@ module Garnix.YamlConfig
     moduleSection,
     parseAttributeMatcher,
     secondPart,
-    serverSection,
     thirdPart,
     fodChecks,
     flakeDir,
@@ -46,14 +40,9 @@ where
 import Autodocodec
 import Cradle qualified
 import Data.ByteString (ByteString)
-import Data.HashMap.Strict (HashMap)
-import Data.HashMap.Strict qualified as HashMap
 import Data.Text qualified as T
-import Data.Tuple.Extra (fst3, snd3, thd3, uncurry3)
-import Data.Void (Void)
 import Data.Yaml (decodeEither', decodeFileEither, prettyPrintParseException)
 import GHC.IsList (fromList)
-import Garnix.Hosting.ServerPool.Types
 import Garnix.Log
 import Garnix.Monad
 import Garnix.NixConfig (addNixConfigEnvironment)
@@ -226,87 +215,8 @@ instance HasCodec IncrementalizeBuildsSection where
 instance Default IncrementalizeBuildsSection where
   def = IncrementalizeBuilds False
 
-data ServerSection = ServerSection
-  { _serverSectionConfiguration :: PackageName,
-    _serverSectionDeploySection :: DeploySection
-  }
-  deriving stock (Eq, Show, Generic)
-
-instance HasCodec ServerSection where
-  codec =
-    object "servers"
-      $ ServerSection
-      <$> requiredField
-        "configuration"
-        "What attribute to deploy (e.g.: 'myServer' for 'nixosConfigurations.myServer')"
-      .= _serverSectionConfiguration
-      <*> requiredField
-        "deployment"
-        "When to deploy a new server, or redeploy an existing one"
-      .= _serverSectionDeploySection
-
-data DeploySection
-  = OnPullRequest
-  | OnBranch
-      { branch :: Branch,
-        tier :: ServerTier,
-        isPrimary :: Bool
-      }
-  deriving stock (Eq, Show, Generic)
-
-deployTypeExplanation :: Text
-deployTypeExplanation =
-  "When and how to deploy. The current available types "
-    <> "are: \n"
-    <> " - on-branch: deploy a new version every time the HEAD of the specified "
-    <> "branch changes."
-
-instance HasCodec DeploySection where
-  codec =
-    object "deployment"
-      $ discriminatedUnionCodec "type" serialize deserialize
-    where
-      branchCodec =
-        (,,)
-          <$> requiredField "branch" "What git branch to deploy from"
-          .= fst3
-          <*> optionalFieldWithDefault "machine" (def :: ServerTier) "What server tier to deploy"
-          .= snd3
-          <*> optionalFieldWithDefault "isPrimary" False "If this deploy should also be reachable at «repo-name».«org-name».garnix.me"
-          .= thd3
-      serialize :: DeploySection -> (Discriminator, ObjectCodec DeploySection ())
-      serialize = \case
-        OnBranch branch serverType isPrimary ->
-          ( "on-branch",
-            mapToEncoder (branch, serverType, isPrimary) branchCodec
-          )
-        OnPullRequest -> ("on-pull-request", mapToEncoder () $ pureCodec ())
-      deserialize :: HashMap Discriminator (Text, ObjectCodec Void DeploySection)
-      deserialize =
-        HashMap.fromList
-          [ ("on-branch", ("", mapToDecoder (uncurry3 OnBranch) branchCodec)),
-            ("on-pull-request", ("", mapToDecoder (const OnPullRequest) $ pureCodec ()))
-          ]
-
 instance HasCodec Branch where
   codec = dimapCodec Branch getBranch textCodec
-
-instance HasCodec ServerTier where
-  codec =
-    bimapCodec deserialize serialize textCodec
-    where
-      deserialize :: Text -> Either String ServerTier
-      deserialize t =
-        case lookup t (map swap serverTierTextMapping) of
-          Just serverType -> Right serverType
-          Nothing -> do
-            let serverTypes = map snd serverTierTextMapping
-            Left $ cs ("Wrong server type. Supported server types are: " <> T.intercalate ", " serverTypes)
-      serialize :: ServerTier -> Text
-      serialize serverType =
-        case lookup serverType serverTierTextMapping of
-          Just t -> t
-          Nothing -> error "Unknown server type"
 
 instance HasCodec PackageName where
   codec = dimapCodec PackageName getPackageName textCodec
@@ -371,7 +281,6 @@ instance Default ModuleSection where
 data GarnixConfig = GarnixConfig
   { _garnixConfigBuildSections :: [BuildSection],
     _garnixConfigIncrementalizeBuildsSection :: IncrementalizeBuildsSection,
-    _garnixConfigServerSection :: [ServerSection],
     _garnixConfigActions :: [Action],
     _garnixConfigModuleSection :: ModuleSection,
     _garnixConfigFodChecks :: Bool,
@@ -380,7 +289,7 @@ data GarnixConfig = GarnixConfig
   deriving stock (Eq, Show, Generic)
 
 instance Default GarnixConfig where
-  def = GarnixConfig [def] def [] [] def False (FlakeDir ".")
+  def = GarnixConfig [def] def [] def False (FlakeDir ".")
 
 instance FromJSON GarnixConfig where
   parseJSON = parseJSONViaCodec
@@ -423,12 +332,6 @@ instance HasCodec GarnixConfig where
                   .= _garnixConfigIncrementalizeBuildsSection
               )
           <*> ( optionalFieldWithDefault
-                  "servers"
-                  []
-                  "Specifies what servers to deploy."
-                  .= _garnixConfigServerSection
-              )
-          <*> ( optionalFieldWithDefault
                   "actions"
                   []
                   "Specifies which actions to run."
@@ -460,5 +363,4 @@ makeFields ''ExcludeBranches
 makeFields ''GarnixConfig
 makeFields ''AttributeMatcher
 makeFields ''BuildSection
-makeFields ''ServerSection
 makeFields ''Action

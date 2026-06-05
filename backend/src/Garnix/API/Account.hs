@@ -53,7 +53,6 @@ data OrgUsage = OrgUsage
   { _orgUsagePlan :: ProductPlan,
     _orgUsageCiTime :: Duration,
     _orgUsagePrDeploymentTime :: Duration,
-    _orgUsageBranchDeploymentHosts :: Int64,
     _orgUsageInstallationStatus :: InstallationStatus
   }
   deriving stock (Eq, Show, Generic)
@@ -72,7 +71,6 @@ getOrgsUserIsAdminIn user token =
 getUsageForOrg :: Map.Map GhRepoOwner Duration -> Map.Map GhRepoOwner ProductPlan -> GhRepoOwner -> M OrgUsage
 getUsageForOrg usage plans org = do
   prDeploymentTime <- DB.getPrDeployDurationForOwner org
-  branchDeployments <- sum <$> DB.getRunningBranchServersForOwner org
   plan <- case Map.lookup org plans of
     Just plan -> pure plan
     Nothing -> throw $ OtherError "Impossible: plan missing for org passed into getPlans"
@@ -82,7 +80,6 @@ getUsageForOrg usage plans org = do
       { _orgUsagePlan = plan,
         _orgUsageCiTime = fromMaybe emptyDuration $ Map.lookup org usage,
         _orgUsagePrDeploymentTime = prDeploymentTime,
-        _orgUsageBranchDeploymentHosts = branchDeployments,
         _orgUsageInstallationStatus = installationStatus
       }
 

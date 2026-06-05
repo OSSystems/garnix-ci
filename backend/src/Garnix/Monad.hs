@@ -32,7 +32,6 @@ import Garnix.BuildLogs.Types (LogLine)
 import Garnix.DB.FeatureFlags.Types (FeatureFlagConfig)
 import Garnix.Duration
 import Garnix.GithubInterface.Types
-import Garnix.Hosting.ServerPool.Types
 import Garnix.Log
 import Garnix.Monad.ForkT
 import Garnix.Monad.Memoization (MemoTable)
@@ -69,8 +68,6 @@ data Env = Env
     githubClientId :: Text,
     buildLogsReportingPort :: Maybe Int,
     githubInterface :: GithubInterface,
-    hetznerInterface :: HetznerInterface,
-    serverPoolConfig :: [(ServerTier, Int)],
     -- | A thread-safe version of `CWD`
     workingDir :: FilePath,
     nixXdgCacheDir :: Maybe FilePath,
@@ -79,14 +76,12 @@ data Env = Env
     jwtSettings :: JWTSettings,
     dbConn :: DatabaseConnection,
     baseUrl :: Text,
-    sshUserHostingKeys :: [FilePath],
     s3CacheEnv :: S3CacheEnv,
     action :: ActionEnv,
     repoSecretsEncryptionKeyPath :: RepoSecretsEncryptionKeyPath,
     repoSecretsEncryptionPubKey :: RepoSecretsEncryptionPubKey,
     logger :: LogItem -> IO (),
     buildLogsDir :: FilePath,
-    hetznerToken :: StrictByteString,
     opensearchQueryUrl :: String,
     opensearchPassword :: ByteString,
     nixEvalPool :: Garnix.Monad.Pool.Pool GhRepoOwner,
@@ -143,23 +138,13 @@ data ActionEnv = ActionEnv
   deriving (Generic)
 
 data EnvMocks = EnvMocks
-  { executeDeployPlanMock ::
-      Maybe
-        (Mock (Reporter, CommitInfo, DeployPlan, DeploymentType) [ServerInfo]),
-    waitTillServerIsInitializedMock :: Maybe (Mock HetznerServerId Bool),
-    buildFlakeMock ::
+  { buildFlakeMock ::
       Maybe
         (Mock (Reporter, CommitInfo) (Promise ())),
     storeLogLineMock :: Maybe (Mock (OpenSearchId, LogLine) ()),
     queryOpenSearchMock ::
       Maybe
         (Mock (OpenSearchId, [Day], Maybe UTCTime, Int) [OpenSearchMessage]),
-    startServerMock ::
-      Maybe
-        (Mock (Reporter, CommitInfo, DeploymentType, ServerToSpinUp) ServerInfo),
-    setupServerMock ::
-      Maybe
-        (Mock (RepoInfo, Build, ServerInfo) (ServerInfo, Text)),
     makeOpenSearchMsearchRequestMock ::
       Maybe
         (Mock (Value, Value) BSL.ByteString),
@@ -174,15 +159,11 @@ data EnvMocks = EnvMocks
 emptyMocks :: EnvMocks
 emptyMocks =
   EnvMocks
-    { executeDeployPlanMock = Nothing,
-      waitTillServerIsInitializedMock = Nothing,
-      buildFlakeMock = Nothing,
+    { buildFlakeMock = Nothing,
       storeLogLineMock = Nothing,
       queryOpenSearchMock = Nothing,
-      startServerMock = Nothing,
       makeOpenSearchMsearchRequestMock = Nothing,
       getBuildPlanMock = Nothing,
-      setupServerMock = Nothing,
       buildPkgMock = Nothing,
       s3CacheUploadMock = Nothing,
       fodCheckMock = Nothing,
@@ -342,15 +323,6 @@ data PullRequest = PullRequest
     _pullRequestBaseBranch :: Branch
   }
 
--- * HetznerInterface
-
-data HetznerInterface = HetznerInterface
-  { _hetznerInterfaceProvisionServer :: PreprovisionedServerId -> HetznerLocation -> HetznerServerType -> M PreprovisionedServer,
-    _hetznerInterfaceUpdateMetadata :: RepoInfo -> DeploymentType -> Build -> ServerId -> HetznerServerId -> M (),
-    _hetznerInterfaceDeleteServer :: HetznerServerId -> M (),
-    _hetznerInterfaceGetServerStatus :: HetznerServerId -> M Text
-  }
-
 makeFields ''PullRequest
 makeFields ''EnvMocks
 makeFields ''GhRunReport
@@ -437,26 +409,6 @@ withWreqOptions action = do
   manager <- view #manager
   let options = Wreq.defaults & Wreq.manager .~ Right manager
   liftIO $ action options
-
-provisionServer :: PreprovisionedServerId -> HetznerLocation -> HetznerServerType -> M PreprovisionedServer
-provisionServer sId loc typ = do
-  iface <- view #hetznerInterface
-  _hetznerInterfaceProvisionServer iface sId loc typ
-
-updateMetadata :: RepoInfo -> DeploymentType -> Build -> ServerId -> HetznerServerId -> M ()
-updateMetadata repoInfo deploymentType build serverId hetznerServerId = do
-  iface <- view #hetznerInterface
-  _hetznerInterfaceUpdateMetadata iface repoInfo deploymentType build serverId hetznerServerId
-
-deleteServer :: HetznerServerId -> M ()
-deleteServer sId = do
-  iface <- view #hetznerInterface
-  _hetznerInterfaceDeleteServer iface sId
-
-getServerStatus :: HetznerServerId -> M Text
-getServerStatus sId = do
-  iface <- view #hetznerInterface
-  _hetznerInterfaceGetServerStatus iface sId
 
 getNixXdgCacheDir :: M String
 getNixXdgCacheDir =

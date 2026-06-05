@@ -1,8 +1,6 @@
 module Garnix.Entitlements
-  ( Hosting (..),
-    addDefaultEntitlements,
+  ( addDefaultEntitlements,
     addProduct,
-    getHosting,
     queryCiTimeEntitlements,
     hasRemainingCiTime,
 
@@ -64,45 +62,6 @@ addProduct owner product = do
           ( ${owner}, ${product} )
         ON CONFLICT DO NOTHING
       |]
-
-data Hosting = Hosting
-  { planIncludedBranchDeploymentHosts :: Int64,
-    extraBranchHostingSpend :: MonetaryCost,
-    maxPrDeploymentTime :: Duration,
-    largerServers :: Bool
-  }
-  deriving (Eq, Show, Generic)
-
-getHosting :: GhRepoOwner -> M Hosting
-getHosting repoOwner = do
-  hosts :: [(Maybe Int64, Maybe Int64, Maybe Bool)] <-
-    DB.pgQuery
-      [pgSQL|
-        SELECT max(hosting), max(pr_hosting), bool_or(larger_servers)
-        FROM repo_owner_has_product
-        INNER JOIN products
-        ON repo_owner_has_product.product = products.name
-        WHERE repo_owner_has_product.repo_owner = ${repoOwner}
-      |]
-  extraUsageLimits <- getExtraUsageLimits repoOwner
-  case hosts of
-    [(hosts, prMinutes, largerServers)] -> do
-      pure
-        $ Hosting
-          { planIncludedBranchDeploymentHosts = fromMaybe 0 hosts,
-            extraBranchHostingSpend = extraUsageLimits ^. #hostingSpend,
-            maxPrDeploymentTime = maybe emptyDuration fromMinutes prMinutes `addDuration` (extraUsageLimits ^. #prDeployTime),
-            largerServers = fromMaybe False largerServers
-          }
-    [] ->
-      pure
-        $ Hosting
-          { planIncludedBranchDeploymentHosts = 0,
-            extraBranchHostingSpend = extraUsageLimits ^. #hostingSpend,
-            maxPrDeploymentTime = emptyDuration,
-            largerServers = False
-          }
-    _ : _ : _ -> throw $ OtherError "impossible: more than one result from aggregate query"
 
 queryCiTimeEntitlements :: GhRepoOwner -> M Duration
 queryCiTimeEntitlements repoOwner = do
@@ -411,27 +370,3 @@ setExtraUsageLimits owner newLimits = do
             extra_hosting_spending_limit_in_usd = ${extraHostingSpendInUsd}
       |]
 
-getExtraUsageLimits :: GhRepoOwner -> M ExtraUsageLimits
-getExtraUsageLimits owner = do
-  result <-
-    map
-      ( \(extraCiMinutes :: Int32, extraPrMinutes :: Int32, extraHostingSpendInUsd :: Int32) ->
-          ExtraUsageLimits
-            { ciTime = fromMinutes extraCiMinutes,
-              prDeployTime = fromMinutes extraPrMinutes,
-              hostingSpend = usd extraHostingSpendInUsd
-            }
-      )
-      <$> DB.pgQuery
-        [pgSQL|
-          SELECT
-            extra_ci_time_in_minutes,
-            extra_pr_hosting_in_minutes,
-            extra_hosting_spending_limit_in_usd
-          FROM repo_owner_usage_limits
-          WHERE repo_owner = ${owner}
-        |]
-  case result of
-    [limits] -> pure limits
-    [] -> pure emptyUsageLimits
-    _ -> throw $ OtherError "impossible: more than one usage limits row for repo owner"

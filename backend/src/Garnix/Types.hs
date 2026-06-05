@@ -32,7 +32,6 @@ import Data.Text qualified as T
 import Data.Text.Encoding (decodeUtf8)
 import Database.PostgreSQL.Typed.Types (PGStringType)
 import Garnix.Duration
-import Garnix.Hosting.ServerPool.Types
 import Garnix.MonetaryCost
 import Garnix.Nix.Types qualified as Nix
 import Garnix.Prelude
@@ -977,8 +976,6 @@ data Error
   | DuplicateBuild
   | UserAlreadyExists GhLogin
   | DbError {statement :: Text, message :: Text}
-  | ProvisioningError {message :: Text}
-  | ActivationError {serverInfo :: ServerInfo, stdErr :: Text}
   | GithubDidntGiveUsAToken
   | RedirectFound {location :: Text}
   | BadRequest {message :: Text}
@@ -1071,19 +1068,6 @@ instance Pretty Error where
     DbError {} -> "Something went wrong"
     ErrorGettingBuildPlan {..} -> "Couldn't get build plan. Error was: " <> pretty message
     ErrorGettingAttributesToBuild {..} -> "Couldn't get attributes to build. Error was: " <> pretty message
-    ProvisioningError {..} ->
-      "Error provisioning server:" <+> pretty message
-    ActivationError {serverInfo, stdErr} ->
-      pretty
-        $ T.unlines
-          [ "Failed to activate server",
-            "You may be able to debug this by sshing into "
-              <> cs (_serverInfoIpv4Addr serverInfo)
-              <> " or "
-              <> cs (_serverInfoIpv6Addr serverInfo),
-            "Stderr:",
-            stdErr
-          ]
     SshTimeout {command} ->
       pretty $ "ssh command timed out: " <> command
     OtherError message -> pretty message
@@ -1202,10 +1186,6 @@ toErrorDetails e = case err e of
     errorDetails 400 $ showPretty e
   e@(ErrorGettingAttributesToBuild _) ->
     errorDetails 400 $ showPretty e
-  ProvisioningError _errMsg ->
-    errorDetails 500 "Error provisioning server. This could be a temporary error."
-  ActivationError serverInfo stdErr ->
-    errorDetails 400 $ "Error activating server at " <> _serverInfoIpv4Addr serverInfo <> ": " <> stdErr
   SshTimeout {command} ->
     errorDetails 500 $ "Timeout: ssh command " <> command
   OtherError errMsg ->
@@ -1440,126 +1420,6 @@ instance ToJSON PullRequestResult where
   toEncoding = ourToEncoding
   toJSON = ourToJSON
 
--- * Hosting Types
-
-newtype ServerId = ServerId {getServerId :: HashId}
-  deriving stock (Eq, Show, Generic)
-  deriving newtype
-    ( ToJSON,
-      FromJSON,
-      FromHttpApiData,
-      ToHttpApiData,
-      PGColumn "bigint",
-      PGParameter "bigint"
-    )
-
-instance Pretty ServerId where
-  pretty = pretty . getHashId . getServerId
-
-newtype PreprovisionedServerId = PreprovisionedServerId {getPreprovisionedServerId :: Int64}
-  deriving stock (Eq, Show, Generic)
-  deriving newtype
-    ( ToJSON,
-      FromJSON,
-      FromHttpApiData,
-      ToHttpApiData,
-      PGColumn "bigint",
-      PGParameter "bigint"
-    )
-
-instance Pretty PreprovisionedServerId where
-  pretty = pretty . getPreprovisionedServerId
-
-newtype HetznerServerId = HetznerServerId {getHetznerServerId :: Int32}
-  deriving stock (Eq, Show, Ord, Generic)
-  deriving newtype
-    ( ToJSON,
-      FromJSON,
-      FromHttpApiData,
-      ToHttpApiData,
-      PGColumn "integer",
-      PGParameter "integer",
-      Enum
-    )
-
-instance Pretty HetznerServerId where
-  pretty = pretty . show . getHetznerServerId
-
-data ServerInfo = ServerInfo
-  { _serverInfoId :: ServerId,
-    _serverInfoHetznerServerId :: HetznerServerId,
-    _serverInfoIpv4Addr :: Text,
-    _serverInfoIpv6Addr :: Text,
-    _serverInfoCreatedAt :: UTCTime,
-    _serverInfoEndedAt :: Maybe UTCTime,
-    _serverInfoConfigurationBuildId :: BuildId,
-    _serverInfoPullRequest :: Maybe GhPullRequestId,
-    _serverInfoReadyAt :: Maybe UTCTime,
-    _serverInfoBuildPersistenceName :: Maybe Text,
-    _serverInfoTier :: ServerTier,
-    _serverInfoIsPrimary :: Bool
-  }
-  deriving stock (Eq, Show, Generic)
-
-instance Pretty ServerInfo where
-  pretty s =
-    "server:"
-      <+> Pretty.line
-      <+> Pretty.nest
-        2
-        ( vsep
-            [ "id:" <+> pretty (_serverInfoId s),
-              "hetzner id:" <+> pretty (_serverInfoHetznerServerId s),
-              "ipv4:" <+> pretty (_serverInfoIpv4Addr s),
-              "ipv6:" <+> pretty (_serverInfoIpv6Addr s),
-              "created at:" <+> pretty (show $ _serverInfoCreatedAt s),
-              "initialized at:" <+> pretty (show $ _serverInfoReadyAt s),
-              "ended at:" <+> pretty (show $ _serverInfoEndedAt s)
-            ]
-        )
-
-data DeploymentType
-  = BranchDeployment Branch
-  | GhPrDeployment GhPullRequestId
-  deriving stock (Eq, Show, Generic)
-
-instance ToJSON DeploymentType where
-  toJSON = ourToJSON
-
-fromDeploymentType :: (Branch -> a) -> (GhPullRequestId -> a) -> DeploymentType -> a
-fromDeploymentType a b = \case
-  BranchDeployment branch -> a branch
-  GhPrDeployment prId -> b prId
-
-ghPrDeployment :: DeploymentType -> Maybe GhPullRequestId
-ghPrDeployment = fromDeploymentType (const Nothing) Just
-
-data PreprovisionedServer = PreprovisionedServer
-  { _preprovisionedServerId :: PreprovisionedServerId,
-    _preprovisionedServerHetznerServerId :: HetznerServerId,
-    _preprovisionedServerIpv4Addr :: Text,
-    _preprovisionedServerIpv6Addr :: Text,
-    _preprovisionedServerCreatedAt :: UTCTime,
-    _preprovisionedServerReadyAt :: Maybe UTCTime
-  }
-  deriving stock (Eq, Show, Generic)
-
--- * DeployPlan
-
-data ServerToSpinUp = ServerToSpinUp
-  { serverTier :: ServerTier,
-    build :: Build,
-    domainIsPrimary :: Bool
-  }
-  deriving stock (Show, Eq, Generic)
-
-data DeployPlan = DeployPlan
-  { toSpinDown :: [ServerInfo],
-    toSpinUp :: [ServerToSpinUp],
-    toRedeploy :: [(ServerInfo, Build)]
-  }
-  deriving stock (Show, Eq, Generic)
-
 -- * FrontendConfig
 
 data FrontendConfig = FrontendConfig
@@ -1608,37 +1468,6 @@ data Severity
     -- | Examples: Individual package build start/completion, detailed deployment events, debugging info, etc.
     Informational
   deriving (Eq, Enum, Bounded, Read, Show, Ord)
-
-newtype PrHostList = PrHostList
-  { prHostList :: [Host]
-  }
-  deriving stock (Eq, Show, Generic)
-
-hostToDomainName :: Host -> Text
-hostToDomainName host =
-  getPackageName (_hostPackageName host)
-    <> "."
-    <> maybe (getBranch (_hostBranch host)) (("pull-" <>) . show . getGhPullRequestId) (_hostPullRequest host)
-    <> "."
-    <> getGhRepoName (_hostRepoName host)
-    <> "."
-    <> getGhLogin (getGhRepoOwner (_hostRepoOwner host))
-
-data Host = Host
-  { _hostRepoOwner :: GhRepoOwner,
-    _hostRepoName :: GhRepoName,
-    _hostBranch :: Branch,
-    _hostPackageName :: PackageName,
-    _hostPullRequest :: Maybe GhPullRequestId,
-    _hostIpV4Addr :: Text,
-    _hostIpV6Addr :: Text,
-    _hostDrvPath :: Maybe FilePath,
-    _hostPersistenceName :: Maybe Text,
-    _hostServerId :: ServerId,
-    _hostHetznerId :: HetznerServerId,
-    _hostIsPrimary :: Bool
-  }
-  deriving stock (Eq, Show, Generic)
 
 newtype Candidate a = Candidate {promoteCandidate :: a}
 
@@ -1768,9 +1597,6 @@ makeFields ''RunOutput
 makeFields ''User
 makeFields ''CreatingUser
 makeFields ''CreateUser
-makeFields ''ServerInfo
-makeFields ''PreprovisionedServer
-makeFields ''Host
 makeFields ''CommitInfo
 makeFields ''RepoInfo
 makeFields ''PackageInfo
@@ -1784,8 +1610,6 @@ makeFields ''ProductPlan
 makePrisms ''User
 makePrisms ''Repo
 makePrisms ''Build
-makePrisms ''ServerInfo
-makePrisms ''Host
 makePrisms ''CommitInfo
 makePrisms ''PackageInfo
 makePrisms ''RepoInfo

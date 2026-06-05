@@ -12,7 +12,6 @@ import Garnix.Monad
 import Garnix.Prelude
 import Garnix.TestHelpers.Common
 import Garnix.TestHelpers.GithubInterface.Deprecated qualified as Deprecated
-import Garnix.TestHelpers.HetznerMock
 import Garnix.TestHelpers.Monad (cleanDbConn, githubAppPk)
 import Garnix.TestInstances ()
 import Garnix.Types hiding (head)
@@ -53,11 +52,8 @@ addTestSecrets test =
   withSystemTempDirectory "garnix-test" $ \tempDir -> do
     backendDir <- getCurrentDirectory >>= makeAbsolute
     let jwtKey = backendDir <> "/dev-key.jwt"
-        hetznerToken = tempDir <> "/hetznerToken"
         s3CacheKeyFile = tempDir </> "cache-priv-key-file"
-    writeFile hetznerToken "foo"
     writeFile s3CacheKeyFile "key-name:key"
-    sshKey <- makeAbsolute "ssh-key-for-tests"
     repoSecretsPath <- makeAbsolute "test/spec/data/repo-secrets.key"
     withModifiedEnvironment
       [ ("GITHUB_WEBHOOK_SECRET", "foo"),
@@ -66,9 +62,7 @@ addTestSecrets test =
         ("GITHUB_APP_ID", "42"),
         ("GITHUB_APP_PK", githubAppPk),
         ("GITHUB_APP_NAME", "foo"),
-        ("GARNIX_SERVER_SSH_KEYS", sshKey),
         ("JWT_KEY", jwtKey),
-        ("HETZNER_TOKEN", hetznerToken),
         ("OPENSEARCH_API", "foo"),
         ("REPO_SECRETS_KEY_PATH", repoSecretsPath),
         ("REPO_SECRETS_PUB_KEY", "age107r0e6nxchkrqdxg42tzdxeauez2ce7cpsajcggjwmpjgrlrnqfqy6tnlf"),
@@ -97,8 +91,6 @@ withMockRepo flake yaml branch action = do
         ghInterface <- Deprecated.testGithubInterface mockGithubRepo buildRef
         let env =
               env'
-                & #hetznerInterface
-                .~ testHetznerInterface
                 & #githubInterface
                 .~ ghInterface
                 & #s3CacheEnv

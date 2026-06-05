@@ -1,6 +1,5 @@
 module Garnix.Log where
 
-import Garnix.Hosting.ServerPool.Types
 import Garnix.Prelude
 import Garnix.Types
 import GitHub.App.Auth (InstallationAuth)
@@ -68,9 +67,6 @@ instance Loggable PackageInfo where
 
 instance Loggable GhToken where
   asLog _ = []
-
-instance Loggable ServerTier where
-  asLog serverTier = [("server_tier", show serverTier)]
 
 instance
   (Loggable a, Loggable b, Loggable c) =>

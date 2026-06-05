@@ -12,7 +12,6 @@ import Data.Map.Strict qualified as Map
 import Data.Maybe (fromJust)
 import Data.Yaml (decodeThrow)
 import Data.Yaml.TH (yamlQQ)
-import Database.PostgreSQL.Typed (pgSQL)
 import Garnix.API.Account
   ( EnabledRepos (..),
     OrgUsage (..),
@@ -22,11 +21,9 @@ import Garnix.API.Account
   )
 import Garnix.AccessToken
 import Garnix.AccessToken.Types
-import Garnix.DB qualified as DB
 import Garnix.Duration
 import Garnix.Entitlements qualified as Entitlements
 import Garnix.GithubInterface.Types
-import Garnix.Hosting.ServerPool.Types
 import Garnix.Monad
 import Garnix.MonetaryCost (usd)
 import Garnix.Prelude
@@ -64,7 +61,7 @@ spec = inM $ beforeM_ truncateDBM $ aroundM_ suppressLogsWhenPassing $ do
         mockGithubInterface (GhToken "user-with-no-builds") [] $ do
           testUser <- mkTestUser
           usage <- usageOverview $ pure $ WebSession testUser (GhToken "user-with-no-builds")
-          liftIO $ usage `shouldBe` UsageOverview (fromList [("mock-user", OrgUsage defaultPlan emptyDuration emptyDuration 0 NoActiveInstallation)])
+          liftIO $ usage `shouldBe` UsageOverview (fromList [("mock-user", OrgUsage defaultPlan emptyDuration emptyDuration NoActiveInstallation)])
 
       it "reports empty usage when the user has no builds this month" $ do
         defaultPlan <- getDefaultPlan
@@ -74,7 +71,7 @@ spec = inM $ beforeM_ truncateDBM $ aroundM_ suppressLogsWhenPassing $ do
           _ <- addTestBuild "owner" monthsAgo (fromSeconds @Int 100)
           _ <- addTestBuild "owner" monthsAgo (fromSeconds @Int 100)
           usage <- usageOverview $ pure $ WebSession testUser (GhToken "user-with-one-org")
-          liftIO $ usage `shouldBe` UsageOverview (fromList [("mock-user", OrgUsage defaultPlan emptyDuration emptyDuration 0 NoActiveInstallation)])
+          liftIO $ usage `shouldBe` UsageOverview (fromList [("mock-user", OrgUsage defaultPlan emptyDuration emptyDuration NoActiveInstallation)])
 
       it "reports usage of all build minutes for the user's installation" $ do
         defaultPlan <- getDefaultPlan
@@ -90,9 +87,9 @@ spec = inM $ beforeM_ truncateDBM $ aroundM_ suppressLogsWhenPassing $ do
             $ usage
             `shouldBe` UsageOverview
               ( fromList
-                  [ (GhRepoOwner $ GhLogin "org-with-no-builds", OrgUsage defaultPlan emptyDuration emptyDuration 0 NoActiveInstallation),
-                    (GhRepoOwner $ GhLogin "mock-user", OrgUsage defaultPlan (fromSeconds @Int 300) emptyDuration 0 NoActiveInstallation),
-                    (GhRepoOwner $ GhLogin "work-org", OrgUsage defaultPlan (fromSeconds @Int 400) emptyDuration 0 NoActiveInstallation)
+                  [ (GhRepoOwner $ GhLogin "org-with-no-builds", OrgUsage defaultPlan emptyDuration emptyDuration NoActiveInstallation),
+                    (GhRepoOwner $ GhLogin "mock-user", OrgUsage defaultPlan (fromSeconds @Int 300) emptyDuration NoActiveInstallation),
+                    (GhRepoOwner $ GhLogin "work-org", OrgUsage defaultPlan (fromSeconds @Int 400) emptyDuration NoActiveInstallation)
                   ]
               )
 
@@ -124,84 +121,10 @@ spec = inM $ beforeM_ truncateDBM $ aroundM_ suppressLogsWhenPassing $ do
                           )
                           emptyDuration
                           emptyDuration
-                          0
                           NoActiveInstallation
                       )
                     ]
                 )
-
-    describe "pr deployment minutes" $ do
-      it "sums up pr deployment minutes" $ do
-        defaultPlan <- getDefaultPlan
-        now <- liftIO getCurrentTime
-        mockGithubInterface (GhToken "token") ["org"] $ do
-          testUser <- mkTestUser
-          build <- addTestBuild "mock-user" now emptyDuration
-          addServer build (Just 42) now (Just $ fromSeconds @Int 1)
-          build <- addTestBuild "org" now emptyDuration
-          addServer build (Just 42) now (Just $ fromSeconds @Int 2)
-          usage <- usageOverview (pure $ WebSession testUser (GhToken "token"))
-          liftIO
-            $ usage
-            `shouldBe` UsageOverview
-              ( fromList
-                  [ ( "org",
-                      OrgUsage
-                        { _orgUsagePlan = defaultPlan,
-                          _orgUsageCiTime = emptyDuration,
-                          _orgUsagePrDeploymentTime = fromSeconds @Int 2,
-                          _orgUsageBranchDeploymentHosts = 0,
-                          _orgUsageInstallationStatus = NoActiveInstallation
-                        }
-                    ),
-                    ( "mock-user",
-                      OrgUsage
-                        { _orgUsagePlan = defaultPlan,
-                          _orgUsageCiTime = emptyDuration,
-                          _orgUsagePrDeploymentTime = fromSeconds @Int 1,
-                          _orgUsageBranchDeploymentHosts = 0,
-                          _orgUsageInstallationStatus = NoActiveInstallation
-                        }
-                    )
-                  ]
-              )
-
-    describe "branch deployments" $ do
-      it "returns the number of running hosts" $ do
-        defaultPlan <- getDefaultPlan
-        now <- liftIO getCurrentTime
-        mockGithubInterface (GhToken "token") ["org"] $ do
-          testUser <- mkTestUser
-          build <- addTestBuild "mock-user" now emptyDuration
-          addServer build Nothing now Nothing
-          build <- addTestBuild "org" now emptyDuration
-          addServer build Nothing now Nothing
-          addServer build Nothing now Nothing
-          usage <- usageOverview (pure $ WebSession testUser (GhToken "token"))
-          liftIO
-            $ usage
-            `shouldBe` UsageOverview
-              ( fromList
-                  [ ( "org",
-                      OrgUsage
-                        { _orgUsagePlan = defaultPlan,
-                          _orgUsageCiTime = emptyDuration,
-                          _orgUsagePrDeploymentTime = emptyDuration,
-                          _orgUsageBranchDeploymentHosts = 2,
-                          _orgUsageInstallationStatus = NoActiveInstallation
-                        }
-                    ),
-                    ( "mock-user",
-                      OrgUsage
-                        { _orgUsagePlan = defaultPlan,
-                          _orgUsageCiTime = emptyDuration,
-                          _orgUsagePrDeploymentTime = emptyDuration,
-                          _orgUsageBranchDeploymentHosts = 1,
-                          _orgUsageInstallationStatus = NoActiveInstallation
-                        }
-                    )
-                  ]
-              )
 
     describe "plans" $ do
       it "returns the current plan of the user"
@@ -283,7 +206,6 @@ spec = inM $ beforeM_ truncateDBM $ aroundM_ suppressLogsWhenPassing $ do
                   )
                   (fromSeconds @Int 50)
                   emptyDuration
-                  0
                   NoActiveInstallation
 
       it "returns plans for orgs that the user is an admin for (without usage)" $ do
@@ -311,7 +233,6 @@ spec = inM $ beforeM_ truncateDBM $ aroundM_ suppressLogsWhenPassing $ do
                   )
                   emptyDuration
                   emptyDuration
-                  0
                   NoActiveInstallation
 
       it "merges multiple plans into one" $ do
@@ -342,7 +263,6 @@ spec = inM $ beforeM_ truncateDBM $ aroundM_ suppressLogsWhenPassing $ do
                           )
                           emptyDuration
                           emptyDuration
-                          0
                           NoActiveInstallation
                       )
                     ]
@@ -616,18 +536,3 @@ mkTestUser = do
         _userCreatedAt = now
       }
 
-addServer :: Build -> Maybe GhPullRequestId -> UTCTime -> Maybe Duration -> M ()
-addServer build pr now duration = do
-  let (start, end) = case duration of
-        Nothing -> (now, Nothing)
-        Just duration -> (subTime duration now, Just now)
-  res <-
-    DB.pgExec
-      [pgSQL|
-        INSERT INTO servers
-          (configuration_build_id, hetzner_id, created_at, ready_at, ended_at, pull_request, ipv4, ipv6, server_tier) VALUES
-          (${build ^. id}, 1, ${start}, ${start}, ${end}, ${pr}, '<none>', '<none>', ${def :: ServerTier})
-      |]
-  case res of
-    1 -> pure ()
-    n -> throw $ OtherError $ "impossible: " <> show n

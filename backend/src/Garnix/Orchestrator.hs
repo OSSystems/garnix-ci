@@ -10,17 +10,13 @@ where
 
 import Garnix.Async (Promise)
 import Garnix.Build (buildFlake, rerunBuild)
-import Garnix.Build.Checkout qualified as Build.Checkout
-import Garnix.Build.Helpers (withInternalCacheToken)
 import Garnix.DB qualified as DB
-import Garnix.Hosting.Deploy (rolloutNewServerVersion)
 import Garnix.Monad
 import Garnix.Monad.Async (emptyPromise, resolve, spawn)
 import Garnix.Prelude
 import Garnix.Reporters.GithubReporter (mkGithubReporter)
 import Garnix.Reporters.OpenSearchReporter (openSearchReporter)
 import Garnix.Types hiding (ghRunId)
-import Garnix.Types qualified as Types
 import GitHub.App.Auth qualified as GH
 
 data RerunEvent = RerunEvent
@@ -33,23 +29,12 @@ data RerunEvent = RerunEvent
   deriving stock (Generic)
 
 handlePullRequest :: (HasCallStack) => Reporter -> CommitInfo -> GhPullRequestId -> M (Promise ())
-handlePullRequest reporter commitInfo prId = do
+handlePullRequest reporter commitInfo _prId = do
   assertIsAllowedToBuild (commitInfo ^. repoInfo . ghRepoOwner) (commitInfo ^. repoInfo . ghRepoName)
 
   withSpan commitInfo $ spawn $ do
-    -- We assume the build is already running if it's NOT a fork.
     when (isJust $ commitInfo ^. prFromFork) $ do
       buildFlake reporter commitInfo >>= resolve
-
-    -- If it's not a fork, we're already attempting to deploy in `buildFlake`.
-    when (isNothing $ commitInfo ^. prFromFork) $ do
-      deployPrServers prId
-  where
-    deployPrServers :: GhPullRequestId -> M ()
-    deployPrServers prId = do
-      Build.Checkout.withCheckout commitInfo $ withSpan prId $ do
-        withInternalCacheToken (commitInfo ^. Types.reqUser) $ do
-          void (rolloutNewServerVersion reporter commitInfo $ GhPrDeployment prId)
 
 handleCommit :: (HasCallStack) => Reporter -> Bool -> CommitInfo -> M (Promise ())
 handleCommit reporter allowDuplicateRun commitInfo = do

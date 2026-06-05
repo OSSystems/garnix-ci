@@ -1,5 +1,0 @@
-displayName: Heartbeat Middleware
-summary: "Heartbeat Middleware"
-type: middleware
-import: github.com/garnix-io/garnix/heartbeatmiddleware
-testData: {}

@@ -25,7 +25,6 @@ export const UsageComponent = () => {
             <th>Plan</th>
             <th>CI minutes (used{nonBreakingSlash}max)</th>
             <th>PR deployment minutes (used{nonBreakingSlash}max)</th>
-            <th>Deployed hosts (used{nonBreakingSlash}max)</th>
           </tr>
         </thead>
         <tbody>
@@ -67,11 +66,6 @@ export const UsageComponent = () => {
                         {formatMinutes(usage.pr_deployment_time)}
                         {nonBreakingSlash}
                         {formatMinutes(usage.plan.maximum_pr_deployment_time)}
-                      </td>
-                      <td>
-                        {usage.branch_deployment_hosts}
-                        {nonBreakingSlash}
-                        {usage.plan.included_branch_deployment_hosts}
                       </td>
                       <td>
                         <Link

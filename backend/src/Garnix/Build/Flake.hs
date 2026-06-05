@@ -15,7 +15,6 @@ import Garnix.Build.Reporting
 import Garnix.DB qualified as DB
 import Garnix.Entitlements (addDefaultEntitlements, getPlan, hasRemainingCiTime)
 import Garnix.GetAttributes
-import Garnix.Hosting.Deploy (rolloutNewServerVersion)
 import Garnix.Modules qualified as Modules
 import Garnix.Monad
 import Garnix.Monad.Async (joinAll, joinAll_, resolve, spawn)
@@ -74,30 +73,7 @@ runBuildFlake reporter buildKind commitInfo withCheckout = do
               when allBuildsSucceeded $ do
                 Modules.publish reporter config commitInfo
 
-              deployments <- case (commitInfo ^. prFromFork, commitInfo ^. branch) of
-                (Nothing, Nothing) -> do
-                  log Critical "Both branch and fork info are missing. Expected exactly one to be present."
-                  pure []
-                (Just _, Just _) -> do
-                  log Critical "Both branch and fork info are present. Expected exactly one to be present."
-                  pure []
-                (Nothing, Just (branch :: Branch)) -> do
-                  if allBuildsSucceeded
-                    then do
-                      rolloutNewServerVersion reporter commitInfo (BranchDeployment branch)
-                    else pure []
-                (Just (_ :: PrFromFork), Nothing) -> do
-                  log Notice "PR is from fork. Not deploying servers"
-                  pure []
-
-              let allDeploymentsSucceeded =
-                    all
-                      ( \serverInfo ->
-                          isJust (serverInfo ^. readyAt)
-                            && isNothing (serverInfo ^. endedAt)
-                      )
-                      deployments
-              if allBuildsSucceeded && allDeploymentsSucceeded
+              if allBuildsSucceeded
                 then MetaCheck.updateSuccess commitInfo metaCheckRun
                 else MetaCheck.updateFail commitInfo metaCheckRun Nothing
 

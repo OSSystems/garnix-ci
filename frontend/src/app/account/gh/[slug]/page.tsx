@@ -61,12 +61,6 @@ const Page = ({ params }: { params: Record<string, string> }) => {
           total={toMinutes(usage.plan.maximum_pr_deployment_time)}
           precision={2}
         />
-        <UsageMeter
-          name="Hosts"
-          current={usage.branch_deployment_hosts}
-          total={usage.plan.included_branch_deployment_hosts}
-          precision={0}
-        />
       </div>
 
       <h2>Usage limits</h2>

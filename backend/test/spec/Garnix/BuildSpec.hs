@@ -1129,51 +1129,6 @@ spec = do
                                              RunReportStatusSuccess
                                            ]
 
-        context "deployments" $ do
-          let serverInfo =
-                ServerInfo
-                  { _serverInfoId = ServerId $ 1 ^. from hashIdInt,
-                    _serverInfoHetznerServerId = HetznerServerId 1,
-                    _serverInfoIpv4Addr = "<none>",
-                    _serverInfoIpv6Addr = "<none>",
-                    _serverInfoCreatedAt = error "not set",
-                    _serverInfoEndedAt = Nothing,
-                    _serverInfoConfigurationBuildId = BuildId $ 1 ^. from hashIdInt,
-                    _serverInfoPullRequest = Nothing,
-                    _serverInfoReadyAt = Nothing,
-                    _serverInfoBuildPersistenceName = Nothing,
-                    _serverInfoTier = def,
-                    _serverInfoIsPrimary = False
-                  }
-              succeededDeployment now = serverInfo & createdAt .~ now & readyAt ?~ now
-              failedDeployment now = serverInfo & createdAt .~ now & readyAt .~ Nothing
-
-          it "succeeds when deployments succeed" $ GH.withFakeGithubInterface $ \ghState -> do
-            now <- liftIO getCurrentTime
-            GH.withLocalRepo ghState "owner" "repo" identity defaultCommitInfo (GH.simpleSetup emptyFlake) $ \commitInfo ->
-              withMockReturning #executeDeployPlanMock [succeededDeployment now]
-                $ void
-                $ try (testHandleCommit commitInfo)
-            report <- GH.getReports ghState >>= GH.assertSingleRunForReport "All Garnix checks"
-            report `GH.reportsShouldBe` [RunReportStatusInProgress, RunReportStatusSuccess]
-
-          it "fails when deployments fail" $ GH.withFakeGithubInterface $ \ghState -> do
-            now <- liftIO getCurrentTime
-            GH.withLocalRepo ghState "owner" "repo" identity defaultCommitInfo (GH.simpleSetup emptyFlake) $ \commitInfo ->
-              withMockReturning #executeDeployPlanMock [succeededDeployment now, failedDeployment now]
-                $ void
-                $ try (testHandleCommit commitInfo)
-            report <- GH.getReports ghState >>= GH.assertSingleRunForReport "All Garnix checks"
-            report `GH.reportsShouldBe` [RunReportStatusInProgress, RunReportStatusFailure]
-
-          it "fails when deployments throw monadic errors" $ GH.withFakeGithubInterface $ \ghState -> do
-            GH.withLocalRepo ghState "owner" "repo" identity defaultCommitInfo (GH.simpleSetup emptyFlake) $ \commitInfo ->
-              withMock #executeDeployPlanMock (const $ throw (OtherError ""))
-                $ void
-                $ try (testHandleCommit commitInfo)
-            report <- GH.getReports ghState >>= GH.assertSingleRunForReport "All Garnix checks"
-            report `GH.reportsShouldBe` [RunReportStatusInProgress, RunReportStatusFailure]
-
       describe "build logs" $ do
         let flake =
               cs

@@ -7,8 +7,6 @@ import Data.Either (fromRight)
 import Data.Map qualified as Map
 import Garnix.DB.FeatureFlags.Types
 import Garnix.Duration
-import Garnix.Hosting.Helpers (BranchServerGroupIdentifier (BranchServerGroupIdentifier))
-import Garnix.Hosting.ServerPool.Types
 import Garnix.Monad
 import Garnix.Nix.Types qualified as Nix
 import Garnix.Prelude
@@ -160,9 +158,6 @@ instance Arbitrary HookMilestone where
 instance Arbitrary PullRequestTarget where
   arbitrary = genericArbitrary uniform
 
-instance Arbitrary ServerTier where
-  arbitrary = arbitraryBoundedEnum
-
 deriving instance Eq ServerEvent
 
 deriving instance Show ServerEvent
@@ -186,14 +181,6 @@ instance Arbitrary Duration where
           ],
         arbitrary
       ]
-
-instance Arbitrary BranchServerGroupIdentifier where
-  arbitrary =
-    BranchServerGroupIdentifier
-      <$> elements ["owner-a", "owner-b"]
-      <*> elements ["repo-a", "repo-b"]
-      <*> elements ["server-a", "server-b"]
-      <*> arbitrary
 
 instance Arbitrary FeatureFlagConfigDbo where
   arbitrary = genericArbitrary uniform

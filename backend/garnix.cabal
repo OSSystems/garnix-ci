@@ -43,7 +43,6 @@ library
       Garnix.API.Dev
       Garnix.API.GhWebhooks
       Garnix.API.Health
-      Garnix.API.Hosts
       Garnix.API.Keys
       Garnix.API.Modules
       Garnix.API.Runs
@@ -75,11 +74,6 @@ library
       Garnix.GetAttributes
       Garnix.GithubInterface
       Garnix.GithubInterface.Types
-      Garnix.HetznerInterface
-      Garnix.Hosting.Deploy
-      Garnix.Hosting.Helpers
-      Garnix.Hosting.ServerPool
-      Garnix.Hosting.ServerPool.Types
       Garnix.Incremental
       Garnix.Log
       Garnix.Modules
@@ -715,7 +709,6 @@ test-suite spec
       Garnix.API.DevSpec
       Garnix.API.GhWebhooksSpec
       Garnix.API.HealthSpec
-      Garnix.API.HostsSpec
       Garnix.API.KeysSpec
       Garnix.API.ModulesSpec
       Garnix.API.RunsSpec
@@ -727,16 +720,11 @@ test-suite spec
       Garnix.BuildSpec
       Garnix.DB.FeatureFlagsSpec
       Garnix.DBSpec
-      Garnix.DeploySpec
       Garnix.EntitlementsSpec
       Garnix.ExpiringCacheSpec
       Garnix.FlakeInputAuthorizationSpec
       Garnix.GetAttributesSpec
       Garnix.GithubInterfaceSpec
-      Garnix.HetznerInterfaceSpec
-      Garnix.Hosting.BillingSpec
-      Garnix.Hosting.DeploySpec
-      Garnix.Hosting.ServerPoolSpec
       Garnix.IncrementalSpec
       Garnix.Modules.SchemaSpec
       Garnix.ModulesSpec
@@ -762,11 +750,9 @@ test-suite spec
       Garnix.TestHelpers.GithubInterface
       Garnix.TestHelpers.GithubInterface.Deprecated
       Garnix.TestHelpers.GithubInterface.Internal
-      Garnix.TestHelpers.HetznerMock
       Garnix.TestHelpers.Monad
       Garnix.TestHelpers.NixosVmScripts
       Garnix.TestHelpers.Reporter
-      Garnix.TestHelpers.ServerPool
       Garnix.TestHelpers.WithServer
       Garnix.TestInstances
       Garnix.TypesSpec
@@ -793,7 +779,6 @@ test-suite spec
       Garnix.API.Dev
       Garnix.API.GhWebhooks
       Garnix.API.Health
-      Garnix.API.Hosts
       Garnix.API.Keys
       Garnix.API.Modules
       Garnix.API.Runs
@@ -825,11 +810,6 @@ test-suite spec
       Garnix.GetAttributes
       Garnix.GithubInterface
       Garnix.GithubInterface.Types
-      Garnix.HetznerInterface
-      Garnix.Hosting.Deploy
-      Garnix.Hosting.Helpers
-      Garnix.Hosting.ServerPool
-      Garnix.Hosting.ServerPool.Types
       Garnix.Incremental
       Garnix.Log
       Garnix.Modules

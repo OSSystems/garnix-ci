@@ -11,7 +11,7 @@ import Garnix.TestHelpers
 import Garnix.TestHelpers.Deprecated qualified as Deprecated
 import Garnix.TestHelpers.GithubInterface qualified as GH
 import Garnix.TestHelpers.Monad (aroundM_, beforeM_, inM, shouldBeM, suppressLogsWhenPassing)
-import Garnix.Types hiding (build, context)
+import Garnix.Types hiding (context)
 import Test.Hspec
 
 spec :: Spec

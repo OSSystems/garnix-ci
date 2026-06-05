@@ -3,7 +3,6 @@ module Garnix.TestHelpers where
 import Control.Exception.Lifted qualified
 import Control.Exception.Safe (throwIO)
 import Control.Exception.Safe qualified
-import Control.Lens ((<&>))
 import Cradle
 import Data.Aeson qualified as Aeson
 import Data.Aeson.Lens (key, _String)
@@ -412,73 +411,6 @@ testCommit f = do
       |]
   when (n /= 1) $ do
     error "expected: 1"
-
-addTestServer :: (ServerInfo -> ServerInfo) -> M ServerInfo
-addTestServer f = do
-  now <- liftIO getCurrentTime
-  let testServer =
-        f
-          $ ServerInfo
-            { _serverInfoId = undefined,
-              _serverInfoHetznerServerId = HetznerServerId 1,
-              _serverInfoIpv4Addr = "<none>",
-              _serverInfoIpv6Addr = "<none>",
-              _serverInfoCreatedAt = now,
-              _serverInfoEndedAt = Nothing,
-              _serverInfoConfigurationBuildId = BuildId $ 1 ^. from hashIdInt,
-              _serverInfoPullRequest = Nothing,
-              _serverInfoReadyAt = Nothing,
-              _serverInfoBuildPersistenceName = Nothing,
-              _serverInfoTier = def,
-              _serverInfoIsPrimary = False
-            }
-  DB.pgQueryPrism
-    _ServerInfo
-    [pgSQL|
-        INSERT INTO servers
-            (
-              configuration_build_id,
-              hetzner_id,
-              ipv4,
-              ipv6,
-              created_at,
-              ended_at,
-              ready_at,
-              pull_request,
-              server_tier,
-              is_primary
-            )
-        VALUES
-            (
-              ${testServer ^. configurationBuildId},
-              ${testServer ^. hetznerServerId},
-              ${testServer ^. ipv4Addr},
-              ${testServer ^. ipv6Addr},
-              ${testServer ^. createdAt},
-              ${testServer ^. endedAt},
-              ${testServer ^. readyAt},
-              ${testServer ^. G.pullRequest},
-              ${testServer ^. tier},
-              ${testServer ^. isPrimary}
-            )
-        RETURNING
-          id,
-          hetzner_id,
-          ipv4,
-          ipv6,
-          created_at,
-          ended_at,
-          configuration_build_id,
-          pull_request,
-          ready_at,
-          (SELECT persistence_name
-          FROM builds
-          WHERE id = ${testServer ^. configurationBuildId}
-          LIMIT 1),
-          server_tier,
-          is_primary
-      |]
-    <&> head
 
 parseTimestamp :: (HasCallStack) => String -> UTCTime
 parseTimestamp timestamp = fromJust $ iso8601ParseM timestamp

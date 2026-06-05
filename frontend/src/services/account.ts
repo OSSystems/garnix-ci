@@ -26,7 +26,6 @@ export type OrgUsage = z.infer<typeof orgUsageSchema>;
 const orgUsageSchema = z.object({
   ci_time: z.number().transform(fromSecs),
   pr_deployment_time: z.number().transform(fromSecs),
-  branch_deployment_hosts: z.number(),
   plan: planSchema,
   installation_status: z.discriminatedUnion("tag", [
     z.object({ tag: z.literal("NoActiveInstallation") }),

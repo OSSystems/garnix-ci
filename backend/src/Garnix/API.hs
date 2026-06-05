@@ -12,7 +12,6 @@ import Garnix.API.ConfigSchema (garnixConfigJsonSchema)
 import Garnix.API.Dev (DevAPI, devAPI)
 import Garnix.API.GhWebhooks
 import Garnix.API.Health
-import Garnix.API.Hosts
 import Garnix.API.Keys
 import Garnix.API.Modules
 import Garnix.API.Runs (RunAPI, runAPI)
@@ -41,7 +40,6 @@ data WholeAPI r = WholeAPI
     run :: r :- "api" :> "run" :> Auth '[JWT, Cookie] AuthJwtPayload :> ToServantApi RunAPI,
     modules :: r :- "api" :> "modules" :> Auth '[JWT, Cookie] AuthJwtPayload :> ToServantApi ModulesAPI,
     dev :: r :- "api" :> "dev" :> ToServantApi DevAPI,
-    hosts :: r :- "api" :> "hosts" :> ToServantApi HostsAPI,
     keys :: r :- "api" :> "keys" :> Capture "owner" GhRepoOwner :> Capture "repo" GhRepoName :> "repo-key.public" :> Get '[PlainText] PublicKey,
     actionKeys :: r :- "api" :> "keys" :> Capture "owner" GhRepoOwner :> Capture "repo" GhRepoName :> "actions" :> Capture "action" PackageName :> "key.public" :> Get '[PlainText] PublicKey,
     login :: r :- "api" :> "login" :> ToServantApi LoginAPI,
@@ -86,7 +84,6 @@ wholeAPI =
       signup = toServant signupAPI,
       whoami = whoAmIAPI,
       authJwt = toServant authJwtAPI,
-      hosts = toServant hostsAPI,
       keys = Garnix.API.Keys.getRepoPublicKey,
       actionKeys = Garnix.API.Keys.getActionPublicKey,
       config = getConfig,

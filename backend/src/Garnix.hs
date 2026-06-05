@@ -3,7 +3,7 @@ module Garnix where
 import Amazonka qualified
 import Amazonka.Auth qualified as Amazonka
 import Amazonka.S3 qualified as Amazonka
-import Control.Concurrent (forkIO, getNumCapabilities, newMVar)
+import Control.Concurrent (getNumCapabilities, newMVar)
 import Control.Exception qualified
 import Control.Exception.Safe qualified as Safe
 import Cradle qualified
@@ -26,10 +26,6 @@ import Garnix.DB.FeatureFlags (withRecachedFeatureFlags)
 import Garnix.DB.FeatureFlags.Types (getFeatureFlagConfig)
 import Garnix.Duration
 import Garnix.GithubInterface
-import Garnix.HetznerInterface
-import Garnix.Hosting.Deploy (stopUnusedServers)
-import Garnix.Hosting.ServerPool qualified as ServerPool
-import Garnix.Hosting.ServerPool.Types
 import Garnix.Monad
 import Garnix.Monad.Metrics (registerMetrics, serveMetrics)
 import Garnix.Monad.Pool qualified
@@ -66,8 +62,7 @@ data Options = Options
     monitoringPort :: Warp.Port,
     metricsPort :: Warp.Port,
     buildLogsDir :: FilePath,
-    buildLogsReportingPort :: Maybe Warp.Port,
-    provisionServerPool :: Bool
+    buildLogsReportingPort :: Maybe Warp.Port
   }
   deriving stock (Eq, Show, Generic)
   deriving anyclass (HasArguments)
@@ -124,18 +119,6 @@ withEnv testFeatures buildLogsDir buildLogsReportingPort action = do
   ghAppName <-
     lookupEnv "GITHUB_APP_NAME"
       >>= maybe (cs <$> readFile "/run/secrets/github_app_name") (pure . cs)
-  sshKeys <- do
-    envValue <- lookupEnv "GARNIX_SERVER_SSH_KEYS"
-    let sshKeyPaths = case envValue of
-          Nothing -> ["/run/secrets/garnix_server_ssh_hosting"]
-          Just v -> map cs $ T.splitOn "," (cs v)
-    forM sshKeyPaths $ \sshKey -> do
-      doesFileExist sshKey >>= \exists ->
-        unless exists
-          $ error
-          $ "ssh key not found: "
-          <> cs sshKey
-      liftIO $ makeAbsolute sshKey
   s3CacheEnv <- do
     amazonkaEnv <- do
       accessKeyId <-
@@ -197,9 +180,6 @@ withEnv testFeatures buildLogsDir buildLogsReportingPort action = do
     lookupEnv "GARNIX_URL" >>= \case
       Nothing -> pure "https://app.garnix.io"
       Just u -> pure u
-  hetznerTok <-
-    lookupEnv "HETZNER_TOKEN"
-      >>= maybe (BSC.readFile "/run/secrets/hetzner-token") (pure . cs)
   opensearchQueryUrl <- fromMaybe "https://opensearch.garnix.io/_msearch" <$> lookupEnv "OPENSEARCH_URL"
   opensearchPass <-
     lookupEnv "OPENSEARCH_API"
@@ -249,13 +229,6 @@ withEnv testFeatures buildLogsDir buildLogsReportingPort action = do
               userNixConfig = defaultNixConfig,
               githubWebhookSecret = ghK,
               githubInterface = realGithubInterface,
-              hetznerInterface = realHetznerInterface,
-              serverPoolConfig =
-                [ (I2x4, 10),
-                  (I4x8, 2),
-                  (I8x16, 1),
-                  (I16x32, 1)
-                ],
               cookieSettings =
                 defaultCookieSettings
                   { cookieXsrfSetting = Nothing,
@@ -269,10 +242,8 @@ withEnv testFeatures buildLogsDir buildLogsReportingPort action = do
               baseUrl = cs burl,
               logger = defaultLogger,
               buildLogsDir = buildLogsDir',
-              hetznerToken = hetznerTok,
               opensearchQueryUrl = opensearchQueryUrl,
               opensearchPassword = opensearchPass,
-              sshUserHostingKeys = sshKeys,
               s3CacheEnv,
               action =
                 ActionEnv
@@ -312,10 +283,6 @@ runWith opts = do
     (Garnix.buildLogsReportingPort opts)
     $ \env -> do
       serveMetrics (Garnix.metricsPort opts) (env ^. #metrics)
-      void . forkIO . void . runM env $ forever (stopUnusedServers' *> threadDelay (fromMinutes @Int 5))
-      if Garnix.provisionServerPool opts
-        then void $ runM env ServerPool.initializeProvisioningPool
-        else hPutStrLn stderr "Not provisioning server pool"
       let settings =
             Warp.defaultSettings
               & Warp.setPort (port opts)
@@ -325,9 +292,6 @@ runWith opts = do
                     void notifyReady
                 )
       Warp.runSettings settings $ Garnix.toApplication env
-  where
-    stopUnusedServers' :: M ()
-    stopUnusedServers' = stopUnusedServers `catchError` (\e -> log Error $ "stopUnusedServer error: " <> show e)
 
 type ContextList =
   '[ JWTSettings,

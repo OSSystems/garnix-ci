@@ -24,7 +24,6 @@ pkgs.writeShellScriptBin "withSecrets" ''
     export GITHUB_APP_PK=$(extract github_app_pk)
     export GITHUB_WEBHOOK_SECRET=$(extract github_webhook_secret)
     export GITHUB_CLIENT_SECRET=$(extract github_client_secret)
-    export HETZNER_TOKEN=$(extract hetzner-token)
     export OPENSEARCH_API=$(extract opensearch-garnix)
     export REPO_SECRETS_KEY_PATH=$REPO_ROOT/backend/test/spec/data/repo-secrets.key
     export REPO_SECRETS_PUB_KEY=age107r0e6nxchkrqdxg42tzdxeauez2ce7cpsajcggjwmpjgrlrnqfqy6tnlf
@@ -37,12 +36,10 @@ pkgs.writeShellScriptBin "withSecrets" ''
     export S3_CACHE_REGION="auto"
 
     export GARNIX_SERVER_SSH_FILE=$(mktemp)
-    export GARNIX_SERVER_SSH_HOSTING_FILE=$(mktemp)
     export CACHE_PRIV_KEY_FILE=$(mktemp)
-    trap 'rm -v "$GARNIX_SERVER_SSH_FILE" "$GARNIX_SERVER_SSH_HOSTING_FILE" "$CACHE_PRIV_KEY_FILE" 1>&2' EXIT
+    trap 'rm -v "$GARNIX_SERVER_SSH_FILE" "$CACHE_PRIV_KEY_FILE" 1>&2' EXIT
     extract garnix_server_ssh > $GARNIX_SERVER_SSH_FILE
-    extract garnix_server_ssh_hosting > $GARNIX_SERVER_SSH_HOSTING_FILE
-    export GARNIX_SERVER_SSH_KEYS="$GARNIX_SERVER_SSH_FILE,$GARNIX_SERVER_SSH_HOSTING_FILE"
+    export GARNIX_SERVER_SSH_KEYS="$GARNIX_SERVER_SSH_FILE"
     extract cache-priv-key > $CACHE_PRIV_KEY_FILE
   fi
 
