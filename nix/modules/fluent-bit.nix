@@ -155,7 +155,7 @@ in
       opensearch = {
         fqdn = lib.mkOption {
           type = lib.types.str;
-          default = config.garnix.opensearch.fqdn;
+          description = "OpenSearch host for log shipping.";
         };
         basicAuth = {
           username = lib.mkOption {
@@ -164,8 +164,21 @@ in
           };
           passwordFile = lib.mkOption {
             type = lib.types.str;
-            default = config.sops.secrets.opensearch-garnix.path;
+            description = "Path to the OpenSearch basic-auth password file.";
           };
+        };
+      };
+
+      buildLogsPipeline = {
+        enable = lib.mkOption {
+          type = lib.types.bool;
+          default = false;
+          description = "Run the build-logs HTTP-in -> OpenSearch pipeline.";
+        };
+        port = lib.mkOption {
+          type = lib.types.int;
+          default = 8888;
+          description = "Port the build-logs HTTP input listens on (::1).";
         };
       };
     };
@@ -266,12 +279,25 @@ in
               Logstash_Prefix = "nginx";
             };
           };
+        } // lib.optionalAttrs cfg.buildLogsPipeline.enable {
+          build-logs =
+            let
+              tag = "build-logs";
+            in
+            {
+              input = {
+                Name = "http";
+                Tag = tag;
+                listen = "::1";
+                port = cfg.buildLogsPipeline.port;
+              };
+              output = defaultOutput // {
+                Match = tag;
+                Logstash_Prefix = "garnix-build-logs";
+              };
+            };
         };
       };
-
-    sops.secrets = {
-      opensearch-garnix = { };
-    };
 
     systemd.services = {
       fluent-bit =

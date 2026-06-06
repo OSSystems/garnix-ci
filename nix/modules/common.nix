@@ -74,6 +74,5 @@
       };
     };
 
-    garnix.monitoring-client.enable = lib.mkDefault true;
   };
 }

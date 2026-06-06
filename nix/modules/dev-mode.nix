@@ -34,61 +34,34 @@ in
     };
   };
 
-  config = lib.mkIf config.garnix.devMode.enable (
-    lib.mkMerge [
+  config = lib.mkIf config.garnix.devMode.enable {
+    users.users.root.password = lib.mkForce null;
+
+    system.activationScripts =
+      let
+        nixos-vm-host-key = "nixos-vm-host-key";
+      in
       {
-        users.users.root.password = lib.mkForce null;
-
-        garnix.ipv4 = lib.mkForce null;
-        garnix.ipv6Address = lib.mkDefault null;
-
-        system.activationScripts =
-          let
-            nixos-vm-host-key = "nixos-vm-host-key";
-          in
-          {
-            ${nixos-vm-host-key} = {
-              text = ''
-                echo "Copying the test VM host key in place"
-                cp ${../data/ssh-key-for-local-dev-secrets} /etc/ssh/ssh_host_ed25519_key
-                chmod 0400 /etc/ssh/ssh_host_ed25519_key
-              '';
-            };
-
-            # Make sure that we decrypt the secrets only after having put in place the host key.
-            setupSecrets = {
-              text = lib.mkDefault "";
-              deps = [ nixos-vm-host-key ];
-            };
-          };
-
-        sops.defaultSopsFile = lib.mkForce ../../secrets/dev.yaml;
-
-        security.pki.certificateFiles = [
-          devCerts.ca.cert
-          ../tests/data/foo.garnix.me.cert.pem
-        ];
-
-        security.acme.certs = lib.mkIf config.garnix.devMode.disableACME (lib.mkForce { });
-      }
-      (lib.mkIf (config.garnix.database.enable) {
-        networking.extraHosts = lib.mkIf config.garnix.devMode.enable ''
-          127.0.0.1 ${config.garnix.database.fqdn}
-        '';
-      })
-      (lib.mkIf (config.garnix.opensearch.enable) {
-        garnix.opensearch.heapSize = lib.mkForce 1024;
-        garnix.opensearch.isSingleNode = lib.mkForce true;
-      })
-      (lib.mkIf (config.networking.hostName == "garnix-server1" || config.networking.hostName == "garnix_server1") {
-        services.garnixServer.provisionServerPool = false;
-        garnix.database = {
-          enable = true;
-          exporter = {
-            enable = true;
-            fqdn = "prometheus-sql-exporter.garnix.io";
-          };
+        ${nixos-vm-host-key} = {
+          text = ''
+            echo "Copying the test VM host key in place"
+            cp ${../data/ssh-key-for-local-dev-secrets} /etc/ssh/ssh_host_ed25519_key
+            chmod 0400 /etc/ssh/ssh_host_ed25519_key
+          '';
         };
-      })
-    ]);
+
+        # Make sure that we decrypt the secrets only after having put in place the host key.
+        setupSecrets = {
+          text = lib.mkDefault "";
+          deps = [ nixos-vm-host-key ];
+        };
+      };
+
+    security.pki.certificateFiles = [
+      devCerts.ca.cert
+      ../tests/data/foo.garnix.me.cert.pem
+    ];
+
+    security.acme.certs = lib.mkIf config.garnix.devMode.disableACME (lib.mkForce { });
+  };
 }

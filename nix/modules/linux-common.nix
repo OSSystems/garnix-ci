@@ -105,6 +105,7 @@ in
 
     ipv6Address = lib.mkOption {
       type = lib.types.nullOr lib.types.str;
+      default = null;
     };
 
     killRogueNixProcesses = lib.mkEnableOption "kill-rogue-nix-processes";
@@ -248,15 +249,6 @@ in
       logError = "stderr warn";
     };
 
-    sops = {
-      gnupg = {
-        sshKeyPaths = [ ];
-      };
-      age = {
-        sshKeyPaths = [ "/etc/ssh/ssh_host_ed25519_key" ];
-      };
-    };
-
     programs.mosh.enable = true;
     # For mosh
     networking.firewall.allowedUDPPorts = [ 60001 60002 60003 ];
@@ -286,7 +278,6 @@ in
 
       acme = {
         acceptTerms = true;
-        defaults.email = "jkarni@garnix.io";
       };
     };
 
@@ -294,7 +285,6 @@ in
       settings = {
         trusted-users = [
           "@wheel"
-          "jkarni_gmail.com"
           "garnix"
         ];
       };
@@ -368,7 +358,6 @@ in
 
     garnix = {
       useGarnixCache = true;
-      fluent-bit.enable = true;
     };
 
     environment.systemPackages = with pkgs; [
@@ -401,19 +390,6 @@ in
       services.getty.autologinUser = "root";
       users.users.root.password = "";
       garnix.devMode.enable = true;
-      garnix.fluent-bit.devModeOutputsToFile = false;
-      garnix.fluent-bit.configuration.pipelines.build-logs.output = {
-        Port = lib.mkForce 80;
-        Tls = lib.mkForce "Off";
-      };
-      garnix.fluent-bit.configuration.pipelines.journal.output = {
-        Port = lib.mkForce 80;
-        Tls = lib.mkForce "Off";
-      };
-      garnix.fluent-bit.configuration.pipelines.nginx.output = {
-        Port = lib.mkForce 80;
-        Tls = lib.mkForce "Off";
-      };
     };
 
     system.activationScripts.diff = {
