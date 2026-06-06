@@ -1,10 +1,5 @@
 \set ON_ERROR_STOP on
 
-DELETE FROM repo_owner_has_product
-  WHERE product = 'test-plan';
-DELETE FROM products
-  WHERE name = 'test-plan';
-DELETE FROM servers;
 DELETE FROM builds;
 
 -- users
@@ -15,47 +10,6 @@ INSERT INTO users
   VALUES
   ('dev-user', 'foo@example.com', 'free');
 SELECT * FROM users;
-
--- products & entitlements
-
-TRUNCATE repo_owner_has_product, products;
-INSERT INTO products
-  (name, hosting, pr_hosting, ci_minutes, title, description, price_id) VALUES
-  ('free-v1', 0, 0, 1500, 'Free Plan',
-   'Includes 1,500 CI minutes and access to the garnix public binary cache.',
-   null);
-
-INSERT INTO products
-  (name, hosting, pr_hosting, ci_minutes, title, description, price_id, visible, token, larger_servers) VALUES
-  ('individual-v1', 1, 10000, 4000, 'Individual Plan',
-   'Includes 10,000 CI minutes, access to the garnix public binary cache, 1 server deployment and 10,000 PR deployment minutes.',
-   'price_1PB26jATmop1ibwYk3blno4n', true, 'Ahnu3ofo', true);
-
-INSERT INTO products
-  (name, hosting, pr_hosting, ci_minutes, title, description, price_id, visible, token) VALUES
-  ('union-v1', 0, 0, 1000000, 'Union Custom Plan',
-   'Includes 1,000,000 CI minutes and a private binary cache (union.cache.garnix.io).',
-   'price_1PriKwATmop1ibwYLh3jfMU9', false, 'eequao2A');
-
--- link to buy this custom product:
--- https://testing.garnix.io/account/manage_plans?account=garnix-io&product_token=eequao2A
-
-INSERT INTO products
-  (name, hosting, pr_hosting, ci_minutes, title, description, price_id, visible, token) VALUES
-  ('local test plan', 100, 100000, 100000, 'local test plan',
-   'local test plan',
-   'test-price-id', false, null);
-
-INSERT INTO repo_owner_has_product
- (repo_owner, product) VALUES
- ('garnix-io', 'local test plan');
-
-INSERT INTO repo_owner_has_product
- (repo_owner, product) VALUES
- ('dev-user', 'local test plan');
-
-SELECT * FROM products;
-SELECT * FROM repo_owner_has_product;
 
 -- builds
 

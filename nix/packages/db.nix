@@ -58,7 +58,7 @@ writeShellScriptBin "db" ''
 
   apply-migrations () {
     echo "Applying migrations"
-    SQITCH_USERNAME=$PGUSER ${migrate}/bin/sqitch deploy --verify "db:pg:$PGDATABASE"
+    SQITCH_USERNAME=$PGUSER ${migrate}/bin/sqitch deploy "db:pg:$PGDATABASE"
   }
 
   copy-db () {

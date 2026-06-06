@@ -1208,29 +1208,7 @@ getRecentHeartbeats =
     |]
 
 getPrDeployDurationForOwner :: GhRepoOwner -> M Duration
-getPrDeployDurationForOwner owner = do
-  res <-
-    pgQuery
-      [pgSQL|
-        SELECT
-          SUM(date_part('EPOCH',
-            ( COALESCE(servers.ended_at, NOW()) -
-              GREATEST(servers.ready_at, date_trunc('month', NOW(), 'UTC'))
-            )
-          )) as _server_seconds
-        FROM servers
-        INNER JOIN builds
-        ON servers.configuration_build_id = builds.id
-        WHERE builds.repo_user = ${owner}
-        AND servers.pull_request IS NOT NULL
-        AND servers.ready_at IS NOT NULL
-        AND (servers.ended_at IS NULL OR
-             servers.ended_at >= date_trunc('month', NOW(), 'UTC'));
-      |]
-  case res of
-    [Just serverSeconds] -> pure $ fromSeconds @Double serverSeconds
-    [Nothing] -> pure emptyDuration
-    _ -> throw $ OtherError "Impossible: more than one result"
+getPrDeployDurationForOwner _ = pure emptyDuration
 
 getCurrentMonthUsage :: GhRepoOwner -> M Duration
 getCurrentMonthUsage owner = do
@@ -1248,18 +1226,8 @@ getCurrentMonthUsages owners = do
           repo_user,
           SUM(LEAST(120 * 60, date_part('EPOCH', (end_time - start_time)))) AS total_build_time
         FROM builds
-        LEFT JOIN installations ON installations.repo_owner = builds.repo_user
         WHERE repo_user = ANY(${owners})
-        AND end_time >=
-          CASE
-            -- if we're within the period, use start date
-            WHEN current_period_end > NOW() THEN current_period_start
-            -- if we don't have a period, use monthly cycles
-            WHEN current_period_end IS NULL then date_trunc('month', NOW())
-            -- otherwise, start from the end of the last period
-            ELSE current_period_end
-          END
-        AND comped = false
+        AND end_time >= date_trunc('month', NOW())
         GROUP BY repo_user
       |]
 
@@ -1384,20 +1352,7 @@ addToWaitlist email = do
 -- * Installations
 
 getInstallationStatus :: GhRepoOwner -> M InstallationStatus
-getInstallationStatus repoOwner = do
-  res :: [(Maybe UTCTime, Bool)] <-
-    pgQuery
-      [pgSQL|
-        SELECT current_period_end, requested_cancellation
-        FROM installations
-        WHERE repo_owner = ${repoOwner}
-      |]
-  case res of
-    [] -> pure NoActiveInstallation
-    [(Nothing, _)] -> pure NoActiveInstallation
-    [(Just endDate, False)] -> pure $ InstallationRenewing endDate
-    [(Just endDate, True)] -> pure $ InstallationCancelling endDate
-    _ : _ : _ -> throw $ OtherError "impossible: repo_owner is unique"
+getInstallationStatus _ = pure NoActiveInstallation
 
 getIncrementalTarget :: Build -> [CommitHash] -> M [Build]
 getIncrementalTarget build commits =

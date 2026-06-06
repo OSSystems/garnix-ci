@@ -103,7 +103,6 @@ CREATE TABLE builds (
     wants_incrementalism boolean DEFAULT false NOT NULL,
     uploaded_to_cache boolean DEFAULT false NOT NULL,
     output_paths json,
-    comped boolean DEFAULT false NOT NULL,
     already_built boolean
 );
 
@@ -161,11 +160,7 @@ CREATE TABLE heartbeat (
 );
 
 CREATE TABLE installations (
-    repo_owner text NOT NULL,
-    stripe_customer text,
-    current_period_start timestamp with time zone,
-    current_period_end timestamp with time zone,
-    requested_cancellation boolean DEFAULT false NOT NULL
+    repo_owner text NOT NULL
 );
 
 CREATE TABLE internal_access_tokens (
@@ -217,22 +212,6 @@ CREATE SEQUENCE modules_id_seq
 
 ALTER SEQUENCE modules_id_seq OWNED BY modules.id;
 
-CREATE TABLE products (
-    name character varying NOT NULL,
-    hosting bigint,
-    pr_hosting bigint,
-    ci_minutes bigint,
-    title text,
-    description text,
-    price_id text,
-    packages_per_flake integer,
-    visible boolean DEFAULT false NOT NULL,
-    token text,
-    package_eval_timeout_in_minutes smallint,
-    package_build_timeout_in_minutes smallint,
-    larger_servers boolean DEFAULT false NOT NULL
-);
-
 CREATE TABLE pushes (
     repo_user character varying NOT NULL,
     repo_name character varying NOT NULL,
@@ -247,18 +226,6 @@ CREATE TABLE repo_config (
     skip_private_inputs_check_for_collaborators boolean DEFAULT false CONSTRAINT repo_config_skip_private_inputs_check_for_collaborator_not_null NOT NULL,
     max_eval_memory bigint,
     private_cache boolean DEFAULT false NOT NULL
-);
-
-CREATE TABLE repo_owner_has_product (
-    repo_owner character varying NOT NULL,
-    product character varying NOT NULL
-);
-
-CREATE TABLE repo_owner_usage_limits (
-    repo_owner text CONSTRAINT repo_owner_max_extra_ci_time_repo_owner_not_null NOT NULL,
-    extra_ci_time_in_minutes integer DEFAULT 0 CONSTRAINT repo_owner_max_extra_ci_time_extra_ci_time_in_minutes_not_null NOT NULL,
-    extra_pr_hosting_in_minutes integer DEFAULT 0 NOT NULL,
-    extra_hosting_spending_limit_in_usd integer DEFAULT 0 CONSTRAINT repo_owner_usage_limits_extra_hosting_spending_limit_i_not_null NOT NULL
 );
 
 CREATE TABLE repo_secrets (
@@ -289,50 +256,6 @@ CREATE SEQUENCE runs_id_seq
     CACHE 1;
 
 ALTER SEQUENCE runs_id_seq OWNED BY runs.id;
-
-CREATE TABLE server_pool (
-    id bigint NOT NULL,
-    hetzner_id integer,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    ready_at timestamp with time zone,
-    ipv4 text,
-    ipv6 text,
-    server_tier text NOT NULL,
-    CONSTRAINT ready_must_have_hetzner_id_and_ips CHECK ((((ready_at IS NOT NULL) AND (hetzner_id IS NOT NULL) AND (ipv4 IS NOT NULL) AND (ipv6 IS NOT NULL)) OR (ready_at IS NULL)))
-);
-
-CREATE SEQUENCE server_pool_id_seq
-    START WITH 1
-    INCREMENT BY 1
-    NO MINVALUE
-    NO MAXVALUE
-    CACHE 1;
-
-ALTER SEQUENCE server_pool_id_seq OWNED BY server_pool.id;
-
-CREATE TABLE servers (
-    id bigint NOT NULL,
-    configuration_build_id bigint NOT NULL,
-    hetzner_id integer NOT NULL,
-    ipv4 text NOT NULL,
-    ipv6 text NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    ended_at timestamp with time zone,
-    deploy_logs text DEFAULT ''::text NOT NULL,
-    pull_request bigint,
-    ready_at timestamp with time zone,
-    server_tier text NOT NULL,
-    is_primary boolean DEFAULT false NOT NULL
-);
-
-CREATE SEQUENCE servers_id_seq
-    START WITH 1
-    INCREMENT BY 1
-    NO MINVALUE
-    NO MAXVALUE
-    CACHE 1;
-
-ALTER SEQUENCE servers_id_seq OWNED BY servers.id;
 
 CREATE TABLE users (
     id integer NOT NULL,
@@ -382,10 +305,6 @@ ALTER TABLE ONLY modules ALTER COLUMN id SET DEFAULT nextval('modules_id_seq'::r
 
 ALTER TABLE ONLY runs ALTER COLUMN id SET DEFAULT nextval('runs_id_seq'::regclass);
 
-ALTER TABLE ONLY server_pool ALTER COLUMN id SET DEFAULT nextval('server_pool_id_seq'::regclass);
-
-ALTER TABLE ONLY servers ALTER COLUMN id SET DEFAULT nextval('servers_id_seq'::regclass);
-
 ALTER TABLE ONLY users ALTER COLUMN id SET DEFAULT nextval('users_id_seq'::regclass);
 
 ALTER TABLE ONLY waitlist ALTER COLUMN id SET DEFAULT nextval('waitlist_id_seq'::regclass);
@@ -411,9 +330,6 @@ ALTER TABLE ONLY heartbeat
 ALTER TABLE ONLY installations
     ADD CONSTRAINT installations_pkey PRIMARY KEY (repo_owner);
 
-ALTER TABLE ONLY installations
-    ADD CONSTRAINT installations_stripe_customer_key UNIQUE (stripe_customer);
-
 ALTER TABLE ONLY internal_access_tokens
     ADD CONSTRAINT internal_access_tokens_pkey PRIMARY KEY (github_login);
 
@@ -435,38 +351,17 @@ ALTER TABLE ONLY modules
 ALTER TABLE ONLY modules
     ADD CONSTRAINT modules_repo_user_repo_name_git_commit_key UNIQUE (repo_user, repo_name, git_commit);
 
-ALTER TABLE ONLY products
-    ADD CONSTRAINT products_pkey PRIMARY KEY (name);
-
-ALTER TABLE ONLY products
-    ADD CONSTRAINT products_price_id_key UNIQUE (price_id);
-
-ALTER TABLE ONLY products
-    ADD CONSTRAINT products_token_key UNIQUE (token);
-
 ALTER TABLE ONLY pushes
     ADD CONSTRAINT pushes_pkey PRIMARY KEY (repo_user, repo_name, git_commit, branch);
 
 ALTER TABLE ONLY repo_config
     ADD CONSTRAINT repo_config_pkey PRIMARY KEY (repo_user, repo_name);
 
-ALTER TABLE ONLY repo_owner_has_product
-    ADD CONSTRAINT repo_owner_has_product_pkey PRIMARY KEY (repo_owner, product);
-
-ALTER TABLE ONLY repo_owner_usage_limits
-    ADD CONSTRAINT repo_owner_max_extra_ci_time_pkey PRIMARY KEY (repo_owner);
-
 ALTER TABLE ONLY repo_secrets
     ADD CONSTRAINT repo_secrets_pkey PRIMARY KEY (repo_user, repo_name);
 
 ALTER TABLE ONLY runs
     ADD CONSTRAINT runs_pkey PRIMARY KEY (id);
-
-ALTER TABLE ONLY server_pool
-    ADD CONSTRAINT server_pool_pkey PRIMARY KEY (id);
-
-ALTER TABLE ONLY servers
-    ADD CONSTRAINT servers_pkey PRIMARY KEY (id);
 
 ALTER TABLE ONLY verified_fods
     ADD CONSTRAINT unique_drv_hash_store_path_hash UNIQUE (drv_hash, store_path_hash);
@@ -498,10 +393,6 @@ CREATE INDEX builds_req_user ON builds USING btree (req_user);
 
 CREATE INDEX builds_req_user_git_commit_start_time ON builds USING btree (req_user, git_commit, start_time);
 
-CREATE INDEX servers_configuration_build_id ON servers USING btree (configuration_build_id);
-
-CREATE INDEX servers_ended_at ON servers USING btree (ended_at);
-
 CREATE INDEX verified_fods_drv_hash ON verified_fods USING btree (drv_hash);
 
 CREATE INDEX verified_fods_store_path_hash ON verified_fods USING btree (store_path_hash);
@@ -517,11 +408,5 @@ ALTER TABLE ONLY module_values
 
 ALTER TABLE ONLY module_values
     ADD CONSTRAINT module_values_module_user_repo_id_fkey FOREIGN KEY (module_user_repo_id) REFERENCES module_user_repo(id);
-
-ALTER TABLE ONLY repo_owner_has_product
-    ADD CONSTRAINT repo_owner_has_product_product_fkey FOREIGN KEY (product) REFERENCES products(name);
-
-ALTER TABLE ONLY servers
-    ADD CONSTRAINT servers_build_fkey FOREIGN KEY (configuration_build_id) REFERENCES builds(id);
 
 COMMIT;

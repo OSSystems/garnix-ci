@@ -172,10 +172,6 @@ truncateDBMNoInsert = do
           users,
           builds,
           commits,
-          servers,
-          repo_owner_has_product,
-          repo_owner_usage_limits,
-          products,
           installations,
           heartbeat,
           access_tokens,
@@ -261,10 +257,6 @@ testUser =
     (Email "foo@example.com")
     FreeSubscription
     True
-
-compAllUserBuilds :: GhRepoOwner -> M ()
-compAllUserBuilds owner = do
-  void $ DB.pgExec [pgSQL| UPDATE builds SET comped = true WHERE repo_user = ${owner} |]
 
 testBuild :: (Build -> Build) -> M Build
 testBuild f = do
