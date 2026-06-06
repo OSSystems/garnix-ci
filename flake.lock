@@ -82,6 +82,22 @@
         "type": "github"
       }
     },
+    "libkrun": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1780579945,
+        "narHash": "sha256-hl4IFiV6vdTIggRh6PEp7Omu8XddsauheLKNNcl9UXY=",
+        "owner": "containers",
+        "repo": "libkrun",
+        "rev": "085a65349deab46fd0a16baedff3fbb9b5403e02",
+        "type": "github"
+      },
+      "original": {
+        "owner": "containers",
+        "repo": "libkrun",
+        "type": "github"
+      }
+    },
     "nixpkgs": {
       "locked": {
         "lastModified": 1778229253,
@@ -114,13 +130,31 @@
         "type": "github"
       }
     },
+    "nixpkgsUnstable": {
+      "locked": {
+        "lastModified": 1780243769,
+        "narHash": "sha256-x5UQuRsH3MqI0U9afaXSNqzTPSeZlRLvFAav2Ux1pNw=",
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "331800de5053fcebacf6813adb5db9c9dca22a0c",
+        "type": "github"
+      },
+      "original": {
+        "owner": "NixOS",
+        "ref": "nixos-unstable",
+        "repo": "nixpkgs",
+        "type": "github"
+      }
+    },
     "root": {
       "inputs": {
         "comment": "comment",
         "cradle": "cradle",
         "crane": "crane",
         "flake-utils": "flake-utils",
+        "libkrun": "libkrun",
         "nixpkgs": "nixpkgs",
+        "nixpkgsUnstable": "nixpkgsUnstable",
         "sops-nix": "sops-nix",
         "treefmt-nix": "treefmt-nix",
         "treetop": "treetop"

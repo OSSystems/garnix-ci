@@ -45,6 +45,13 @@
     inputs.nixpkgs.follows = "nixpkgs";
   };
 
+  inputs.nixpkgsUnstable.url = "github:NixOS/nixpkgs/nixos-unstable";
+
+  inputs.libkrun = {
+    url = "github:containers/libkrun";
+    flake = false;
+  };
+
   outputs =
     flakeInputs@{ self
     , nixpkgs
@@ -155,8 +162,19 @@
         }
       )
     // {
-      inherit (import ./examples/example-multi-server-deployment.nix {
-        inherit self overlays flakeInputs;
-      }) nixosConfigurations;
+      nixosModules = {
+        garnix = ./nix/modules/garnix-server.nix;
+        default = ./nix/modules/garnix-server.nix;
+      };
+      nixosConfigurations =
+        (import ./examples/example-multi-server-deployment.nix {
+          inherit self overlays flakeInputs;
+        }).nixosConfigurations
+        // (import ./examples/example-selfhost.nix {
+          inherit self overlays flakeInputs;
+        }).nixosConfigurations
+        // (import ./examples/example-selfhost-vm.nix {
+          inherit self overlays flakeInputs;
+        }).nixosConfigurations;
     };
 }

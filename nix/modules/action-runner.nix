@@ -12,7 +12,7 @@ let
     src = flakeInputs.libkrun;
     cargoDeps = pkgsUnstable.rustPlatform.fetchCargoVendor {
       src = flakeInputs.libkrun;
-      hash = "sha256-WZDLz560Un+2P+I6y9V3RB4jiHW0NLN0X8y2TAvwFp8=";
+      hash = "sha256-2ZjrOdrwnR1oaGmCZc/13LIlH3qPI7g9kBaYAEpwpSE=";
     };
   });
   crunWithLibkrun = pkgsUnstable.crun.overrideAttrs (old: {
