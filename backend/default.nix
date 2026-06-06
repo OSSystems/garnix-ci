@@ -97,7 +97,6 @@ rec {
                 ])
                 (unions [
                   ./default.nix
-                  ./nixos-module.nix
                 ]);
           };
       in
@@ -174,7 +173,7 @@ rec {
   ++ garnixRuntimeDependencies
   ++ garnixTestDependencies
   ++ garnixDevDependencies;
-  nixosModule = import ./nixos-module.nix;
+  nixosModule = import ../nix/modules/garnix-server.nix;
   commands = {
     convertHashids = pkgs.writeShellApplication {
       meta.description = "converts mangled hashids to db ids";
