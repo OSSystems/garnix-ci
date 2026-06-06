@@ -18,5 +18,4 @@ pg-tmp
 /email/out/
 
 # linked artifacts (see default.nix)
-/legal/terms.md
 /src/age-wasm-compiled

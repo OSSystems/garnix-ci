@@ -290,11 +290,16 @@ finishSignup ::
   M (Headers '[Header "Set-Cookie" SetCookie, Header "Set-Cookie" SetCookie] GhLogin)
 finishSignup (Authenticated cUser) addenda = do
   -- The things in AuthResult we can trust, because we put them there
+  mAdminLogin <- view #adminGithubLogin
+  let subType =
+        if Just (cUser ^. githubLogin) == mAdminLogin
+          then Admin
+          else FreeSubscription
   user <-
     DB.newUser
       (cUser ^. githubLogin)
       (addenda ^. email)
-      (addenda ^. subscriptionType)
+      subType
       (addenda ^. agreeToEmails)
   cookieSettings' <- view #cookieSettings
   jwtSettings' <- view #jwtSettings

@@ -119,6 +119,20 @@ withEnv testFeatures buildLogsDir buildLogsReportingPort action = do
   ghAppName <-
     lookupEnv "GITHUB_APP_NAME"
       >>= maybe (cs <$> readFile "/run/secrets/github_app_name") (pure . cs)
+  adminGhLogin <- do
+    let trim = T.dropWhileEnd (`elem` ['\n', '\r', ' ', '\t'])
+        nonEmpty t = if T.null t then Nothing else Just t
+    mEnv <- lookupEnv "GARNIX_ADMIN_GITHUB_LOGIN"
+    case mEnv >>= (nonEmpty . trim . cs) of
+      Just t -> pure $ Just $ GhLogin t
+      Nothing -> do
+        let path = "/run/secrets/garnix_admin_github_login"
+        exists <- doesFileExist path
+        if exists
+          then do
+            raw <- readFile path
+            pure $ GhLogin <$> nonEmpty (trim (cs raw))
+          else pure Nothing
   s3CacheEnv <- do
     amazonkaEnv <- do
       accessKeyId <-
@@ -223,6 +237,7 @@ withEnv testFeatures buildLogsDir buildLogsReportingPort action = do
               githubAppName = ghAppName,
               githubClientSecret = ghClientSecret,
               githubClientId = ghClientId,
+              adminGithubLogin = adminGhLogin,
               buildLogsReportingPort = buildLogsReportingPort,
               workingDir = curDir,
               nixXdgCacheDir = Nothing,

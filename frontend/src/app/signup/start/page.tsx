@@ -5,7 +5,6 @@ import { useRouter } from "next/navigation";
 import { Text } from "@/components/text";
 import { Modal, ModalActions, ModalSection } from "@/components/modal";
 import { Button } from "@/components/button";
-import { Link } from "@/components/link";
 import { WithSidebar } from "@/components/withSidebar";
 import { Berlin } from "@/utils/fonts";
 import { useUser } from "@/store/userContext";
@@ -15,21 +14,14 @@ import styles from "./styles.module.css";
 const Page = () => {
   const router = useRouter();
   const { user } = useUser();
-  const [agreeTOS, setAgreeTOS] = useState(false);
   const [agreeEmail, setAgreeEmail] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const handleTOSChange = useCallback(() => {
-    setAgreeTOS(!agreeTOS);
-    if (!agreeTOS) setError(null);
-  }, [agreeTOS, setAgreeTOS]);
   const handleEmailChange = useCallback(() => {
     setAgreeEmail(!agreeEmail);
   }, [agreeEmail, setAgreeEmail]);
   const submit = useCallback(async () => {
     if (user.state !== "logged-in" || !user.user.email)
       return setError("Something is wrong. Please logout and try again.");
-    if (!agreeTOS)
-      return setError("Please read and agree to the terms of service!");
     const path = await finishSignup(
       user.user.name,
       user.user.email,
@@ -37,7 +29,7 @@ const Page = () => {
     );
     if (!path.ok) return setError(path.error.message);
     router.replace(path.data);
-  }, [agreeTOS, agreeEmail, user, router]);
+  }, [agreeEmail, user, router]);
   const userOrNull = user.state === "logged-in" ? user.user : null;
   return (
     <WithSidebar>
@@ -75,27 +67,6 @@ const Page = () => {
             />
           </ModalSection>
           <ModalSection>
-            <div className={styles.checkboxContainer}>
-              <input
-                id="agreeTos"
-                type="checkbox"
-                checked={agreeTOS}
-                onChange={handleTOSChange}
-                className={styles.checkboxInput}
-              />
-              <label htmlFor="agreeTos">
-                <Text className={styles.checkboxLabel} type="p">
-                  I agree to{" "}
-                  <Link
-                    href="/signup/tos"
-                    target="_blank"
-                    className={styles.link}
-                  >
-                    Terms of Service
-                  </Link>
-                </Text>
-              </label>
-            </div>
             <div className={styles.checkboxContainer}>
               <input
                 id="agreeEmail"

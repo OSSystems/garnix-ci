@@ -14,8 +14,6 @@ let
   # place in order to build/run:
   populateArtifacts = ''
     echo Populating artifacts
-    mkdir -p legal
-    ln -nvsf ${flakeInputs.terms-and-conditions.packages.${system}.default} legal/terms.md
     ln -nvsf ${self.packages.${system}."frontend_ageWasm_default"} src/age-wasm-compiled
   '';
   src = with pkgs.lib.fileset;
@@ -47,7 +45,6 @@ let
       mv .next/standalone $out
       mkdir -p $assets/public/_next
       mv .next/static $assets/public/_next/static
-      mv legal $out
     '';
   };
   startScript = pkgs.writeShellApplication {

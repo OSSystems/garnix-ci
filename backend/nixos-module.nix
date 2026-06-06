@@ -72,6 +72,16 @@ in
           type = lib.types.str;
           default = "garnix-ci";
         };
+        adminGithubLogin = lib.mkOption {
+          type = lib.types.str;
+          description = ''
+            GitHub login of the self-host operator. The user that signs up
+            with this exact login receives subscription_type = 'admin' and
+            gains full administrative powers. Compared case-sensitively
+            against the login GitHub returns at OAuth callback.
+          '';
+          example = "alice";
+        };
         port = lib.mkOption {
           type = lib.types.int;
           default = 8321;
@@ -327,6 +337,7 @@ in
       services.garnixServer = {
         url = "https://testing.garnix.io";
         githubAppName = "test-app-jkarni";
+        adminGithubLogin = "jkarni";
       };
     };
 
@@ -431,6 +442,7 @@ in
           "TPG_DB=${config.garnix.database.dbName}"
           "GARNIX_URL=${config.services.garnixServer.url}"
           "GITHUB_APP_NAME=${config.services.garnixServer.githubAppName}"
+          "GARNIX_ADMIN_GITHUB_LOGIN=${config.services.garnixServer.adminGithubLogin}"
           "OPENSEARCH_URL=${config.services.garnixServer.opensearchUrl}"
           "S3_CACHE_REGION=${config.services.garnixServer.s3Cache.region}"
           "S3_CACHE_HOST=${config.services.garnixServer.s3Cache.host}"

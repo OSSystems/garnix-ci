@@ -45,13 +45,6 @@
     inputs.nixpkgs.follows = "nixpkgs";
   };
 
-  inputs.terms-and-conditions = {
-    url = "github:garnix-io/terms-and-conditions";
-    inputs = {
-      nixpkgs.follows = "nixpkgs";
-    };
-  };
-
   outputs =
     flakeInputs@{ self
     , nixpkgs

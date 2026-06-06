@@ -66,6 +66,7 @@ data Env = Env
     manager :: Manager,
     githubClientSecret :: Text,
     githubClientId :: Text,
+    adminGithubLogin :: Maybe GhLogin,
     buildLogsReportingPort :: Maybe Int,
     githubInterface :: GithubInterface,
     -- | A thread-safe version of `CWD`

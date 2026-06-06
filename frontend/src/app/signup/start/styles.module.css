@@ -52,14 +52,6 @@
   margin-bottom: 16px;
 }
 
-.link {
-  text-decoration: underline;
-}
-
-.link:hover {
-  color: var(--color-primary-2);
-}
-
 @media only screen and (max-width: 850px) {
   .container {
     padding: 16px;
