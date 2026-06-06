@@ -133,52 +133,75 @@ withEnv testFeatures buildLogsDir buildLogsReportingPort action = do
             raw <- readFile path
             pure $ GhLogin <$> nonEmpty (trim (cs raw))
           else pure Nothing
-  s3CacheEnv <- do
-    amazonkaEnv <- do
-      accessKeyId <-
-        ( lookupEnv "S3_CACHE_ACCESS_KEY_ID"
-            >>= maybe (BSC.readFile "/run/secrets/s3-cache-access-key-id") (pure . cs)
-          )
-          <&> Amazonka.AccessKey
-      secretAccessKey <-
-        ( lookupEnv "S3_CACHE_SECRET_ACCESS_KEY"
-            >>= maybe (BSC.readFile "/run/secrets/s3-cache-secret-access-key") (pure . cs)
-          )
-          <&> Amazonka.SecretKey
-      region <- cs <$> getEnv "S3_CACHE_REGION"
-      host <- cs <$> getEnv "S3_CACHE_HOST"
-      Amazonka.newEnv (pure . Amazonka.fromKeys accessKeyId secretAccessKey)
-        <&> (#region .~ Amazonka.Region' region)
-        <&> Amazonka.overrideService (Amazonka.setEndpoint True host 443)
-        <&> Amazonka.overrideService (#s3AddressingStyle .~ Amazonka.S3AddressingStylePath)
-    publicBucket <- Amazonka.BucketName . cs <$> getEnv "S3_CACHE_PUBLIC_BUCKET"
-    publicBaseUrl <-
-      getEnv "S3_CACHE_PUBLIC_BASE_URL"
-        <&> cs . (\url -> if "/" `isSuffixOf` url then url else url <> "/")
-    privateBucket <- Amazonka.BucketName . cs <$> getEnv "S3_CACHE_PRIVATE_BUCKET"
-    cachePrivKeyFile <-
-      lookupEnv "CACHE_PRIV_KEY_FILE"
-        <&> fromMaybe "/run/secrets/cache-priv-key"
-    cachePrivKeyName <- do
-      cachePrivKey <- T.readFile cachePrivKeyFile
-      case T.split (== ':') (cs cachePrivKey) of
-        [name, _key] -> pure name
-        _ -> Control.Exception.throwIO $ Control.Exception.ErrorCall "cannot parse cachePrivKey"
-    let expiration = fromHours @Int 2
-    let maxUploadSize = 4 * 2 ^ (30 :: Integer)
-    isInNixosCacheMemoTable <- HashTables.new >>= newMVar
-    pure
-      $ S3CacheEnv
-        { amazonkaEnv,
-          publicBucket,
-          publicBaseUrl,
-          privateBucket,
-          cachePrivKeyFile,
-          cachePrivKeyName,
-          expiration,
-          maxUploadSize,
-          isInNixosCacheMemoTable
-        }
+  s3CacheEnabled <-
+    lookupEnv "S3_CACHE_ENABLED" <&> \case
+      Just v | T.toLower (cs v) == "false" -> False
+      _ -> True
+  s3CacheEnv <-
+    if s3CacheEnabled
+      then do
+        amazonkaEnv <- do
+          accessKeyId <-
+            ( lookupEnv "S3_CACHE_ACCESS_KEY_ID"
+                >>= maybe (BSC.readFile "/run/secrets/s3-cache-access-key-id") (pure . cs)
+              )
+              <&> Amazonka.AccessKey
+          secretAccessKey <-
+            ( lookupEnv "S3_CACHE_SECRET_ACCESS_KEY"
+                >>= maybe (BSC.readFile "/run/secrets/s3-cache-secret-access-key") (pure . cs)
+              )
+              <&> Amazonka.SecretKey
+          region <- cs <$> getEnv "S3_CACHE_REGION"
+          host <- cs <$> getEnv "S3_CACHE_HOST"
+          Amazonka.newEnv (pure . Amazonka.fromKeys accessKeyId secretAccessKey)
+            <&> (#region .~ Amazonka.Region' region)
+            <&> Amazonka.overrideService (Amazonka.setEndpoint True host 443)
+            <&> Amazonka.overrideService (#s3AddressingStyle .~ Amazonka.S3AddressingStylePath)
+        publicBucket <- Amazonka.BucketName . cs <$> getEnv "S3_CACHE_PUBLIC_BUCKET"
+        publicBaseUrl <-
+          getEnv "S3_CACHE_PUBLIC_BASE_URL"
+            <&> cs . (\url -> if "/" `isSuffixOf` url then url else url <> "/")
+        privateBucket <- Amazonka.BucketName . cs <$> getEnv "S3_CACHE_PRIVATE_BUCKET"
+        cachePrivKeyFile <-
+          lookupEnv "CACHE_PRIV_KEY_FILE"
+            <&> fromMaybe "/run/secrets/cache-priv-key"
+        cachePrivKeyName <- do
+          cachePrivKey <- T.readFile cachePrivKeyFile
+          case T.split (== ':') (cs cachePrivKey) of
+            [name, _key] -> pure name
+            _ -> Control.Exception.throwIO $ Control.Exception.ErrorCall "cannot parse cachePrivKey"
+        let expiration = fromHours @Int 2
+        let maxUploadSize = 4 * 2 ^ (30 :: Integer)
+        isInNixosCacheMemoTable <- HashTables.new >>= newMVar
+        pure
+          $ S3CacheEnv
+            { amazonkaEnv,
+              publicBucket,
+              publicBaseUrl,
+              privateBucket,
+              cachePrivKeyFile,
+              cachePrivKeyName,
+              expiration,
+              maxUploadSize,
+              isInNixosCacheMemoTable
+            }
+      else do
+        amazonkaEnv <-
+          Amazonka.newEnv (pure . Amazonka.fromKeys (Amazonka.AccessKey "") (Amazonka.SecretKey ""))
+            <&> (#region .~ Amazonka.Region' "auto")
+        isInNixosCacheMemoTable <- HashTables.new >>= newMVar
+        pure
+          $ S3CacheEnv
+            { amazonkaEnv,
+              publicBucket = Amazonka.BucketName "",
+              publicBaseUrl = "",
+              privateBucket = Amazonka.BucketName "",
+              cachePrivKeyFile = "",
+              cachePrivKeyName = "",
+              expiration = fromHours @Int 2,
+              maxUploadSize = 4 * 2 ^ (30 :: Integer),
+              isInNixosCacheMemoTable
+            }
   actionServerUrl <- fromMaybe "action-runner2.garnix.io" <$> lookupEnv "GARNIX_ACTION_HOST"
   actionRunnerSshKey <- lookupEnv "GARNIX_ACTION_RUNNER_SSH_KEY" >>= maybe (pure "/run/secrets/garnix_action_runner_ssh") makeAbsolute
   curDir <- getCurrentDirectory
@@ -259,6 +282,7 @@ withEnv testFeatures buildLogsDir buildLogsReportingPort action = do
               buildLogsDir = buildLogsDir',
               opensearchQueryUrl = opensearchQueryUrl,
               opensearchPassword = opensearchPass,
+              s3CacheEnabled,
               s3CacheEnv,
               action =
                 ActionEnv

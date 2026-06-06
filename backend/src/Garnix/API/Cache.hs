@@ -63,6 +63,8 @@ nixCacheInfo =
 
 serveNarInfo :: Maybe XForwardedFor -> NarInfoFileName -> Maybe Text -> M NarInfo
 serveNarInfo xForwardedFor (NarInfoFileName hash) authorization = do
+  enabled <- view #s3CacheEnabled
+  unless enabled $ shortcut NotFound
   cacheStoreHash <- DB.getS3CacheStoreHash hash
   case cacheStoreHash of
     Nothing -> shortcut NotFound

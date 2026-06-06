@@ -34,31 +34,34 @@ import System.IO.Temp (withSystemTempDirectory)
 
 upload :: RunReporter -> GhRepoOwner -> GhRepoName -> EvaluationResult -> RepoPublicity -> M ()
 upload = curry5 $ mockable #s3CacheUploadMock $ \(runReporter, repoOwner, repoName, evalResult, repoPublicity) -> do
-  withTextSpan ("phase", "s3-cache-upload") $ do
-    withSpan (Garnix.S3Cache.getPackageName (evalResult ^. #derivation)) $ do
-      storePathClosure <- nubOrd . mconcat . catMaybes <$> forM (evalResult ^. #toUpload) Nix.getClosure
-      notInNixosCache <- filterM (fmap not . isInNixosCache) storePathClosure
-      notInS3Cache <- DB.claimS3CachedStorePaths notInNixosCache
-      forM_ (notInNixosCache \\ notInS3Cache) $ \storePath -> do
-        DB.tagCacheUploadForS3Cache repoOwner repoName $ getHash storePath
-      forConcurrently_ notInS3Cache $ \storePath -> do
-        dirSize <- liftIO $ getDirSize $ cs $ getStorePath storePath
-        limit <- view (#s3CacheEnv . #maxUploadSize)
-        if dirSize > limit
-          then do
-            log Notice $ getStorePath storePath <> " too big (" <> show dirSize <> "), not uploading"
-            reportLogs runReporter
-              $ mkLogLine
-                ( getStorePath storePath
-                    <> " is "
-                    <> show dirSize
-                    <> " bytes, the limit is "
-                    <> show limit
-                    <> ". Not uploading to the garnix binary cache."
-                )
-          else do
-            uploadStorePath repoOwner repoName storePath repoPublicity <?> "uploading to s3-cache"
-            reportLogs runReporter $ mkLogLine ("Uploaded " <> getStorePath storePath <> " to the garnix binary cache.")
+  enabled <- view #s3CacheEnabled
+  if not enabled
+    then log Informational "s3 cache disabled; skipping upload"
+    else withTextSpan ("phase", "s3-cache-upload") $ do
+      withSpan (Garnix.S3Cache.getPackageName (evalResult ^. #derivation)) $ do
+        storePathClosure <- nubOrd . mconcat . catMaybes <$> forM (evalResult ^. #toUpload) Nix.getClosure
+        notInNixosCache <- filterM (fmap not . isInNixosCache) storePathClosure
+        notInS3Cache <- DB.claimS3CachedStorePaths notInNixosCache
+        forM_ (notInNixosCache \\ notInS3Cache) $ \storePath -> do
+          DB.tagCacheUploadForS3Cache repoOwner repoName $ getHash storePath
+        forConcurrently_ notInS3Cache $ \storePath -> do
+          dirSize <- liftIO $ getDirSize $ cs $ getStorePath storePath
+          limit <- view (#s3CacheEnv . #maxUploadSize)
+          if dirSize > limit
+            then do
+              log Notice $ getStorePath storePath <> " too big (" <> show dirSize <> "), not uploading"
+              reportLogs runReporter
+                $ mkLogLine
+                  ( getStorePath storePath
+                      <> " is "
+                      <> show dirSize
+                      <> " bytes, the limit is "
+                      <> show limit
+                      <> ". Not uploading to the garnix binary cache."
+                  )
+            else do
+              uploadStorePath repoOwner repoName storePath repoPublicity <?> "uploading to s3-cache"
+              reportLogs runReporter $ mkLogLine ("Uploaded " <> getStorePath storePath <> " to the garnix binary cache.")
 
 getPackageName :: DrvPath -> PackageName
 getPackageName drvPath =

@@ -282,6 +282,7 @@ withTestEnvironment tempDir action = do
                   buildLogsDir = buildLogsDir,
                   opensearchQueryUrl = "http://example.com/_msearch",
                   opensearchPassword = "opensearch-api",
+                  s3CacheEnabled = True,
                   s3CacheEnv = error "s3CacheEnv: cache uploading should be mocked",
                   action =
                     ActionEnv

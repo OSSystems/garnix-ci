@@ -77,6 +77,7 @@ data Env = Env
     jwtSettings :: JWTSettings,
     dbConn :: DatabaseConnection,
     baseUrl :: Text,
+    s3CacheEnabled :: Bool,
     s3CacheEnv :: S3CacheEnv,
     action :: ActionEnv,
     repoSecretsEncryptionKeyPath :: RepoSecretsEncryptionKeyPath,
