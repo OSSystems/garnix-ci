@@ -197,6 +197,17 @@ in
 {
   options.garnix.actionRunner = {
     enable = lib.mkEnableOption "Enable Action Runner";
+
+    authorizedKey = lib.mkOption {
+      type = lib.types.str;
+      default = devModeSshKey;
+      description = ''
+        SSH public key authorized to log into the action-runner user. The
+        garnix coordinator uses this key when handing build closures to the
+        runner. Defaults to the well-known dev key; replace for a production
+        self-host so only your coordinator can submit work.
+      '';
+    };
   };
 
   config = lib.mkIf cfg.enable {
@@ -226,10 +237,7 @@ in
         group = "action-runner";
         # subuid and subgids are needed for rootless podman
         autoSubUidGidRange = true;
-        openssh.authorizedKeys.keys =
-          if config.garnix.devMode.enable
-          then [ devModeSshKey ]
-          else [ (import ../data/keys.nix).actionRunnerKey ];
+        openssh.authorizedKeys.keys = [ cfg.authorizedKey ];
         # Needed for programs that look at `/etc/passwd` for the home directory
         # instead of `$HOME`. (E.g. `ssh` through `getpwuid`.) When running
         # actions, we mount in a fresh home directory here using `bubblewrap`.
