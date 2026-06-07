@@ -437,8 +437,6 @@ in
           "PGHOST=${cfg.database.host}"
           "PGSSLMODE=${cfg.database.ssl.mode}"
           "PGSSLROOTCERT=${cfg.database.ssl.rootCert}"
-          "TPG_TLS=true"
-          "TPG_TLS_MODE=full"
           "TPG_HOST=${cfg.database.host}"
           "TPG_PORT=${toString cfg.database.port}"
           "TPG_USER=${cfg.database.user}"
@@ -448,6 +446,11 @@ in
           "GARNIX_ADMIN_GITHUB_LOGIN=${cfg.adminGithubLogin}"
           "OPENSEARCH_URL=${cfg.opensearch.url}"
           "S3_CACHE_ENABLED=${if cfg.s3Cache.enable then "true" else "false"}"
+        ] ++ lib.optionals (cfg.database.ssl.mode != "disable") [
+          # postgresql-typed reads TPG_TLS via lookupEnv — presence enables
+          # TLS regardless of value. Only emit when ssl is actually on.
+          "TPG_TLS=true"
+          "TPG_TLS_MODE=full"
         ] ++ s3CacheEnv;
         SupplementaryGroups = [ config.users.groups.keys.name ];
         ExecStartPre = [
