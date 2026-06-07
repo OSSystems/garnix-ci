@@ -31,7 +31,7 @@
           mkdir $out
           cp ${ts-bindings}/* $out
           cp ${pkgs.go}/share/go/lib/wasm/wasm_exec.js $out/wasm_exec.js
-          wasm-opt --enable-bulk-memory -Oz ${age-wasm}/bin/js_wasm/age-wasm -o $out/age.wasm
+          wasm-opt --enable-bulk-memory --enable-nontrapping-float-to-int --enable-sign-ext -Oz ${age-wasm}/bin/js_wasm/age-wasm -o $out/age.wasm
         '';
     };
 
