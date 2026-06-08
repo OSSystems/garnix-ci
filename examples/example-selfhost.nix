@@ -59,6 +59,10 @@
             jwtKeyPath = "/var/lib/garnix/secrets/garnix-jwt-key";
             repoSecretsKeyPath = "/var/lib/garnix/secrets/repo-secrets-key";
             repoSecretsPubKeyPath = "/var/lib/garnix/secrets/repo-secrets-key-pub";
+            # SSH private key the backend uses to reach the action-runner
+            # (loopback by default). Its public half must be in
+            # garnix.actionRunner.authorizedKey.
+            actionRunnerSshPath = "/var/lib/garnix/secrets/garnix_action_runner_ssh";
           };
         };
 

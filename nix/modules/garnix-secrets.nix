@@ -24,7 +24,11 @@ let
     { name = "s3-cache-access-key-id"; sourcePath = secretsCfg.s3CacheAccessKeyIdPath; required = cfg.s3Cache.enable; }
     { name = "s3-cache-secret-access-key"; sourcePath = secretsCfg.s3CacheSecretAccessKeyPath; required = cfg.s3Cache.enable; }
     { name = "cache-priv-key"; sourcePath = secretsCfg.cachePrivKeyPath; required = cfg.s3Cache.enable; }
-    { name = "garnix_server_remote_builder_ssh"; sourcePath = secretsCfg.remoteBuilderSshPath; required = cfg.remoteBuilders.hosts != [ ]; }
+    # SSH identity files must not be group/world-readable or ssh refuses them
+    # (StrictModes). Stage 0400 owned by the backend user instead of the
+    # default 0440 root:garnix.
+    { name = "garnix_server_remote_builder_ssh"; sourcePath = secretsCfg.remoteBuilderSshPath; required = cfg.remoteBuilders.hosts != [ ]; mode = "0400"; owner = cfg.user; }
+    { name = "garnix_action_runner_ssh"; sourcePath = secretsCfg.actionRunnerSshPath; required = config.garnix.actionRunner.enable; mode = "0400"; owner = cfg.user; }
   ];
 
   requiredSecrets = [
@@ -42,6 +46,7 @@ let
     { option = "secrets.s3CacheSecretAccessKeyPath"; value = secretsCfg.s3CacheSecretAccessKeyPath; required = cfg.s3Cache.enable; }
     { option = "secrets.cachePrivKeyPath"; value = secretsCfg.cachePrivKeyPath; required = cfg.s3Cache.enable; }
     { option = "secrets.remoteBuilderSshPath"; value = secretsCfg.remoteBuilderSshPath; required = cfg.remoteBuilders.hosts != [ ]; }
+    { option = "secrets.actionRunnerSshPath"; value = secretsCfg.actionRunnerSshPath; required = config.garnix.actionRunner.enable; }
   ];
 
   stageScript = pkgs.writeShellApplication {
@@ -52,7 +57,7 @@ let
       install -d -m 0750 -o root -g ${cfg.user} /run/secrets
     '' + lib.concatMapStringsSep "\n"
       (s: ''
-        install -m 0440 -o root -g ${cfg.user} ${s.sourcePath} /run/secrets/${s.name}
+        install -m ${s.mode or "0440"} -o ${s.owner or "root"} -g ${cfg.user} ${s.sourcePath} /run/secrets/${s.name}
       '')
       installedSecrets;
   };
@@ -73,6 +78,7 @@ in
     s3CacheSecretAccessKeyPath = pathOption "Path to the S3 secret-access-key file (required iff s3Cache.enable)";
     cachePrivKeyPath = pathOption "Path to the Nix cache signing private key (required iff s3Cache.enable)";
     remoteBuilderSshPath = pathOption "Path to the SSH key used to reach remote Nix builders (required iff remoteBuilders.hosts != [])";
+    actionRunnerSshPath = pathOption "Path to the SSH private key the backend uses to reach the action-runner (required iff garnix.actionRunner.enable). Staged at /run/secrets/garnix_action_runner_ssh, the path the backend reads by default.";
   };
 
   config = lib.mkIf cfg.enable {

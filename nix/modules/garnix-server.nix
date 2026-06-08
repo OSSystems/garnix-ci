@@ -117,6 +117,19 @@ let
          IdentityFile ${if h.sshKeyPath != null then h.sshKeyPath else cfg.remoteBuilders.sshKeyPath}
     '')
     cfg.remoteBuilders.hosts;
+
+  # Backend SSHes to the action host as user action-runner with BatchMode=yes
+  # and does not pass StrictHostKeyChecking, so it relies on the system ssh
+  # client config. Scope a Match block to that connection only (avoids
+  # clobbering known_hosts handling for other loopback ssh). accept-new trusts
+  # the host key on first contact, then verifies — fine for loopback and for a
+  # dedicated remote runner alike.
+  actionRunnerHostName = lib.head (lib.splitString ":" cfg.actionRunner.host);
+  actionRunnerSshConfig = lib.optionalString config.garnix.actionRunner.enable ''
+    Match host ${actionRunnerHostName} user action-runner
+       StrictHostKeyChecking accept-new
+       UserKnownHostsFile /var/lib/garnix/known_hosts
+  '';
 in
 {
   imports = [
@@ -295,6 +308,19 @@ in
       };
     };
 
+    actionRunner = {
+      host = lib.mkOption {
+        type = lib.types.str;
+        default = "127.0.0.1";
+        description = ''
+          Host the backend SSHes into (as user action-runner) to execute
+          garnix actions. Defaults to loopback for single-machine self-host,
+          where the action runner lives on the same box as the coordinator.
+          Accepts "host" or "host:port".
+        '';
+      };
+    };
+
     devDefaults = lib.mkOption {
       type = lib.types.attrsOf lib.types.anything;
       default = {
@@ -346,7 +372,7 @@ in
 
     programs.ssh = {
       startAgent = true;
-      extraConfig = remoteBuilderSshConfig;
+      extraConfig = remoteBuilderSshConfig + "\n" + actionRunnerSshConfig;
     };
 
     nix = {
@@ -444,6 +470,7 @@ in
           "GARNIX_URL=${cfg.url}"
           "GITHUB_APP_NAME=${cfg.githubAppName}"
           "GARNIX_ADMIN_GITHUB_LOGIN=${cfg.adminGithubLogin}"
+          "GARNIX_ACTION_HOST=${cfg.actionRunner.host}"
           "OPENSEARCH_URL=${cfg.opensearch.url}"
           "S3_CACHE_ENABLED=${if cfg.s3Cache.enable then "true" else "false"}"
         ] ++ lib.optionals (cfg.database.ssl.mode != "disable") [
