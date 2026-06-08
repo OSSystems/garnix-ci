@@ -157,6 +157,16 @@ in
           type = lib.types.str;
           description = "OpenSearch host for log shipping.";
         };
+        port = lib.mkOption {
+          type = lib.types.int;
+          default = 443;
+          description = "OpenSearch port for log shipping.";
+        };
+        tls = lib.mkOption {
+          type = lib.types.bool;
+          default = true;
+          description = "Use TLS when shipping logs to OpenSearch. Disable for a plain-HTTP local OpenSearch.";
+        };
         basicAuth = {
           username = lib.mkOption {
             type = lib.types.str;
@@ -193,8 +203,8 @@ in
         defaultOutput = {
           Name = "opensearch";
           Host = cfg.opensearch.fqdn;
-          Port = 443;
-          Tls = "On";
+          Port = cfg.opensearch.port;
+          Tls = if cfg.opensearch.tls then "On" else "Off";
           "Tls.verify" = if config.garnix.devMode.enable then "Off" else "On";
           HTTP_User = cfg.opensearch.basicAuth.username;
           HTTP_Passwd = ''''${OPENSEARCH_PASSWORD}'';
