@@ -3,7 +3,6 @@ import { fromSecs } from "@/utils/duration";
 import { mapCollectResult } from "@/utils";
 import { Err, Ok, fetchFromAPI } from ".";
 
-export type OrgUsage = z.infer<typeof orgUsageSchema>;
 const orgUsageSchema = z.object({
   ci_time: z.number().transform(fromSecs),
   pr_deployment_time: z.number().transform(fromSecs),

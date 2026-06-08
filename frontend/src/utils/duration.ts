@@ -17,24 +17,8 @@ export function fromMinutes(minutes: number): Duration {
   return fromSecs(minutes * 60);
 }
 
-export function toSecs(d: Duration): number {
-  return d[SECONDS];
-}
-
-export function toMinutes(d: Duration): number {
-  return toSecs(d) / 60;
-}
-
 export function toMillis(d: Duration): number {
   return d[SECONDS] * 1000;
-}
-
-export function add(a: Duration, b: Duration): Duration {
-  return { [SECONDS]: a[SECONDS] + b[SECONDS] };
-}
-
-export function subtract(a: Duration, b: Duration): Duration {
-  return { [SECONDS]: a[SECONDS] - b[SECONDS] };
 }
 
 export function double(d: Duration): Duration {
