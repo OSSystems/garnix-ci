@@ -99,26 +99,28 @@ envMocks testFeatures = do
 withEnv :: (HasCallStack) => Set TestFeature -> FilePath -> Maybe Warp.Port -> (Env -> IO a) -> IO a
 withEnv testFeatures buildLogsDir buildLogsReportingPort action = do
   buildLogsDir' <- makeAbsolute buildLogsDir
+  secretsDir <- fromMaybe "/run/secrets" <$> lookupEnv "GARNIX_SECRETS_DIR"
+  let secretFile name = secretsDir <> "/" <> name
   ghK <-
     lookupEnv "GITHUB_WEBHOOK_SECRET"
-      >>= maybe (BSC.readFile "/run/secrets/github_webhook_secret") (pure . cs)
+      >>= maybe (BSC.readFile (secretFile "github_webhook_secret")) (pure . cs)
   ghClientSecret <-
     lookupEnv "GITHUB_CLIENT_SECRET"
-      >>= maybe (cs <$> readFile "/run/secrets/github_client_secret") (pure . cs)
+      >>= maybe (cs <$> readFile (secretFile "github_client_secret")) (pure . cs)
   Just emptyDir' <- lookupEnv "EMPTY_DIR"
   ghClientId <-
     lookupEnv "GITHUB_CLIENT_ID"
-      >>= maybe (cs <$> readFile "/run/secrets/github_client_id") (pure . cs)
+      >>= maybe (cs <$> readFile (secretFile "github_client_id")) (pure . cs)
   appId <-
     fmap (Id . read)
       $ lookupEnv "GITHUB_APP_ID"
-      >>= maybe (readFile "/run/secrets/github_app_id") pure
+      >>= maybe (readFile (secretFile "github_app_id")) pure
   appPkPem' <-
     lookupEnv "GITHUB_APP_PK"
-      >>= maybe (BSC.readFile "/run/secrets/github_app_pk") (pure . cs)
+      >>= maybe (BSC.readFile (secretFile "github_app_pk")) (pure . cs)
   ghAppName <-
     lookupEnv "GITHUB_APP_NAME"
-      >>= maybe (cs <$> readFile "/run/secrets/github_app_name") (pure . cs)
+      >>= maybe (cs <$> readFile (secretFile "github_app_name")) (pure . cs)
   adminGhLogin <- do
     let trim = T.dropWhileEnd (`elem` ['\n', '\r', ' ', '\t'])
         nonEmpty t = if T.null t then Nothing else Just t
@@ -126,7 +128,7 @@ withEnv testFeatures buildLogsDir buildLogsReportingPort action = do
     case mEnv >>= (nonEmpty . trim . cs) of
       Just t -> pure $ Just $ GhLogin t
       Nothing -> do
-        let path = "/run/secrets/garnix_admin_github_login"
+        let path = secretFile "garnix_admin_github_login"
         exists <- doesFileExist path
         if exists
           then do
@@ -143,12 +145,12 @@ withEnv testFeatures buildLogsDir buildLogsReportingPort action = do
         amazonkaEnv <- do
           accessKeyId <-
             ( lookupEnv "S3_CACHE_ACCESS_KEY_ID"
-                >>= maybe (BSC.readFile "/run/secrets/s3-cache-access-key-id") (pure . cs)
+                >>= maybe (BSC.readFile (secretFile "s3-cache-access-key-id")) (pure . cs)
               )
               <&> Amazonka.AccessKey
           secretAccessKey <-
             ( lookupEnv "S3_CACHE_SECRET_ACCESS_KEY"
-                >>= maybe (BSC.readFile "/run/secrets/s3-cache-secret-access-key") (pure . cs)
+                >>= maybe (BSC.readFile (secretFile "s3-cache-secret-access-key")) (pure . cs)
               )
               <&> Amazonka.SecretKey
           region <- cs <$> getEnv "S3_CACHE_REGION"
@@ -164,7 +166,7 @@ withEnv testFeatures buildLogsDir buildLogsReportingPort action = do
         privateBucket <- Amazonka.BucketName . cs <$> getEnv "S3_CACHE_PRIVATE_BUCKET"
         cachePrivKeyFile <-
           lookupEnv "CACHE_PRIV_KEY_FILE"
-            <&> fromMaybe "/run/secrets/cache-priv-key"
+            <&> fromMaybe (secretFile "cache-priv-key")
         cachePrivKeyName <- do
           cachePrivKey <- T.readFile cachePrivKeyFile
           case T.split (== ':') (cs cachePrivKey) of
@@ -203,7 +205,7 @@ withEnv testFeatures buildLogsDir buildLogsReportingPort action = do
               isInNixosCacheMemoTable
             }
   actionServerUrl <- fromMaybe "action-runner2.garnix.io" <$> lookupEnv "GARNIX_ACTION_HOST"
-  actionRunnerSshKey <- lookupEnv "GARNIX_ACTION_RUNNER_SSH_KEY" >>= maybe (pure "/run/secrets/garnix_action_runner_ssh") makeAbsolute
+  actionRunnerSshKey <- lookupEnv "GARNIX_ACTION_RUNNER_SSH_KEY" >>= maybe (pure (secretFile "garnix_action_runner_ssh")) makeAbsolute
   curDir <- getCurrentDirectory
   let appPkPem = case readRsaPem appPkPem' of
         Right a -> a
@@ -211,7 +213,7 @@ withEnv testFeatures buildLogsDir buildLogsReportingPort action = do
   mgr <- newTlsManager
   jwtKey <-
     lookupEnv "JWT_KEY"
-      >>= maybe (BSC.readFile "/run/secrets/garnix-jwt-key") BSC.readFile
+      >>= maybe (BSC.readFile (secretFile "garnix-jwt-key")) BSC.readFile
       <&> fromSecret . B64.decodeLenient
   burl <-
     lookupEnv "GARNIX_URL" >>= \case
@@ -220,20 +222,20 @@ withEnv testFeatures buildLogsDir buildLogsReportingPort action = do
   opensearchQueryUrl <- fromMaybe "https://opensearch.garnix.io/_msearch" <$> lookupEnv "OPENSEARCH_URL"
   opensearchPass <-
     lookupEnv "OPENSEARCH_API"
-      >>= maybe (BSC.readFile "/run/secrets/opensearch-garnix") (pure . cs)
+      >>= maybe (BSC.readFile (secretFile "opensearch-garnix")) (pure . cs)
   dbPass <- do
     p <-
       lookupEnv "PGPASSWORD"
-        >>= maybe (BSC.readFile "/run/secrets/database-password") (pure . cs)
+        >>= maybe (BSC.readFile (secretFile "database-password")) (pure . cs)
     pure $ Data.ByteString.Char8.words p
   repoSecretsKeyPath <-
     RepoSecretsEncryptionKeyPath
-      . fromMaybe "/run/secrets/repo-secrets-key"
+      . fromMaybe (secretFile "repo-secrets-key")
       <$> lookupEnv "REPO_SECRETS_KEY_PATH"
   repoSecretsPubKey <-
     fmap RepoSecretsEncryptionPubKey
       $ lookupEnv "REPO_SECRETS_PUB_KEY"
-      >>= maybe (T.readFile "/run/secrets/repo-secrets-key-pub") (pure . cs)
+      >>= maybe (T.readFile (secretFile "repo-secrets-key-pub")) (pure . cs)
   dbConnectionPool <-
     ConnectionPool
       <$> Pool.newPool

@@ -65,11 +65,11 @@ let
     fi
   '';
 
-  pgConnString = "db:pg://${cfg.database.user}:$(cat /run/secrets/database-password)@${cfg.database.host}:${toString cfg.database.port}/${cfg.database.name}?sslmode=${cfg.database.ssl.mode}&sslrootcert=${cfg.database.ssl.rootCert}";
+  pgConnString = "db:pg://${cfg.database.user}:$(cat ${cfg.secrets.dir}/database-password)@${cfg.database.host}:${toString cfg.database.port}/${cfg.database.name}?sslmode=${cfg.database.ssl.mode}&sslrootcert=${cfg.database.ssl.rootCert}";
 
   migrateScript = pkgs.writeShellScriptBin "migrate" ''
     set -euo pipefail
-    export SQITCH_PASSWORD=$(cat /run/secrets/database-password)
+    export SQITCH_PASSWORD=$(cat ${cfg.secrets.dir}/database-password)
     ${lib.getBin flakePackages."backend_migrate"}/bin/sqitch deploy \
         "${pgConnString}"
   '';
@@ -81,7 +81,7 @@ let
     retry_interval=2
     retries=0
     start_time=$(date +%s)
-    export PGPASSWORD=$(cat /run/secrets/database-password)
+    export PGPASSWORD=$(cat ${cfg.secrets.dir}/database-password)
     echo $PGHOST
     while true; do
       end_time=$(date +%s)
@@ -294,7 +294,7 @@ in
     remoteBuilders = {
       sshKeyPath = lib.mkOption {
         type = lib.types.str;
-        default = "/run/secrets/garnix_server_remote_builder_ssh";
+        default = "${cfg.secrets.dir}/garnix_server_remote_builder_ssh";
         description = "Default SSH private key used to reach remote builders.";
       };
       hosts = lib.mkOption {
@@ -422,7 +422,7 @@ in
       fluent-bit.enableNginxLogParsing = true;
       fluent-bit.opensearch.fqdn = lib.mkDefault cfg.opensearch.host;
       fluent-bit.opensearch.basicAuth.username = lib.mkDefault cfg.opensearch.username;
-      fluent-bit.opensearch.basicAuth.passwordFile = lib.mkDefault "/run/secrets/opensearch-garnix";
+      fluent-bit.opensearch.basicAuth.passwordFile = lib.mkDefault "${cfg.secrets.dir}/opensearch-garnix";
       fluent-bit.buildLogsPipeline = {
         enable = lib.mkDefault true;
         port = buildLogsFluentBitPort;
@@ -471,6 +471,7 @@ in
           "GITHUB_APP_NAME=${cfg.githubAppName}"
           "GARNIX_ADMIN_GITHUB_LOGIN=${cfg.adminGithubLogin}"
           "GARNIX_ACTION_HOST=${cfg.actionRunner.host}"
+          "GARNIX_SECRETS_DIR=${cfg.secrets.dir}"
           "OPENSEARCH_URL=${cfg.opensearch.url}"
           "S3_CACHE_ENABLED=${if cfg.s3Cache.enable then "true" else "false"}"
         ] ++ lib.optionals (cfg.database.ssl.mode != "disable") [
