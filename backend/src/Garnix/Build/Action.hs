@@ -51,21 +51,6 @@ getActionAppAttributes config = go <$> config ^. Config.actions
         a
       )
 
-allowedSharedResourcesUsers :: [Text]
-allowedSharedResourcesUsers =
-  T.toLower
-    <$> [ "garnix-io",
-          "bellroy",
-          "emanueljg",
-          "psychefoundation",
-          "imiron-io",
-          "oliverlee",
-          "jameshaydon",
-          "ilyakooo0",
-          "montelot",
-          "soenkehahn"
-        ]
-
 run :: FlakeDir -> RepoConfig -> Reporter -> CommitInfo -> Attribute -> Action -> Build -> M ()
 run flakeDir repoConfig reporter commitInfo attr actionConfig build =
   withTextSpan ("action_run", review asAttribute attr) $ do
@@ -131,6 +116,7 @@ validateApplication (Nix.AppExecPath path) = do
 
 ensureAllowedSandboxType :: GhRepoOwner -> Action -> M ()
 ensureAllowedSandboxType owner actionConfig = do
+  allowedSharedResourcesUsers <- view (#action . #sharedResourcesUsers)
   when
     ( T.toLower (getGhLogin $ getGhRepoOwner owner)
         `notElem` allowedSharedResourcesUsers

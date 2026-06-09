@@ -319,6 +319,19 @@ in
           Accepts "host" or "host:port".
         '';
       };
+
+      sharedResourcesUsers = lib.mkOption {
+        type = lib.types.listOf lib.types.str;
+        default = [ ];
+        example = [ "my-org" "some-user" ];
+        description = ''
+          GitHub owner logins (orgs or users) allowed to run actions with
+          sandboxType = "shared-resources". Matched case-insensitively against
+          the repository owner. Anyone not listed gets a 403 ("You are not
+          allowed to run actions with the 'shared-resources'."). Empty by
+          default, so no one can use shared-resources until you opt them in.
+        '';
+      };
     };
 
     devDefaults = lib.mkOption {
@@ -471,6 +484,7 @@ in
           "GITHUB_APP_NAME=${cfg.githubAppName}"
           "GARNIX_ADMIN_GITHUB_LOGIN=${cfg.adminGithubLogin}"
           "GARNIX_ACTION_HOST=${cfg.actionRunner.host}"
+          "GARNIX_SHARED_RESOURCES_USERS=${lib.concatStringsSep "," cfg.actionRunner.sharedResourcesUsers}"
           "GARNIX_SECRETS_DIR=${cfg.secrets.dir}"
           "OPENSEARCH_URL=${cfg.opensearch.url}"
           "S3_CACHE_ENABLED=${if cfg.s3Cache.enable then "true" else "false"}"

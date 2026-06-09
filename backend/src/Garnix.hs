@@ -206,6 +206,9 @@ withEnv testFeatures buildLogsDir buildLogsReportingPort action = do
             }
   actionServerUrl <- fromMaybe "action-runner2.garnix.io" <$> lookupEnv "GARNIX_ACTION_HOST"
   actionRunnerSshKey <- lookupEnv "GARNIX_ACTION_RUNNER_SSH_KEY" >>= maybe (pure (secretFile "garnix_action_runner_ssh")) makeAbsolute
+  sharedResourcesUsers <-
+    lookupEnv "GARNIX_SHARED_RESOURCES_USERS"
+      <&> maybe [] (filter (not . T.null) . map (T.toLower . T.strip) . T.splitOn "," . cs)
   curDir <- getCurrentDirectory
   let appPkPem = case readRsaPem appPkPem' of
         Right a -> a
@@ -290,7 +293,8 @@ withEnv testFeatures buildLogsDir buildLogsReportingPort action = do
                 ActionEnv
                   { runnerHost = cs actionServerUrl,
                     runnerSshKey = cs actionRunnerSshKey,
-                    timeoutDuration = fromHours @Int 2
+                    timeoutDuration = fromHours @Int 2,
+                    sharedResourcesUsers
                   },
               nixEvalPool = nixEvalPool,
               s3UploadPool = s3UploadPool,

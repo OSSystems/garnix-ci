@@ -135,7 +135,8 @@ data S3CacheEnv = S3CacheEnv
 data ActionEnv = ActionEnv
   { runnerHost :: Text,
     runnerSshKey :: Text,
-    timeoutDuration :: Duration
+    timeoutDuration :: Duration,
+    sharedResourcesUsers :: [Text]
   }
   deriving (Generic)
 

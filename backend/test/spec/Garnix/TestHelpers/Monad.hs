@@ -288,7 +288,8 @@ withTestEnvironment tempDir action = do
                     ActionEnv
                       { runnerHost = error "misconfigured-host",
                         runnerSshKey = error "unset-ssh-key",
-                        timeoutDuration = fromMinutes 5
+                        timeoutDuration = fromMinutes 5,
+                        sharedResourcesUsers = ["garnix-io"]
                       },
                   nixEvalPool = nixEvalPool,
                   s3UploadPool = s3UploadPool,
