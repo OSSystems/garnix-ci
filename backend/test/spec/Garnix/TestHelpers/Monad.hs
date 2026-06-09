@@ -165,7 +165,7 @@ shouldNotContainM whole sublist = liftIO $ whole `shouldNotContain` sublist
 shouldThrowIO :: (HasCallStack, Show a, Eq a, Exception e) => M a -> Selector e -> M ()
 shouldThrowIO sh selector = liftBaseDiscard (`shouldThrow` selector) (void sh)
 
-shouldThrowM :: (HasCallStack, Show a, Eq a) => M a -> Error -> M ()
+shouldThrowM :: (HasCallStack) => M a -> Error -> M ()
 shouldThrowM sh expected =
   try sh >>= \case
     Left actualError -> liftIO $ err actualError `shouldBe` expected

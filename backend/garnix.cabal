@@ -703,6 +703,7 @@ test-suite spec
       Garnix.API.BadgesSpec
       Garnix.API.BuildSpec
       Garnix.API.Cache.PermissionsSpec
+      Garnix.API.CacheSpec
       Garnix.API.CommitSpec
       Garnix.API.ConfigSchemaSpec
       Garnix.API.DevSpec
