@@ -42,6 +42,6 @@ getTestUser = do
       DB.newUser
         (GhLogin "dev-user")
         (Email "dev-user@example.com")
-        Admin
+        FreeSubscription
         True
     Left e -> throwError e
