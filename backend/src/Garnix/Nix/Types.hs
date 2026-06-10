@@ -15,9 +15,14 @@ module Garnix.Nix.Types
     AppExecPath (..),
     BuildOutputs (..),
     getOutputByName,
+    parseDerivationShow,
+    ensureStorePrefix,
   )
 where
 
+import Data.Aeson (Value (Object), withObject)
+import Data.Aeson.KeyMap qualified as KeyMap
+import Data.Aeson.Types (Parser)
 import Data.Either.Extra
 import Data.Hashable (Hashable)
 import Data.Map qualified as Map
@@ -113,5 +118,16 @@ newtype BuildOutputs = BuildOutputs {getBuildOutputs :: Map.Map Text StorePath}
 
 getOutputByName :: Text -> BuildOutputs -> Maybe StorePath
 getOutputByName outputName (BuildOutputs map) = Map.lookup outputName map
+
+parseDerivationShow :: (FromJSON inner) => Value -> Parser (Map.Map Text inner)
+parseDerivationShow = withObject "nix derivation show output" $ \o ->
+  case KeyMap.lookup "derivations" o of
+    Just derivations -> parseJSON derivations
+    Nothing -> parseJSON (Object o)
+
+ensureStorePrefix :: Text -> Text
+ensureStorePrefix path
+  | "/nix/store/" `T.isPrefixOf` path = path
+  | otherwise = "/nix/store/" <> path
 
 makeFields ''Plan

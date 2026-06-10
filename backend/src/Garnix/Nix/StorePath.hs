@@ -23,15 +23,7 @@ import System.Directory (removeFile)
 import System.IO.Temp (withSystemTempDirectory)
 
 type NixDerivationShowOutput =
-  ( Rec
-      ( "derivations"
-          .== Map
-                Text
-                ( Rec
-                    ("outputs" .== Map Text (Rec ("path" .== Text)))
-                )
-      )
-  )
+  Map Text (Rec ("outputs" .== Map Text (Rec ("path" .== Text))))
 
 _getOutputs :: Nix.DrvPath -> M (Map Text Nix.StorePath)
 _getOutputs drvPath = do
@@ -43,13 +35,13 @@ _getOutputs drvPath = do
       & addNixConfigEnvironment nixConfig
   case exit of
     ExitSuccess -> do
-      parsed :: NixDerivationShowOutput <- aesonDecode "nix derivation show output" parseJSON output
+      parsed :: NixDerivationShowOutput <- aesonDecode "nix derivation show output" Nix.parseDerivationShow output
       let raw :: Map Text Text =
-            fmap (("/nix/store/" <>) . (^. #path))
+            fmap (Nix.ensureStorePrefix . (^. #path))
               $ Map.fromList
               $ mconcat
               $ map (\x -> Map.toList (x ^. #outputs))
-              $ Map.elems (parsed ^. #derivations)
+              $ Map.elems parsed
       forM raw $ \storePath -> do
         case Nix.parseStorePath storePath of
           Right storePath -> pure storePath

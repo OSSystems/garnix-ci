@@ -147,8 +147,8 @@ __findAllFodsRecursively drvPath = do
       $ cmd "nix"
       & addArgs ["derivation", "show", "--recursive", cs drvPath :: Text]
       & addNixConfigEnvironment nixConfig
-  parsed :: NixDerivationShowJson <- aesonDecode "nix derivation show output" parseJSON (cs stdout)
-  (Set.fromList <$>) $ flip mapMaybeM (Map.toList $ parsed ^. #derivations) $ \(drvPathText, info) -> do
+  parsed :: NixDerivationShowJson <- aesonDecode "nix derivation show output" Nix.parseDerivationShow (cs stdout)
+  (Set.fromList <$>) $ flip mapMaybeM (Map.toList parsed) $ \(drvPathText, info) -> do
     case (info ^. #env . #outputHash, info ^. #env . #system) of
       (Nothing, _) -> pure Nothing
       (Just _, Nothing) ->
@@ -158,22 +158,12 @@ __findAllFodsRecursively drvPath = do
               message = "fod doesn't have an `env.system` field."
             }
       (Just _fodDerivation, Just system) -> do
-        case Nix.parseDrvPath ("/nix/store/" <> drvPathText) of
+        case Nix.parseDrvPath (Nix.ensureStorePrefix drvPathText) of
           Left err -> throw $ DecodeError {original = cs stdout, message = "Failed to parse drv path: " <> err}
           Right drvPath -> pure $ Just (drvPath, system ^. re systemTextIso)
 
 type NixDerivationShowJson =
-  ( Rec
-      ( "derivations"
-          .== Map.Map
-                Text
-                ( Rec
-                    ( "env"
-                        .== NixDerivationShowEnvJson
-                    )
-                )
-      )
-  )
+  Map.Map Text (Rec ("env" .== NixDerivationShowEnvJson))
 
 data NixDerivationShowEnvJson = NixDerivationShowEnvJson
   { outputHash :: Maybe Text,

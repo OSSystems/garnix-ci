@@ -112,6 +112,7 @@
         system:
         let
           pkgs = import nixpkgs { inherit system overlays; };
+          pkgsUnstable = import flakeInputs.nixpkgsUnstable { inherit system; };
           lib = nixpkgs.lib;
           namespace = prefix: attrSet: lib.mapAttrs' (name: value: { name = "${prefix}_${name}";inherit value; }) attrSet;
           subDirInputs = {
@@ -153,7 +154,7 @@
             buildInputs = [
               pkgs.just
               pkgs.nil
-              pkgs.nix
+              pkgsUnstable.nix
               (pkgs.callPackage ./nix/packages/withSecrets.nix { })
             ]
             ++ backend.devShellInputs
