@@ -205,8 +205,6 @@ rec {
             [
               (pkgs.haskellPackages.ghc.withPackages (p: p.garnix.getBuildInputs.haskellBuildInputs))
               pkgs.haskellPackages.cabal-install
-              pkgs.yaml2json
-              pkgs.jq
             ]
           );
         text = ''
@@ -220,14 +218,15 @@ rec {
           trap 'db clear; rm $tempDir -rf' EXIT
 
           export EMPTY_DIR=${../nix/data/emptyDir}
-          ${secretSetup}
 
           git config --global user.email "you@example.com"
           git config --global user.name "Your Name"
           git config --global init.defaultBranch main
-          WATCHDOG_GITHUB_ACCESS_TOKEN=$(sops --decrypt ${./../secrets/dev.yaml} | yaml2json | jq -r .watchdog_github_access_token)
-          mkdir -p ~/.config/nix
-          echo access-tokens = github.com="$WATCHDOG_GITHUB_ACCESS_TOKEN" > ~/.config/nix/nix.conf
+
+          if [ -n "''${WATCHDOG_GITHUB_ACCESS_TOKEN_FILE:-}" ] && [ -s "''${WATCHDOG_GITHUB_ACCESS_TOKEN_FILE}" ]; then
+            mkdir -p ~/.config/nix
+            echo "access-tokens = github.com=$(cat "''${WATCHDOG_GITHUB_ACCESS_TOKEN_FILE}")" > ~/.config/nix/nix.conf
+          fi
 
           cp -r ${./..} src
           chmod a+rwX -R src
