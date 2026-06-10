@@ -26,6 +26,9 @@ writeShellScriptBin "db" ''
       echo "logging_collector = on" >> "$PGDATA/postgresql.conf"
       echo "log_statement = all" >> "$PGDATA/postgresql.conf"
       echo "listen_addresses = '''" >> "$PGDATA/postgresql.conf"
+      echo "password_encryption = md5" >> "$PGDATA/postgresql.conf"
+      printf 'local all %s md5\n' "$PGUSER" | cat - "$PGDATA/pg_hba.conf" > "$PGDATA/pg_hba.conf.tmp"
+      mv "$PGDATA/pg_hba.conf.tmp" "$PGDATA/pg_hba.conf"
     fi
 
     ${postgres}/bin/pg_ctl stop || echo "Starting pg_ctl"
