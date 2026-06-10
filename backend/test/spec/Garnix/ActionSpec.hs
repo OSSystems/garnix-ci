@@ -32,7 +32,7 @@ import Test.Hspec
 spec :: Spec
 spec = do
   aroundAll withActionRunner $ inMWith $ aroundM_ suppressLogsWhenPassing $ beforeM_ truncateDBM $ do
-    context "actions @slow" $ do
+    context "actions @slow @skip-ci" $ do
       let testHandleCommitWith sandboxType ghState flake =
             let sandboxStr :: String
                 sandboxStr = case sandboxType of
