@@ -25,6 +25,7 @@ import Data.Aeson.Types qualified as JSON
 import Data.ByteString (ByteString)
 import Data.Either.Extra (mapLeft)
 import Garnix.Async
+import Garnix.Build.BatchEval (batchedDrvPath)
 import Garnix.Build.Types (EvaluationResult (..))
 import Garnix.Incremental
 import Garnix.Limits qualified as Limits
@@ -95,42 +96,52 @@ evaluateAttribute ::
 evaluateAttribute repoConfig cacheDir workingDir build attr = withBubbling $ \bubble -> do
   evalTimeoutDuration <- liftIO Limits.evalTimeout
   evalRes <-
-    timingAs #evalDrvPathTime
-      $ withPoolM nixEvalPool (build ^. repoUser)
-      $ logDuration "nix eval for drvPath"
-      $ withTextSpan ("phase", "eval")
-      $ timeout evalTimeoutDuration
-      $ do
-        mDrvPath <-
-          if build ^. packageType == TypeApp
-            then bubble =<< mapLeft (uncurry AppEvalParseError) <$> getAppDrvPath repoConfig build workingDir cacheDir attr
-            else pure Nothing
-        result <- runNixEval (maybe attr cs mDrvPath)
-        case result of
-          (ExitFailure _, _, StderrRaw stderr) ->
-            pure
-              $ Left
-              $ NixEvaluationError
-                (Stderr stderr)
-                (RanCommand $ cs $ "prlimit --as=" <> show (toBytes maxEvalMem) <> " nix build " <> attr <> " --dry-run --json")
-          (ExitSuccess, StdoutRaw stdout, StderrRaw stderr) ->
-            case mDrvPath of
-              Nothing ->
-                case JSON.eitherDecodeStrict' @[NixBuildPackage] stdout of
-                  Left err -> pure $ Left $ ParseError (ParsingError err) (Stdout stdout) (Stderr stderr)
-                  Right [result] -> case result of
-                    SourceOutput src -> pure $ Left $ AttributeIsSourceOutput src
-                    Derivation drvPath outputs -> do
-                      plan <- Nix.getPlanOf stderr
-                      pure $ Right $ EvaluationResult drvPath (Nix.planOutputs plan) outputs
-                  Right xs -> pure $ Left $ UnexpectedNumberOfParsedResults (NumberOfParsedResults $ length xs) (Stdout stdout)
-              Just drvPath -> do
-                plan <- Nix.getPlanOf stderr
-                pure $ Right $ EvaluationResult drvPath (Nix.planOutputs plan) (Nix.BuildOutputs mempty)
+    timingAs #evalDrvPathTime $ do
+      -- Waited for outside the pool, so that waiting does not hold an eval slot.
+      batchedDrv <- batchedDrvPath build
+      withPoolM nixEvalPool (build ^. repoUser)
+        $ logDuration "nix eval for drvPath"
+        $ withTextSpan ("phase", "eval")
+        $ timeout evalTimeoutDuration
+        $ case batchedDrv of
+          -- Building @<drv>^*@ evaluates nothing, and reports the same outputs
+          -- and toUpload as building the attribute would.
+          Just drv -> dryRun (cs drv) Nothing
+          Nothing -> do
+            mDrvPath <-
+              if build ^. packageType == TypeApp
+                then bubble =<< mapLeft (uncurry AppEvalParseError) <$> getAppDrvPath repoConfig build workingDir cacheDir attr
+                else pure Nothing
+            dryRun (maybe attr cs mDrvPath) mDrvPath
   bubble $ fromMaybe (Left TimeoutReached) evalRes
   where
     maxEvalMem :: Memory
     maxEvalMem = repoConfig ^. maxEvalMemory
+
+    dryRun :: Text -> Maybe Nix.DrvPath -> M (Either EvaluateError EvaluationResult)
+    dryRun target mDrvPath = do
+      result <- runNixEval target
+      case result of
+        (ExitFailure _, _, StderrRaw stderr) ->
+          pure
+            $ Left
+            $ NixEvaluationError
+              (Stderr stderr)
+              (RanCommand $ cs $ "prlimit --as=" <> show (toBytes maxEvalMem) <> " nix build " <> attr <> " --dry-run --json")
+        (ExitSuccess, StdoutRaw stdout, StderrRaw stderr) ->
+          case mDrvPath of
+            Nothing ->
+              case JSON.eitherDecodeStrict' @[NixBuildPackage] stdout of
+                Left err -> pure $ Left $ ParseError (ParsingError err) (Stdout stdout) (Stderr stderr)
+                Right [result'] -> case result' of
+                  SourceOutput src -> pure $ Left $ AttributeIsSourceOutput src
+                  Derivation drvPath outputs -> do
+                    plan <- Nix.getPlanOf stderr
+                    pure $ Right $ EvaluationResult drvPath (Nix.planOutputs plan) outputs
+                Right xs -> pure $ Left $ UnexpectedNumberOfParsedResults (NumberOfParsedResults $ length xs) (Stdout stdout)
+            Just drvPath -> do
+              plan <- Nix.getPlanOf stderr
+              pure $ Right $ EvaluationResult drvPath (Nix.planOutputs plan) (Nix.BuildOutputs mempty)
 
     runNixEval :: Text -> M (ExitCode, StdoutRaw, StderrRaw)
     runNixEval attr' = do

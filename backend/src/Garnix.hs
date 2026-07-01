@@ -136,6 +136,14 @@ githubCheckLogsFromEnv =
       Right mode -> pure mode
       Left problem -> error $ "GARNIX_GITHUB_CHECK_LOGS: " <> cs problem
 
+evalStrategyFromEnv :: IO EvalStrategy
+evalStrategyFromEnv =
+  lookupEnvText "GARNIX_EVAL_STRATEGY" >>= \case
+    Nothing -> pure defaultEvalStrategy
+    Just raw -> case parseEvalStrategy raw of
+      Right strategy -> pure strategy
+      Left problem -> error $ "GARNIX_EVAL_STRATEGY: " <> cs problem
+
 evalMemoryConfigFromEnv :: IO EvalMemoryConfig
 evalMemoryConfigFromEnv = do
   defaultEvalMemory <-
@@ -416,6 +424,7 @@ withEnv testFeatures buildLogsDir buildLogsReportingPort action = do
   sessionLifetime <- sessionLifetimeFromEnv
   githubCheckLogs <- githubCheckLogsFromEnv
   evalMemoryConfig <- evalMemoryConfigFromEnv
+  evalStrategy <- evalStrategyFromEnv
   jwtKey <-
     lookupEnv "JWT_KEY"
       >>= maybe (BSC.readFile (secretFile "garnix-jwt-key")) BSC.readFile
@@ -569,7 +578,9 @@ withEnv testFeatures buildLogsDir buildLogsReportingPort action = do
               warmPoolTargets,
               hostingSshKeys,
               guestSubnetPrefix,
-              nixBuildPool
+              nixBuildPool,
+              evalStrategy,
+              evalBatch = Nothing
             }
     env <- pure $ env & #forges %~ (<> Map.fromList otherForges)
     action env

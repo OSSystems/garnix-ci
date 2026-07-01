@@ -119,6 +119,80 @@ spec = do
           resolve =<< handleCommit reporter False commitInfo
           (length <$> DB.getBuilds user) `shouldReturnM` 1
 
+      describe "with nix-eval-jobs" $ do
+        -- Without inputs the flake needs no lock, so its tree stays clean and
+        -- nix-eval-jobs runs.
+        let setupFlake flake repoPath = liftIO $ T.writeFile (repoPath </> "flake.nix") flake
+            packageFlake :: Int -> Text -> Text
+            packageFlake randomness marker =
+              cs
+                [i|
+                  { outputs = {self}: {
+                      packages.x86_64-linux.succeeding = derivation {
+                        name = "succeeding";
+                        builder = "/bin/sh";
+                        system = "x86_64-linux";
+                        args = [ "-c" "echo #{marker}; echo #{randomness} > $out" ];
+                      };
+                    };
+                  }
+                |]
+            -- A drv for the attribute that the per-attribute eval would not give.
+            otherDrv :: Int -> M Text
+            otherDrv randomness = do
+              let expr :: Text
+                  expr =
+                    cs
+                      [i|
+                        (derivation {
+                          name = "succeeding";
+                          builder = "/bin/sh";
+                          system = "x86_64-linux";
+                          args = [ "-c" "echo built from the batch; echo #{randomness} > $out" ];
+                        }).drvPath
+                      |]
+              StdoutTrimmed drv <- liftIO $ run $ cmd "nix" & nixConfDefaults & addArgs ["eval", "--raw", "--expr", expr]
+              pure drv
+            batchLine :: Text -> Text
+            batchLine field = "{\"attr\":\"\\\"packages.x86_64-linux.succeeding\\\"\",\"attrPath\":[\"packages.x86_64-linux.succeeding\"]," <> field <> "}"
+            packageBuild :: User -> M Build
+            packageBuild user = fromSingleton . filter (\b -> b ^. packageType == TypePackage) <$> DB.getBuilds user
+            buildLog :: GH.GithubFakeState -> M [Text]
+            buildLog ghState = do
+              reports <- GH.getReports ghState
+              pure $ concatMap T.lines $ mconcat (reports & mapped . mapped %~ (^. _2 . logs . to getRawLogs))
+
+        describe "under the batch strategy" $ aroundM_ (local (#evalStrategy .~ Batch)) $ do
+          it "builds the drvPath nix-eval-jobs gives" $ GH.withFakeGithubInterface $ \ghState -> do
+            randomness <- randomIO
+            user <- DB.newUser (ForgeLogin githubForge (GhLogin "owner")) "owner@owner.com"
+            drv <- otherDrv randomness
+            withMock #evalJobsMock (const $ pure $ cs $ batchLine ("\"drvPath\":\"" <> drv <> "\"")) $ do
+              GH.withLocalRepo ghState "owner" "repo" identity defaultCommitInfo (setupFlake (packageFlake randomness "built per attribute")) $ \commitInfo -> do
+                testHandleCommit commitInfo
+                build <- packageBuild user
+                (build ^. status) `shouldBeM` Just Success
+                (build ^. drvPath) `shouldBeM` Just (cs drv)
+                buildLog ghState >>= (`shouldContainM` ["succeeding> built from the batch"])
+
+          it "builds with a real nix-eval-jobs run" $ GH.withFakeGithubInterface $ \ghState -> do
+            randomness <- randomIO
+            user <- DB.newUser (ForgeLogin githubForge (GhLogin "owner")) "owner@owner.com"
+            GH.withLocalRepo ghState "owner" "repo" identity defaultCommitInfo (setupFlake (packageFlake randomness "built")) $ \commitInfo -> do
+              testHandleCommit commitInfo
+              build <- packageBuild user
+              (build ^. status) `shouldBeM` Just Success
+
+          it "evaluates an attribute nix-eval-jobs failed on again by itself" $ GH.withFakeGithubInterface $ \ghState -> do
+            randomness <- randomIO
+            user <- DB.newUser (ForgeLogin githubForge (GhLogin "owner")) "owner@owner.com"
+            withMock #evalJobsMock (const $ pure $ cs $ batchLine "\"error\":\"failed in the batch\"") $ do
+              GH.withLocalRepo ghState "owner" "repo" identity defaultCommitInfo (setupFlake (packageFlake randomness "built per attribute")) $ \commitInfo -> do
+                testHandleCommit commitInfo
+                build <- packageBuild user
+                (build ^. status) `shouldBeM` Just Success
+                buildLog ghState >>= (`shouldContainM` ["succeeding> built per attribute"])
+
       describe "recording builds that have already been built" $ do
         it "marks builds that have been already built as such" $ GH.withFakeGithubInterface $ \ghState -> do
           randomness :: Int <- randomIO

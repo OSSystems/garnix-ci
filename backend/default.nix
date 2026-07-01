@@ -38,6 +38,7 @@ let
     pkgs.util-linux
     pkgs.git
     pkgs.nix
+    pkgs.nix-eval-jobs
     pkgs.openssh
     pkgs.coreutils-full
     pkgs.bubblewrap

@@ -1,4 +1,4 @@
-module Garnix.Monad.Pool (Pool, newPool, poolSizeFromEnv, parsePoolSize, withPoolM, withPool, withPoolSlotsM, withPoolSlots) where
+module Garnix.Monad.Pool (Pool, newPool, poolSizeFromEnv, parsePoolSize, withPoolM, withPool, withPoolSlotsM, withPoolSlots, poolSize) where
 
 import Control.Concurrent.Lifted (MVar, modifyMVar, newEmptyMVar, newMVar, putMVar, takeMVar)
 import Data.Generics.Product (HasField')
@@ -129,6 +129,10 @@ newPool :: (MonadIO m) => Int -> Metrics -> Lens' Metrics Histogram -> Lens' Met
 newPool limit metrics timerMetric lenMetric = do
   qsem <- liftIO $ newQSem (metrics ^. lenMetric) limit
   pure $ Pool qsem limit timerMetric lenMetric
+
+-- | How many slots the pool has.
+poolSize :: Pool a -> Int
+poolSize (Pool _ capacity _ _) = capacity
 
 withPoolM :: (MonadMask m, MonadReader s m, HasField' "metrics" s Metrics, Eq a, Show a, MonadIO m) => (s -> Pool a) -> a -> m b -> m b
 withPoolM poolLens = withPoolSlotsM poolLens 1

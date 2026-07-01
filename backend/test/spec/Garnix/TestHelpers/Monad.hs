@@ -342,7 +342,9 @@ withTestEnvironment tempDir action = withTempDirectory "/dev/shm" "garnix-drv-ro
                   warmPoolTargets = mempty,
                   hostingSshKeys = [],
                   guestSubnetPrefix = "10.111.0.",
-                  nixBuildPool
+                  nixBuildPool,
+                  evalStrategy = defaultEvalStrategy,
+                  evalBatch = Nothing
                 }
         action env
   where
