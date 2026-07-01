@@ -74,7 +74,7 @@ let
     };
 
   forgeType = lib.types.submodule (
-    { name, config, ... }:
+    { config, name, ... }:
     {
       options = {
         kind = lib.mkOption {
@@ -518,6 +518,22 @@ in
     metricsPort = lib.mkOption {
       type = lib.types.int;
       default = 8323;
+    };
+
+    evalStrategy = lib.mkOption {
+      type = lib.types.nullOr (
+        lib.types.enum [
+          "perAttr"
+          "batch"
+        ]
+      );
+      default = null;
+      description = ''
+        How the server evaluates flake attributes to derivations. Unset means perAttr.
+        - perAttr: one `nix build --dry-run` per attribute.
+        - batch: one nix-eval-jobs run per commit. Incremental and app attributes, and
+          anything the run does not produce, are still evaluated per attribute.
+      '';
     };
 
     acmeEmail = lib.mkOption {
@@ -966,6 +982,7 @@ in
           cfg.sessionLifetimeSeconds != null
         ) "GARNIX_SESSION_LIFETIME=${toString cfg.sessionLifetimeSeconds}"
         ++ lib.optional (cfg.githubCheckLogs != null) "GARNIX_GITHUB_CHECK_LOGS=${cfg.githubCheckLogs}"
+        ++ lib.optional (cfg.evalStrategy != null) "GARNIX_EVAL_STRATEGY=${cfg.evalStrategy}"
         ++ lib.optional (
           cfg.evalMemory.defaultGigabytes != null
         ) "GARNIX_DEFAULT_EVAL_MEMORY_GB=${toString cfg.evalMemory.defaultGigabytes}"

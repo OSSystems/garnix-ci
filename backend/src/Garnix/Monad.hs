@@ -10,6 +10,7 @@ where
 import Amazonka.Env qualified as Amazonka (Env)
 import Amazonka.S3 qualified as Amazonka
 import Control.Concurrent (MVar, modifyMVar_, newMVar, readMVar)
+import Control.Concurrent.Async.Lifted (Async)
 import Control.Concurrent.STM (TVar, newTVarIO)
 import Control.Exception.Safe qualified as SafeException
 import Control.Lens (IndexedTraversal')
@@ -182,7 +183,12 @@ data Env = Env
     -- eval pool). Without it every attribute of a flake fires @nix build@ at
     -- once, oversubscribing memory and — because the build timeout wraps the
     -- queue wait — making backlogged builds spuriously time out.
-    nixBuildPool :: Garnix.Monad.Pool.Pool GhRepoOwner
+    nixBuildPool :: Garnix.Monad.Pool.Pool GhRepoOwner,
+    -- | How flake attributes are evaluated to derivations. See 'EvalStrategy'.
+    evalStrategy :: EvalStrategy,
+    -- | The nix-eval-jobs run for the commit being built, if any. Set with
+    -- 'local' while a flake builds; 'Nothing' everywhere else.
+    evalBatch :: Maybe BatchRun
   }
   deriving stock (Generic)
 
@@ -208,6 +214,32 @@ parseGithubCheckLogs = \case
   "live" -> Right GithubCheckLogsLive
   "final" -> Right GithubCheckLogsFinal
   other -> Left $ "expected \"live\" or \"final\", got: " <> other
+
+-- | How the server evaluates flake attributes to derivations.
+data EvalStrategy
+  = -- | One @nix build --dry-run@ per attribute (the original behaviour).
+    PerAttr
+  | -- | Use the batched nix-eval-jobs result. Incremental and app attributes,
+    -- and anything the batch did not produce, are evaluated per attribute.
+    Batch
+  deriving stock (Eq, Show, Generic)
+
+defaultEvalStrategy :: EvalStrategy
+defaultEvalStrategy = PerAttr
+
+parseEvalStrategy :: Text -> Either Text EvalStrategy
+parseEvalStrategy = \case
+  "perAttr" -> Right PerAttr
+  "batch" -> Right Batch
+  other -> Left $ "expected \"perAttr\" or \"batch\", got: " <> other
+
+-- | Drv paths from one nix-eval-jobs run, keyed by
+-- 'Garnix.Build.BatchEval.batchKey'. A 'Left' is that attribute's eval error.
+type BatchResult = Map Text (Either Text Nix.DrvPath)
+
+-- | A nix-eval-jobs run in progress. 'Nothing' when it could not run to the
+-- end: it failed, timed out, or was cancelled with its commit.
+type BatchRun = Async (Either ErrorWithContext (Maybe BatchResult))
 
 data TestFeature
   = DevApi
@@ -309,7 +341,10 @@ data EnvMocks = EnvMocks
     buildPkgMock :: Maybe (Mock (Maybe FodChecker, RunReporter, BuildKind, FlakeDir, RepoConfig, Build) Build),
     s3CacheUploadMock :: Maybe (Mock (RunReporter, RepoId, EvaluationResult, RepoPublicity) ()),
     fodCheckMock :: Maybe (Mock (Maybe FodChecker, Nix.DrvPath) ()),
-    rebuildFodMock :: Maybe (Mock (System, Nix.DrvPath) (Either Text Text))
+    rebuildFodMock :: Maybe (Mock (System, Nix.DrvPath) (Either Text Text)),
+    -- | Mocks the raw nix-eval-jobs invocation: maps the jobset expression to
+    -- the raw JSONL stdout. Keeps 'EnvMocks' free of BatchEval types.
+    evalJobsMock :: Maybe (Mock Text ByteString)
   }
   deriving (Generic)
 
@@ -324,7 +359,8 @@ emptyMocks =
       buildPkgMock = Nothing,
       s3CacheUploadMock = Nothing,
       fodCheckMock = Nothing,
-      rebuildFodMock = Nothing
+      rebuildFodMock = Nothing,
+      evalJobsMock = Nothing
     }
 
 data Mock arg result = Mock

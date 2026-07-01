@@ -54,6 +54,7 @@ library
       Garnix.Attribute
       Garnix.Build
       Garnix.Build.Action
+      Garnix.Build.BatchEval
       Garnix.Build.Checkout
       Garnix.Build.Evaluation
       Garnix.Build.Flake
@@ -750,6 +751,7 @@ test-suite spec
       Garnix.API.RunsSpec
       Garnix.AsyncSpec
       Garnix.AttributeSpec
+      Garnix.Build.BatchEvalSpec
       Garnix.Build.CheckoutSpec
       Garnix.Build.FodCheckSpec
       Garnix.Build.MetaCheckSpec
@@ -843,6 +845,7 @@ test-suite spec
       Garnix.Attribute
       Garnix.Build
       Garnix.Build.Action
+      Garnix.Build.BatchEval
       Garnix.Build.Checkout
       Garnix.Build.Evaluation
       Garnix.Build.Flake

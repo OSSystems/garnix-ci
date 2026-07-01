@@ -8,6 +8,7 @@ module Garnix.Limits
     evalTimeout,
     maxPackagesPerFlake,
     fodCheckEnabled,
+    evalJobsWorkers,
   )
 where
 
@@ -27,6 +28,10 @@ maxPackagesPerFlake = envIntDefault "GARNIX_MAX_PACKAGES_PER_FLAKE" 1000
 
 fodCheckEnabled :: IO Bool
 fodCheckEnabled = envBoolDefault "GARNIX_FOD_CHECK" True
+
+-- | Most workers one nix-eval-jobs run may use.
+evalJobsWorkers :: Int
+evalJobsWorkers = 8
 
 envIntDefault :: (Read a) => String -> a -> IO a
 envIntDefault name fallback = do

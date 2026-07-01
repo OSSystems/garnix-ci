@@ -16,6 +16,8 @@ data Metrics = Metrics
     evalQueueWaitTime :: Histogram,
     -- | Including queue wait time
     evalDrvPathTime :: Histogram,
+    -- | One nix-eval-jobs run over a commit's attributes, including queue wait
+    evalFlakeBatchTime :: Histogram,
     -- | Including queue wait time
     getAttrsToBuildTime :: Histogram,
     s3QueueLen :: Gauge,
@@ -108,6 +110,12 @@ registerMetrics = do
   evalDrvPathTime <-
     registerHistogram
       "garnix_server_eval_drv_path_time"
+      mempty
+      [0.2, 0.5, 1, 5, 10, 30, 60, 120, 360, 600, 900]
+      registry
+  evalFlakeBatchTime <-
+    registerHistogram
+      "garnix_server_eval_flake_batch_time"
       mempty
       [0.2, 0.5, 1, 5, 10, 30, 60, 120, 360, 600, 900]
       registry

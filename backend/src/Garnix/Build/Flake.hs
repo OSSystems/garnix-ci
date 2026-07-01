@@ -7,6 +7,7 @@ import Control.Lens
 import Data.IORef (newIORef, readIORef, writeIORef)
 import Garnix.Attribute
 import Garnix.Build.Action qualified as Action
+import Garnix.Build.BatchEval (withBatchEval)
 import Garnix.Build.Checkout (Remote, runWithCheckout, withAuthorization)
 import Garnix.Build.FodCheck qualified as FodCheck
 import Garnix.Build.Helpers
@@ -58,7 +59,7 @@ runBuildFlake reporter buildKind commitInfo withCheckout = do
             DB.setCommitStatus (commitInfo ^. repoInfo . repoId) (commitInfo ^. commit) Evaluated
             reportBuildResult startingBuildRunReporter updatedBuild
 
-            FodCheck.withFodChecker reporter commitInfo $ \fodChecker -> do
+            withBatchEval repoConfig commitInfo (config ^. flakeDir) (map fst initialBuilds) $ FodCheck.withFodChecker reporter commitInfo $ \fodChecker -> do
               buildPromises <- forM initialBuilds $ \(initialBuild, runReporter) -> do
                 spawn $ doBuild fodChecker runReporter buildKind (config ^. flakeDir) repoConfig initialBuild
               actionPromises <- forM initialActions $ \(initialBuild, runReporter, actionConfig) -> do
