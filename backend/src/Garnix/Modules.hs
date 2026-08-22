@@ -21,16 +21,16 @@ publish reporter config commitInfo = withTextSpan ("modules_publish", show publi
     (True, Just "main") -> do
       run <- DB.newRun "Garnix module publish" commitInfo
       withRunReporter reporter (ReportRun run) $ \runReporter -> do
-        case commitInfo ^. repoInfo . ghRepoOwner of
+        case commitInfo ^. repoInfo . repoId . repoUser of
           "garnix-io" -> do
             schema <- view #workingDir >>= ModuleSchema.readModuleSchema
-            let repo = commitInfo ^. repoInfo
-                repoName = repo ^. ghRepoName . to getGhRepoName
-                moduleName = ModuleSchema.repoNameToModuleName repoName
+            let repo = commitInfo ^. repoInfo . repoId
+                moduleRepoName = repo ^. repoName . to getGhRepoName
+                moduleName = ModuleSchema.repoNameToModuleName moduleRepoName
             DB.insertLatestVersion
               $ (#name .== moduleName)
-              .+ (#repo_user .== repo ^. ghRepoOwner)
-              .+ (#repo_name .== repo ^. ghRepoName)
+              .+ (#repo_user .== repo ^. repoUser)
+              .+ (#repo_name .== repo ^. repoName)
               .+ (#git_commit .== commitInfo ^. commit)
               .+ (#schema .== toJSON schema)
               .+ (#description .== ModuleSchema.description schema)

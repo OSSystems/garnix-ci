@@ -34,13 +34,12 @@ spec = do
       let go =
             DB.newBuildDB
               ( CommitInfo
-                  (user ^. githubLogin)
+                  (ForgeLogin githubForge (user ^. githubLogin))
                   (RepoIsPublic True)
                   ( RepoInfo
                       undefined
                       undefined
-                      (GhRepoOwner $ GhLogin "foo")
-                      (GhRepoName "bar")
+                      (RepoId githubForge (GhRepoOwner $ GhLogin "foo") (GhRepoName "bar"))
                   )
                   (Just (Branch "branch/name"))
                   Nothing

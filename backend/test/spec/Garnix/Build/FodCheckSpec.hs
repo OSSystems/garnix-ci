@@ -313,9 +313,9 @@ spec = inM $ aroundM_ (withUnmock #fodCheckMock . setUpXdgCacheDir . suppressLog
       result <- withTestReporter_ $ \reporter -> do
         let commitInfo =
               defaultCommitInfo
-                & repoInfo . ghRepoOwner .~ "owner"
-                & repoInfo . ghRepoName .~ "repo"
-                & reqUser .~ "owner"
+                & repoInfo . repoId . repoUser .~ "owner"
+                & repoInfo . repoId . repoName .~ "repo"
+                & reqUser .~ ForgeLogin githubForge "owner"
         output <- mkRandomOutput
         validButMalicious <- mkFodFlake Nothing output
         buildDrvPath . fst =<< testDerivation validButMalicious "default"

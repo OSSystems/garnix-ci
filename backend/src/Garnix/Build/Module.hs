@@ -22,7 +22,7 @@ import Garnix.Monad.SubProcess qualified as SubProcess
 import Garnix.NixConfig qualified as NixConfig
 import Garnix.Prelude
 import Garnix.Sandbox
-import Garnix.Types (Branch (..), CommitInfo (..), Error (..), GhLogin, RepoInfo (..), getCommitHash, getGhLogin, getGhRepoName, getGhRepoOwner)
+import Garnix.Types (Branch (..), CommitInfo (..), Error (..), ForgeLogin (..), GhLogin, RepoId (..), RepoInfo (..), getCommitHash, getGhLogin, getGhRepoName, getGhRepoOwner, githubForge)
 import GitHub.Data.Id (Id (Id))
 
 getCommitInfo :: GhLogin -> ModuleValues.GetRepoAndModuleValues -> M CommitInfo
@@ -41,9 +41,9 @@ getCommitInfo reqUser modules = do
           commit <- getHeadCommit token user repo branch
           pure
             $ CommitInfo
-              { _commitInfoReqUser = reqUser,
+              { _commitInfoReqUser = ForgeLogin githubForge reqUser,
                 _commitInfoRepoPublicity = repoPublicity,
-                _commitInfoRepoInfo = RepoInfo iAuth token user repo,
+                _commitInfoRepoInfo = RepoInfo iAuth token (RepoId githubForge user repo),
                 _commitInfoBranch = Just branch,
                 _commitInfoPrFromFork = Nothing,
                 _commitInfoCommit = commit

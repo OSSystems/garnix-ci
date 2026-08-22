@@ -71,9 +71,9 @@ submitTestBuild SubmitTestBuild {owner, repo, testCommit} = do
       tok <- getAccessToken iAuth
       let commitInfo =
             CommitInfo
-              { _commitInfoReqUser = "garnix-io",
+              { _commitInfoReqUser = ForgeLogin githubForge "garnix-io",
                 _commitInfoRepoPublicity = RepoIsPublic False,
-                _commitInfoRepoInfo = RepoInfo iAuth tok owner repo,
+                _commitInfoRepoInfo = RepoInfo iAuth tok (RepoId githubForge owner repo),
                 _commitInfoBranch = Nothing,
                 _commitInfoPrFromFork = Just $ PrFromFork $ getGhLogin (getGhRepoOwner owner) <> "/" <> getGhRepoName repo,
                 _commitInfoCommit = testCommit

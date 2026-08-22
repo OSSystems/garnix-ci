@@ -34,7 +34,7 @@ data RerunEvent = RerunEvent
 
 handlePullRequest :: (HasCallStack) => Reporter -> CommitInfo -> GhPullRequestId -> M (Promise ())
 handlePullRequest reporter commitInfo prId = do
-  assertIsAllowedToBuild (commitInfo ^. repoInfo . ghRepoOwner) (commitInfo ^. repoInfo . ghRepoName)
+  assertIsAllowedToBuild (commitInfo ^. repoInfo . repoId . repoUser) (commitInfo ^. repoInfo . repoId . repoName)
 
   withSpan commitInfo $ spawn $ do
     -- A PR from a fork has no branch on the base repo, so nothing has built it
@@ -48,14 +48,14 @@ handlePullRequest reporter commitInfo prId = do
     deployPrServers =
       Build.Checkout.withCheckout commitInfo
         $ withSpan prId
-        $ withInternalCacheToken (commitInfo ^. Types.reqUser)
+        $ withInternalCacheToken (commitInfo ^. Types.reqUser . ghLogin)
         $ void
         $ rolloutNewServerVersion reporter commitInfo (GhPrDeployment prId)
 
 handleCommit :: (HasCallStack) => Reporter -> Bool -> CommitInfo -> M (Promise ())
 handleCommit reporter allowDuplicateRun commitInfo = do
   withSpan commitInfo $ do
-    assertIsAllowedToBuild (commitInfo ^. repoInfo . ghRepoOwner) (commitInfo ^. repoInfo . ghRepoName)
+    assertIsAllowedToBuild (commitInfo ^. repoInfo . repoId . repoUser) (commitInfo ^. repoInfo . repoId . repoName)
     pushResult <- case commitInfo ^. branch of
       Nothing -> do
         log Informational "handleCommit: CommitInfo is missing branch. Not registering push"
@@ -63,8 +63,8 @@ handleCommit reporter allowDuplicateRun commitInfo = do
       Just branch -> do
         Just
           <$> DB.registerPush
-            (commitInfo ^. repoInfo . ghRepoOwner)
-            (commitInfo ^. repoInfo . ghRepoName)
+            (commitInfo ^. repoInfo . repoId . repoUser)
+            (commitInfo ^. repoInfo . repoId . repoName)
             (commitInfo ^. commit)
             branch
     case (allowDuplicateRun, pushResult) of
@@ -86,9 +86,9 @@ handleRerun ev = do
   withSpan (build' ^. id) $ do
     let commitInfo =
           CommitInfo
-            { _commitInfoReqUser = ev ^. #reqUser,
+            { _commitInfoReqUser = ForgeLogin githubForge (ev ^. #reqUser),
               _commitInfoRepoPublicity = ev ^. #repoIsPublic,
-              _commitInfoRepoInfo = RepoInfo (ev ^. #installAuth) (ev ^. #token) (build' ^. repoUser) (build' ^. repoName),
+              _commitInfoRepoInfo = RepoInfo (ev ^. #installAuth) (ev ^. #token) (RepoId githubForge (build' ^. repoUser) (build' ^. repoName)),
               _commitInfoBranch = build' ^. branch,
               _commitInfoPrFromFork = build' ^. prFromFork,
               _commitInfoCommit = build' ^. gitCommit

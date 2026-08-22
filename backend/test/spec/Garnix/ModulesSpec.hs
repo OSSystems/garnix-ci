@@ -29,7 +29,7 @@ spec = inM . beforeM_ truncateDBM . aroundM_ suppressLogsWhenPassing $ describe 
     modules `shouldBeM` []
 
   it "creates a failed check if the org is not garnix" $ do
-    let wrongOrgCommitInfo = testCommitInfo & repoInfo . ghRepoOwner .~ "not-garnix-io"
+    let wrongOrgCommitInfo = testCommitInfo & repoInfo . repoId . repoUser .~ "not-garnix-io"
     result <- withTestReporter_ (\reporter -> void $ try $ Modules.publish reporter enabled wrongOrgCommitInfo)
     let (Just testReport) = result ^? ix "Garnix module publish"
     testReport ^. #success `shouldBeM` Just False
@@ -70,7 +70,7 @@ spec = inM . beforeM_ truncateDBM . aroundM_ suppressLogsWhenPassing $ describe 
     let secondCommitInfo =
           testCommitInfo
             & commit .~ CommitHash "bbbbbbbb"
-            & repoInfo . ghRepoName .~ "tEsT-module"
+            & repoInfo . repoId . repoName .~ "tEsT-module"
     Modules.publish mempty enabled secondCommitInfo
     modules <- DB.getAvailableModules
     ((.- #schema) <$> modules)
@@ -99,7 +99,7 @@ spec = inM . beforeM_ truncateDBM . aroundM_ suppressLogsWhenPassing $ describe 
 
     forM_ tests $ \(name, repoName, expectation) -> do
       it ("correctly converts " <> name) $ withFakeWorkingDir $ do
-        let commitInfo = testCommitInfo & repoInfo . ghRepoName .~ repoName
+        let commitInfo = testCommitInfo & repoInfo . repoId . Garnix.Types.repoName .~ repoName
         Modules.publish mempty enabled commitInfo
         modules <- DB.getAvailableModules
         ((.- #schema) <$> modules)
@@ -114,9 +114,9 @@ spec = inM . beforeM_ truncateDBM . aroundM_ suppressLogsWhenPassing $ describe 
 testCommitInfo :: CommitInfo
 testCommitInfo =
   defaultCommitInfo
-    & repoInfo . ghRepoOwner .~ "garnix-io"
-    & repoInfo . ghRepoName .~ "test-module"
-    & Garnix.Types.reqUser .~ "garnix-io"
+    & repoInfo . repoId . repoUser .~ "garnix-io"
+    & repoInfo . repoId . repoName .~ "test-module"
+    & Garnix.Types.reqUser .~ ForgeLogin githubForge "garnix-io"
     & branch ?~ "main"
 
 enabled :: GarnixConfig

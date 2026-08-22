@@ -80,8 +80,8 @@ rolloutNewServerVersion ::
 rolloutNewServerVersion reporter commitInfo deploymentType = do
   mutex <- view #deployMutex
   let repoKey =
-        ( commitInfo ^. repoInfo . ghRepoOwner,
-          commitInfo ^. repoInfo . ghRepoName
+        ( commitInfo ^. repoInfo . repoId . repoUser,
+          commitInfo ^. repoInfo . repoId . repoName
         )
   withKeyedMutex mutex repoKey
     $ withTextSpan
@@ -358,8 +358,8 @@ checkDeployPlan repo deploymentType plan = do
 -- server would be deployed to an address nobody can reach.
 checkSubdomainValidity :: RepoInfo -> DeploymentType -> [Build] -> M ()
 checkSubdomainValidity repo deploymentType builds = do
-  let GhRepoOwner (GhLogin owner) = repo ^. ghRepoOwner
-      GhRepoName name = repo ^. ghRepoName
+  let GhRepoOwner (GhLogin owner) = repo ^. repoId . repoUser
+      GhRepoName name = repo ^. repoId . repoName
   unless (isValidSubdomainString owner)
     $ throw
     $ NameIsNotValidSubdomain RepoOwnerSubdomain owner
@@ -619,7 +619,7 @@ configureServer sshUser commitInfo serverInfo wanted = do
   copyAuthorizedKeys
     sshUser
     serverInfo
-    (if _serverToSpinUpAuthorizeDeployerGithubKeys wanted then Just (commitInfo ^. reqUser) else Nothing)
+    (if _serverToSpinUpAuthorizeDeployerGithubKeys wanted then Just (commitInfo ^. reqUser . ghLogin) else Nothing)
     (_serverToSpinUpAuthorizedSSHKeys wanted)
     <?> "Synchronizing SSH keys"
   exposeResult <- exposeServerPorts serverInfo wanted
@@ -660,8 +660,8 @@ publicHostFor domain commitInfo deploymentType build =
     "."
     [ getPackageName (build ^. package),
       fromDeploymentType getBranch (("pull-" <>) . show . getGhPullRequestId) deploymentType,
-      getGhRepoName (commitInfo ^. repoInfo . ghRepoName),
-      getGhLogin (getGhRepoOwner (commitInfo ^. repoInfo . ghRepoOwner)),
+      getGhRepoName (commitInfo ^. repoInfo . repoId . repoName),
+      getGhLogin (getGhRepoOwner (commitInfo ^. repoInfo . repoId . repoUser)),
       domain
     ]
 
@@ -714,7 +714,7 @@ copyKeys (SshUser user) repo server = do
           & addArgs (sshArgs <> [user <> "@" <> ip] <> sudoArgs <> args)
   doRemotely ["mkdir", "-p", cs (takeDirectory keyLocation)]
   (_, privKey) <-
-    getRepoKeys (repo ^. ghRepoOwner) (repo ^. ghRepoName) <?> "Get private keys"
+    getRepoKeys (repo ^. repoId . repoUser) (repo ^. repoId . repoName) <?> "Get private keys"
   repoSecretsKey <- view #repoSecretsEncryptionKeyPath
   exportResult <-
     liftIO

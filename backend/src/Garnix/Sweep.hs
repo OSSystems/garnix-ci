@@ -119,7 +119,7 @@ withRepoInfo owner repoName subjects action = do
         Just installationId -> do
           installationAuth <- getInstallation (Id (fromInteger installationId))
           token <- getAccessToken installationAuth
-          pure $ Just $ RepoInfo installationAuth token owner repoName
+          pure $ Just $ RepoInfo installationAuth token (RepoId githubForge owner repoName)
 
     skip reason =
       log Warning
@@ -138,7 +138,7 @@ reporterFor repoInfo commitHash = mkGithubReporter repoInfo commitHash <> openSe
 commitInfoFor :: RepoInfo -> CommitHash -> Build -> CommitInfo
 commitInfoFor repoInfo commitHash build =
   CommitInfo
-    { _commitInfoReqUser = build ^. reqUser,
+    { _commitInfoReqUser = ForgeLogin (repoInfo ^. repoId . forge) (build ^. reqUser),
       _commitInfoRepoPublicity = build ^. repoIsPublic,
       _commitInfoRepoInfo = repoInfo,
       _commitInfoBranch = build ^. branch,
@@ -149,7 +149,10 @@ commitInfoFor repoInfo commitHash build =
 minimalCommitInfo :: RepoInfo -> CommitHash -> CommitInfo
 minimalCommitInfo repoInfo commitHash =
   CommitInfo
-    { _commitInfoReqUser = getGhRepoOwner (repoInfo ^. ghRepoOwner),
+    { _commitInfoReqUser =
+        ForgeLogin
+          (repoInfo ^. repoId . forge)
+          (getGhRepoOwner (repoInfo ^. repoId . repoUser)),
       _commitInfoRepoPublicity = RepoIsPublic False,
       _commitInfoRepoInfo = repoInfo,
       _commitInfoBranch = Nothing,

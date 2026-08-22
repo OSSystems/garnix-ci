@@ -68,7 +68,7 @@ checkAuthorization flakeDir repoConfig commitInfo = do
   githubInputs <- checkInputsAllowed curDir inputs
   let repoInfo' = commitInfo ^. repoInfo
   privateInputs <- filterM (\(GithubFlakeInput owner repo) -> not . isRepoPublic <$> getRepoPublicity (repoInfo' ^. installationAuth) owner repo) githubInputs
-  selfRepoPublicity <- getRepoPublicity (repoInfo' ^. installationAuth) (repoInfo' ^. ghRepoOwner) (repoInfo' ^. ghRepoName)
+  selfRepoPublicity <- getRepoPublicity (repoInfo' ^. installationAuth) (repoInfo' ^. repoId . repoUser) (repoInfo' ^. repoId . repoName)
   case privateInputs of
     [] -> pure $ NixConfig mempty
     _
@@ -85,19 +85,19 @@ checkAuthorization flakeDir repoConfig commitInfo = do
             $ OtherError
               "Repository has private dependencies, but PR is from fork."
     _ -> do
-      baseRepoCollaborators' <- getRepoCollaborators (repoInfo' ^. installationAuth) (repoInfo' ^. ghRepoOwner) (repoInfo' ^. ghRepoName) <?> "Getting repo collaborators"
+      baseRepoCollaborators' <- getRepoCollaborators (repoInfo' ^. installationAuth) (repoInfo' ^. repoId . repoUser) (repoInfo' ^. repoId . repoName) <?> "Getting repo collaborators"
       baseRepoCollaborators <- case baseRepoCollaborators' of
         RepoNotFound -> throw $ OtherError "checkAuthorization: base repo not found"
         GhCollaborators collaborators -> pure collaborators
       forM_ privateInputs $ \privateInput -> do
-        when ((repoInfo' ^. ghRepoOwner) /= owner privateInput) $ do
+        when ((repoInfo' ^. repoId . repoUser) /= owner privateInput) $ do
           throw $ OtherError $ showPretty privateInput <> " is private or doesn't exist.\nIf it is private and you would like to use it, see https://garnix.io/docs/private_inputs."
         let skipPrivateInputChecks = repoConfig ^. skipPrivateInputsCheckForCollaborators
         unless skipPrivateInputChecks $ do
           thisInputCollaborators' <-
-            getRepoCollaborators (repoInfo' ^. installationAuth) (repoInfo' ^. ghRepoOwner) (repo privateInput)
+            getRepoCollaborators (repoInfo' ^. installationAuth) (repoInfo' ^. repoId . repoUser) (repo privateInput)
           thisInputCollaborators <- case thisInputCollaborators' of
-            RepoNotFound -> throw $ OtherError $ "checkAuthorization: repo " <> (getGhLogin . getGhRepoOwner $ repoInfo' ^. ghRepoOwner) <> "/" <> getGhRepoName (repoInfo' ^. ghRepoName) <> " not found"
+            RepoNotFound -> throw $ OtherError $ "checkAuthorization: repo " <> (getGhLogin . getGhRepoOwner $ repoInfo' ^. repoId . repoUser) <> "/" <> getGhRepoName (repoInfo' ^. repoId . repoName) <> " not found"
             GhCollaborators collaborators -> pure collaborators
           let missingUsers = filter (`notElem` thisInputCollaborators) baseRepoCollaborators
           unless (null missingUsers)

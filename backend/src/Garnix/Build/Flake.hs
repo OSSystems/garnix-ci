@@ -28,7 +28,7 @@ import Garnix.YamlConfig (Action, ExcludeBranches (..), GarnixConfig, Incrementa
 runBuildFlake :: (HasCallStack) => Reporter -> BuildKind -> CommitInfo -> Remote -> M ()
 runBuildFlake reporter buildKind commitInfo withCheckout = do
   (startingBuild, startingBuildRunReporter) <- newBuild reporter commitInfo (PackageInfo TypeOverall NoSystem buildStarting) False
-  withInternalCacheToken (commitInfo ^. reqUser) $ do
+  withInternalCacheToken (commitInfo ^. reqUser . ghLogin) $ do
     metaCheckRun <- MetaCheck.newReport reporter commitInfo
     -- Only known once the checkout hands us the repo's garnix.yaml, but needed
     -- by the handler below, which also covers failures from before that point
@@ -40,7 +40,7 @@ runBuildFlake reporter buildKind commitInfo withCheckout = do
           rethrowEither err
     flip catchEither onFail $ do
       reportOnError startingBuildRunReporter startingBuild commitInfo $ do
-        repoConfig <- DB.getRepoConfig (commitInfo ^. repoInfo . ghRepoOwner) (commitInfo ^. repoInfo . ghRepoName)
+        repoConfig <- DB.getRepoConfig (commitInfo ^. repoInfo . repoId . repoUser) (commitInfo ^. repoInfo . repoId . repoName)
         runWithCheckout withCheckout commitInfo $ \config -> do
           let policy =
                 if config ^. commentOnFailure
@@ -55,7 +55,7 @@ runBuildFlake reporter buildKind commitInfo withCheckout = do
                 startingBuild
                   & status ?~ Success
                   & endTime ?~ now
-            DB.setCommitStatus (commitInfo ^. repoInfo . ghRepoOwner) (commitInfo ^. repoInfo . ghRepoName) (commitInfo ^. commit) Evaluated
+            DB.setCommitStatus (commitInfo ^. repoInfo . repoId . repoUser) (commitInfo ^. repoInfo . repoId . repoName) (commitInfo ^. commit) Evaluated
             reportBuildResult startingBuildRunReporter updatedBuild
 
             FodCheck.withFodChecker reporter commitInfo $ \fodChecker -> do

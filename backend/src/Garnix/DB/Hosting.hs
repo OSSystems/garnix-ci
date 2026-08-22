@@ -47,8 +47,9 @@ import Garnix.Types
     GhPullRequestId,
     GhRepoName,
     GhRepoOwner,
-    HasGhRepoName (ghRepoName),
-    HasGhRepoOwner (ghRepoOwner),
+    HasRepoId (repoId),
+    HasRepoName (repoName),
+    HasRepoUser (repoUser),
     PackageName (..),
     RepoInfo,
   )
@@ -267,8 +268,8 @@ decodeServer
 -- already running before it decides what to change.
 getRunningServersOf :: RepoInfo -> DeploymentType -> M [ServerInfo]
 getRunningServersOf repoInfo deploymentType = do
-  let owner = repoInfo ^. ghRepoOwner
-      repo = repoInfo ^. ghRepoName
+  let owner = repoInfo ^. repoId . repoUser
+      repo = repoInfo ^. repoId . repoName
   rows <- case deploymentType of
     BranchDeployment branch ->
       DB.pgQuery

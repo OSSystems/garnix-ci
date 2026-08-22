@@ -20,7 +20,7 @@ spec = do
   inM $ aroundM_ (local (#githubLogDebounceDuration .~ testDebounceDuration)) $ describe "mkGithubReporter" $ do
     it "reports successful runs to github" $ GH.withFakeGithubInterface $ \ghState -> do
       GH.mkRepo ghState "owner" "repo" identity
-      let reporter = mkGithubReporter (RepoInfo undefined undefined "owner" "repo") "abc"
+      let reporter = mkGithubReporter (RepoInfo undefined undefined (RepoId githubForge "owner" "repo")) "abc"
       run <- DB.newRun "name" defaultCommitInfo
       runReporter <- createNewRun reporter (ReportRun run)
       reportLogs runReporter (mkLogLine "some log line")
@@ -30,7 +30,7 @@ spec = do
 
     it "reports failing runs to github" $ GH.withFakeGithubInterface $ \ghState -> do
       GH.mkRepo ghState "owner" "repo" identity
-      let reporter = mkGithubReporter (RepoInfo undefined undefined "owner" "repo") "abc"
+      let reporter = mkGithubReporter (RepoInfo undefined undefined (RepoId githubForge "owner" "repo")) "abc"
       run <- DB.newRun "name" defaultCommitInfo
       runReporter <- createNewRun reporter (ReportRun run)
       reportLogs runReporter (mkLogLine "some log line")
@@ -41,7 +41,7 @@ spec = do
     describe "reportLogs" $ do
       it "reports log lines without final status to github" $ GH.withFakeGithubInterface $ \ghState -> do
         GH.mkRepo ghState "owner" "repo" identity
-        let reporter = mkGithubReporter (RepoInfo undefined undefined "owner" "repo") "abc"
+        let reporter = mkGithubReporter (RepoInfo undefined undefined (RepoId githubForge "owner" "repo")) "abc"
         run <- DB.newRun "name" defaultCommitInfo
         runReporter <- createNewRun reporter (ReportRun run)
         reportLogs runReporter (mkLogLine "some log line")
@@ -51,7 +51,7 @@ spec = do
 
       it "doesn't modify the current status" $ GH.withFakeGithubInterface $ \ghState -> do
         GH.mkRepo ghState "owner" "repo" identity
-        let reporter = mkGithubReporter (RepoInfo undefined undefined "owner" "repo") "abc"
+        let reporter = mkGithubReporter (RepoInfo undefined undefined (RepoId githubForge "owner" "repo")) "abc"
         run <- DB.newRun "name" defaultCommitInfo
         runReporter <- createNewRun reporter (ReportRun run)
         reportLogs runReporter (mkLogLine "foo")
@@ -70,7 +70,7 @@ spec = do
       it "debounces requests to github" $ GH.withFakeGithubInterface $ \ghState -> do
         local (#githubLogDebounceDuration .~ fromMilliSeconds @Int 100) $ do
           GH.mkRepo ghState "owner" "repo" identity
-          let reporter = mkGithubReporter (RepoInfo undefined undefined "owner" "repo") "abc"
+          let reporter = mkGithubReporter (RepoInfo undefined undefined (RepoId githubForge "owner" "repo")) "abc"
           run <- DB.newRun "name" defaultCommitInfo
           runReporter <- createNewRun reporter (ReportRun run)
           replicateM_ 10 $ do
@@ -86,7 +86,7 @@ spec = do
       it "sends the last update immediately" $ GH.withFakeGithubInterface $ \ghState -> do
         local (#githubLogDebounceDuration .~ fromSeconds @Int 5) $ do
           GH.mkRepo ghState "owner" "repo" identity
-          let reporter = mkGithubReporter (RepoInfo undefined undefined "owner" "repo") "abc"
+          let reporter = mkGithubReporter (RepoInfo undefined undefined (RepoId githubForge "owner" "repo")) "abc"
           run <- DB.newRun "name" defaultCommitInfo
           runReporter <- createNewRun reporter (ReportRun run)
           replicateM_ 10 $ do

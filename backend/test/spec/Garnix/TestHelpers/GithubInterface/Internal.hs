@@ -199,16 +199,16 @@ mkFakeGithubInterface = do
           _githubInterfaceUpdateBuildReport = updateReport reportCollection,
           _githubInterfaceDoesRepoFileExist = \ci relativePath -> do
             let ri = ci ^. repoInfo
-            repo <- lookupRepoImpl repoCollection (ri ^. ghRepoOwner) (ri ^. ghRepoName)
+            repo <- lookupRepoImpl repoCollection (ri ^. repoId . repoUser) (ri ^. repoId . repoName)
             case repo >>= \r -> r ^. #localPath of
               Nothing ->
                 liftIO
                   $ assertFailure
                   $ cs
                   $ "Trying to access mocked repository '"
-                  <> getGhLogin (getGhRepoOwner (ri ^. ghRepoOwner))
+                  <> getGhLogin (getGhRepoOwner (ri ^. repoId . repoUser))
                   <> "/"
-                  <> getGhRepoName (ri ^. ghRepoName)
+                  <> getGhRepoName (ri ^. repoId . repoName)
                   <> "' at path '"
                   <> cs relativePath
                   <> "' without setting it."
@@ -219,16 +219,16 @@ mkFakeGithubInterface = do
           _githubInterfaceGetInstalledOrgs = \_tok -> getOrgMembers orgMembersCollection,
           _githubInterfaceGetRemote = \ci -> do
             let ri = ci ^. repoInfo
-            repo <- lookupRepoImpl repoCollection (ri ^. ghRepoOwner) (ri ^. ghRepoName)
+            repo <- lookupRepoImpl repoCollection (ri ^. repoId . repoUser) (ri ^. repoId . repoName)
             case repo >>= \r -> r ^. #localPath of
               Nothing ->
                 liftIO
                   $ assertFailure
                   $ cs
                   $ "Trying to access mocked repository remote for '"
-                  <> getGhLogin (getGhRepoOwner (ri ^. ghRepoOwner))
+                  <> getGhLogin (getGhRepoOwner (ri ^. repoId . repoUser))
                   <> "/"
-                  <> getGhRepoName (ri ^. ghRepoName)
+                  <> getGhRepoName (ri ^. repoId . repoName)
               Just basePath -> pure $ RemoteUrl ("file:///" <> cs basePath <> "/.git"),
           _githubInterfaceGetInstallation = \id' -> do
             appAuth <- view #githubAppAuth
@@ -261,7 +261,7 @@ mkFakeGithubInterface = do
           -- A repo set up with 'pullRequestBranch' pretends to have exactly one
           -- open pull request, number 1, containing every commit.
           _githubInterfaceGetPullRequestsForCommit = \ri _commit -> do
-            repo <- lookupRepoImpl repoCollection (ri ^. ghRepoOwner) (ri ^. ghRepoName)
+            repo <- lookupRepoImpl repoCollection (ri ^. repoId . repoUser) (ri ^. repoId . repoName)
             pure $ case repo >>= \r -> r ^. #pullRequestBranch of
               Nothing -> []
               Just _ -> [GhPullRequestId 1],

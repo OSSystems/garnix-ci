@@ -1057,9 +1057,9 @@ spec = do
 
             mkBuildInfo user commit =
               CommitInfo
-                (user ^. githubLogin)
+                (ForgeLogin githubForge (user ^. githubLogin))
                 (RepoIsPublic True)
-                (RepoInfo undefined (GhToken "test-token") "owner" "repo")
+                (RepoInfo undefined (GhToken "test-token") (RepoId githubForge "owner" "repo"))
                 (Just "branch")
                 Nothing
                 commit

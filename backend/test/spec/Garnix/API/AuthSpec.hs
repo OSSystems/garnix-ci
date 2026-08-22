@@ -134,7 +134,7 @@ spec = inM $ beforeM_ truncateDBM $ aroundM_ suppressLogs $ do
               [aesonQQ| null |]
         let jwt = res ^?! responseBody . key "token" . _String
         GH.withLocalRepo ghState "owner" "repo" identity defaultCommitInfo (GH.simpleSetup flake) $ \commitInfo -> do
-          resolve =<< buildFlake openSearchReporter (commitInfo & reqUser .~ (user ^. githubLogin))
+          resolve =<< buildFlake openSearchReporter (commitInfo & reqUser .~ ForgeLogin githubForge (user ^. githubLogin))
           build <- fromSingleton . filter (\x -> x ^. packageType == TypePackage) <$> DB.getBuilds user
           res <-
             assert200

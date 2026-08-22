@@ -1627,7 +1627,7 @@ instance ToJSON OpenSearchMessage where
 -- * combined data types
 
 data CommitInfo = CommitInfo
-  { _commitInfoReqUser :: GhLogin,
+  { _commitInfoReqUser :: ForgeLogin,
     _commitInfoRepoPublicity :: RepoPublicity,
     _commitInfoRepoInfo :: RepoInfo,
     _commitInfoBranch :: Maybe Branch,
@@ -1639,13 +1639,12 @@ data CommitInfo = CommitInfo
 data RepoInfo = RepoInfo
   { _repoInfoInstallationAuth :: InstallationAuth,
     _repoInfoGhToken :: GhToken,
-    _repoInfoGhRepoOwner :: GhRepoOwner,
-    _repoInfoGhRepoName :: GhRepoName
+    _repoInfoRepoId :: RepoId
   }
 
 instance Show RepoInfo where
-  show (RepoInfo _iAuth _ghToken repoOwner repoName) =
-    "RepoInfo <iAuth> <ghToken>" <> unwords [Prelude.show repoOwner, Prelude.show repoName]
+  show (RepoInfo _iAuth _ghToken repoId') =
+    "RepoInfo <iAuth> <ghToken>" <> Prelude.show repoId'
 
 data PackageInfo = PackageInfo
   { _packageInfoPackageType :: PackageType,

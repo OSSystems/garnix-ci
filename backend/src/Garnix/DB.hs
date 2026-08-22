@@ -286,8 +286,8 @@ getLatestBuildsMatching repoInfo commit = do
       uploaded_to_cache,
       already_built
     FROM builds
-    WHERE repo_user = ${repoInfo ^. ghRepoOwner}
-    AND repo_name = ${repoInfo ^. ghRepoName}
+    WHERE repo_user = ${repoInfo ^. (repoId . repoUser)}
+    AND repo_name = ${repoInfo ^. (repoId . repoName)}
     AND git_commit = ${commit}
     ORDER BY
       repo_user, repo_name, git_commit, package, package_type, system,
@@ -724,11 +724,11 @@ setRunStatus runId status =
 
 newRun :: Text -> CommitInfo -> M Run
 newRun name commitInfo = do
-  let repoOwner = commitInfo ^. repoInfo . ghRepoOwner
-  let repoName = commitInfo ^. repoInfo . ghRepoName
+  let repoOwner = commitInfo ^. repoInfo . repoId . repoUser
+  let repoName = commitInfo ^. repoInfo . repoId . Garnix.Types.repoName
   let commitHash = commitInfo ^. commit
   let branch = commitInfo ^. Garnix.Types.branch
-  let reqUser = commitInfo ^. Garnix.Types.reqUser
+  let reqUser = commitInfo ^. (Garnix.Types.reqUser . ghLogin)
   evalHost <- view #hostname
   evalInstance <- view #evalInstance
   result <-
@@ -1503,8 +1503,8 @@ newBuildDB commitInfo packageInfo evalHost wantsIncrementalism = do
          uploaded_to_cache
         )
     VALUES
-        (${commitInfo ^. (repoInfo . ghRepoOwner)},
-         ${commitInfo ^. (repoInfo . ghRepoName)},
+        (${commitInfo ^. (repoInfo . repoId . repoUser)},
+         ${commitInfo ^. (repoInfo . repoId . repoName)},
          ${commitInfo ^. prFromFork},
          ${commitInfo ^. branch},
          ${commitInfo ^. repoPublicity},
@@ -1512,7 +1512,7 @@ newBuildDB commitInfo packageInfo evalHost wantsIncrementalism = do
          ${packageInfo ^. Garnix.Types.packageName},
          ${packageInfo ^. packageType},
          ${packageInfo ^. maybeSystem},
-         ${commitInfo ^. reqUser},
+         ${commitInfo ^. (reqUser . ghLogin)},
          ${now},
          ${wantsIncrementalism},
          ${evalHost},

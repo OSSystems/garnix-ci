@@ -42,8 +42,8 @@ commentOnFailure commitInfo = ignoringAllErrors $ do
       -- comment twice.
       claimed <-
         DB.claimFailureComment
-          (commitInfo ^. repoInfo . ghRepoOwner)
-          (commitInfo ^. repoInfo . ghRepoName)
+          (commitInfo ^. repoInfo . repoId . repoUser)
+          (commitInfo ^. repoInfo . repoId . repoName)
           (commitInfo ^. commit)
       if not claimed
         then log Informational "commentOnFailure: already commented on this commit - not commenting again"
@@ -58,8 +58,8 @@ mkBody commitInfo = do
   fromRelativeUrl <- relativeUrlConverter
   failed <-
     DB.getBuildsAndRunsByCommit
-      (commitInfo ^. repoInfo . ghRepoOwner)
-      (commitInfo ^. repoInfo . ghRepoName)
+      (commitInfo ^. repoInfo . repoId . repoUser)
+      (commitInfo ^. repoInfo . repoId . repoName)
       (commitInfo ^. commit)
       <&> \case
         CommitEvaluating -> []
@@ -123,8 +123,8 @@ commentDeployedUrls commitInfo prId deployed = ignoringAllErrors $ case deployed
   _ -> do
     claimed <-
       DBHosting.claimDeployUrlComment
-        (commitInfo ^. repoInfo . ghRepoOwner)
-        (commitInfo ^. repoInfo . ghRepoName)
+        (commitInfo ^. repoInfo . repoId . repoUser)
+        (commitInfo ^. repoInfo . repoId . repoName)
         prId
     if not claimed
       then log Informational "commentDeployedUrls: already commented on this pull request"
@@ -140,8 +140,8 @@ commentDeployFailed :: CommitInfo -> GhPullRequestId -> Text -> M ()
 commentDeployFailed commitInfo prId reason = ignoringAllErrors $ do
   claimed <-
     DBHosting.claimDeployFailureComment
-      (commitInfo ^. repoInfo . ghRepoOwner)
-      (commitInfo ^. repoInfo . ghRepoName)
+      (commitInfo ^. repoInfo . repoId . repoUser)
+      (commitInfo ^. repoInfo . repoId . repoName)
       prId
       (commitInfo ^. commit)
   if not claimed

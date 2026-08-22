@@ -99,8 +99,8 @@ realGithubInterface =
       _githubInterfaceNewBuildReport = createBuildReportGH,
       _githubInterfaceUpdateBuildReport = updateBuildReportGH,
       _githubInterfaceDoesRepoFileExist = \commitInfo path -> do
-        let GhRepoOwner (GhLogin owner') = commitInfo ^. repoInfo . ghRepoOwner
-            GhRepoName repoName' = commitInfo ^. repoInfo . ghRepoName
+        let GhRepoOwner (GhLogin owner') = commitInfo ^. repoInfo . repoId . repoUser
+            GhRepoName repoName' = commitInfo ^. repoInfo . repoId . repoName
             CommitHash commit' = commitInfo ^. commit
             url =
               "https://api.github.com/repos"
@@ -131,8 +131,8 @@ realGithubInterface =
               <> fromFork
               <> ".git"
           Nothing ->
-            let GhRepoOwner (GhLogin owner') = commitInfo ^. repoInfo . ghRepoOwner
-                GhRepoName repo' = commitInfo ^. repoInfo . ghRepoName
+            let GhRepoOwner (GhLogin owner') = commitInfo ^. repoInfo . repoId . repoUser
+                GhRepoName repo' = commitInfo ^. repoInfo . repoId . repoName
              in RemoteUrl
                   $ "https://x-access-token:"
                   <> getGhToken (commitInfo ^. repoInfo . ghToken)
@@ -342,7 +342,7 @@ getInstalledOrgs (GhToken tok) = do
 -- * Making Github requests
 
 createBuildReportGH :: (HasCallStack) => RepoInfo -> GhRunReport -> M GhRunId
-createBuildReportGH (RepoInfo iAuth _ owner@(GhRepoOwner (GhLogin repoUser)) repo@(GhRepoName repoName)) report = do
+createBuildReportGH (RepoInfo iAuth _ (RepoId _ owner@(GhRepoOwner (GhLogin repoUser)) repo@(GhRepoName repoName))) report = do
   run <- fromRunReport report
   res <-
     executeAppRequest @Aeson.Value iAuth
@@ -354,7 +354,7 @@ createBuildReportGH (RepoInfo iAuth _ owner@(GhRepoOwner (GhLogin repoUser)) rep
         Just v -> pure $ fromInteger v
 
 updateBuildReportGH :: (HasCallStack) => GhRunId -> GhRunReport -> RepoInfo -> M ()
-updateBuildReportGH runId report (RepoInfo iAuth _ owner@(GhRepoOwner (GhLogin repoUser)) repo@(GhRepoName repoName)) = do
+updateBuildReportGH runId report (RepoInfo iAuth _ (RepoId _ owner@(GhRepoOwner (GhLogin repoUser)) repo@(GhRepoName repoName))) = do
   run <- fromRunReport report
   res <-
     executeAppRequest @Aeson.Value iAuth
@@ -363,7 +363,7 @@ updateBuildReportGH runId report (RepoInfo iAuth _ owner@(GhRepoOwner (GhLogin r
 
 -- | The pull requests a commit is the head of. Only needs @pull_requests: read@.
 getPullRequestsForCommitGH :: (HasCallStack) => RepoInfo -> CommitHash -> M [GhPullRequestId]
-getPullRequestsForCommitGH (RepoInfo iAuth _ owner@(GhRepoOwner (GhLogin repoUser)) repo@(GhRepoName repoName)) (CommitHash commit') = do
+getPullRequestsForCommitGH (RepoInfo iAuth _ (RepoId _forge owner@(GhRepoOwner (GhLogin repoUser)) repo@(GhRepoName repoName))) (CommitHash commit') = do
   res <-
     executeAppRequest @Aeson.Value iAuth
       $ GH.query ["repos", repoUser, repoName, "commits", commit', "pulls"] []
@@ -373,7 +373,7 @@ getPullRequestsForCommitGH (RepoInfo iAuth _ owner@(GhRepoOwner (GhLogin repoUse
 -- | Comment on a pull request. Unlike check runs, this does trigger a Github
 -- notification. Needs @pull_requests: write@.
 commentOnPullRequestGH :: (HasCallStack) => RepoInfo -> GhPullRequestId -> Text -> M ()
-commentOnPullRequestGH (RepoInfo iAuth _ owner@(GhRepoOwner (GhLogin repoUser)) repo@(GhRepoName repoName)) (GhPullRequestId prId) body = do
+commentOnPullRequestGH (RepoInfo iAuth _ (RepoId _forge owner@(GhRepoOwner (GhLogin repoUser)) repo@(GhRepoName repoName))) (GhPullRequestId prId) body = do
   res <-
     executeAppRequest @Aeson.Value iAuth
       $ GH.Command

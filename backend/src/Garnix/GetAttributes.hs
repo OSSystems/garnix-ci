@@ -93,11 +93,11 @@ getAttributesToBuild commitInfo cfg = timingAs #getAttrsToBuildTime $ do
   -- whether it does if it couldn't have mattered what the result was.
   general <- forM allParentAttrs $ \attr ->
     if attr `mightMatchConfig` cfg
-      then subAttrs (commitInfo ^. repoInfo . ghRepoOwner) (cfg ^. flakeDir) attr
+      then subAttrs (commitInfo ^. repoInfo . repoId . repoUser) (cfg ^. flakeDir) attr
       else pure []
   defaults <- forM allDirectAttrs $ \attr ->
     if matchesConfig attr cfg (commitInfo ^. branch)
-      then ifIsAttr (commitInfo ^. repoInfo . ghRepoOwner) (cfg ^. flakeDir) attr
+      then ifIsAttr (commitInfo ^. repoInfo . repoId . repoUser) (cfg ^. flakeDir) attr
       else pure []
   pure [attr | attr <- join (general <> defaults), matchesConfig attr cfg (commitInfo ^. branch)]
 

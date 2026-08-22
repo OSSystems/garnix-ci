@@ -83,7 +83,7 @@ defaultEvent =
 defaultCommitInfo :: CommitInfo
 defaultCommitInfo =
   CommitInfo
-    { _commitInfoReqUser = "owner",
+    { _commitInfoReqUser = ForgeLogin githubForge "owner",
       _commitInfoRepoPublicity = RepoIsPublic False,
       _commitInfoRepoInfo = defaultRepoInfo,
       _commitInfoBranch = Just "branch",
@@ -96,8 +96,7 @@ defaultRepoInfo =
   RepoInfo
     { _repoInfoInstallationAuth = error "defaultEventInfo does not set installation auth",
       _repoInfoGhToken = GhToken "",
-      _repoInfoGhRepoOwner = "owner",
-      _repoInfoGhRepoName = "repo"
+      _repoInfoRepoId = RepoId githubForge "owner" "repo"
     }
 
 eventRepoName :: Lens' CheckSuiteEvent (GhRepoOwner, GhRepoName)

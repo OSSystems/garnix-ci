@@ -40,9 +40,9 @@ spec = do
                   SharedResources -> "shared-resources"
                 commitInfo =
                   defaultCommitInfo
-                    & repoInfo . ghRepoOwner .~ "garnix-io"
-                    & repoInfo . ghRepoName .~ "repo"
-                    & reqUser .~ "garnix-io"
+                    & repoInfo . repoId . repoUser .~ "garnix-io"
+                    & repoInfo . repoId . repoName .~ "repo"
+                    & reqUser .~ ForgeLogin githubForge "garnix-io"
                 yaml =
                   cs
                     [i|
@@ -130,9 +130,9 @@ spec = do
         it "does not run SharedResources action for orgs that are not garnix-io" $ GH.withFakeGithubInterface $ \ghState -> do
           let commitInfo =
                 defaultCommitInfo
-                  & repoInfo . ghRepoOwner .~ "some-other-org"
-                  & repoInfo . ghRepoName .~ "repo"
-                  & reqUser .~ "some-other-org"
+                  & repoInfo . repoId . repoUser .~ "some-other-org"
+                  & repoInfo . repoId . repoName .~ "repo"
+                  & reqUser .~ ForgeLogin githubForge "some-other-org"
               yaml =
                 cs
                   [i|
@@ -447,8 +447,8 @@ spec = do
           GH.withFakeGithubInterface $ \ghState -> do
             let commitInfo =
                   defaultCommitInfo
-                    & repoInfo . ghRepoOwner .~ "garnix-io"
-                    & repoInfo . ghRepoName .~ "repo"
+                    & repoInfo . repoId . repoUser .~ "garnix-io"
+                    & repoInfo . repoId . repoName .~ "repo"
                     & prFromFork ?~ "somefork"
                 yaml =
                   cs

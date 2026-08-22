@@ -56,7 +56,7 @@ spec = around_ silence $ do
         `shouldBeM` cs [i|{"logLevel":"Informational","span_foo":"bar","message":"Some log message"}|]
 
     it "logs spans as json" $ do
-      let commitInfo = CommitInfo "owner" (RepoIsPublic True) (RepoInfo undefined undefined "owner" "repo") (Just "branch") Nothing "aaaaaa"
+      let commitInfo = CommitInfo (ForgeLogin githubForge "owner") (RepoIsPublic True) (RepoInfo undefined undefined (RepoId githubForge "owner" "repo")) (Just "branch") Nothing "aaaaaa"
       [logEntry] <- captureLogLines_ $ withSpan commitInfo $ do
         log Informational "Some log message"
       let expected :: Value =

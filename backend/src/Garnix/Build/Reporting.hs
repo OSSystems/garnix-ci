@@ -49,7 +49,7 @@ reportBuildResult runReporter build = do
 reportOnError :: RunReporter -> Build -> CommitInfo -> M a -> M a
 reportOnError runReporter build commitInfo io = do
   io `whenError` \e -> do
-    DB.setCommitStatus (commitInfo ^. repoInfo . ghRepoOwner) (commitInfo ^. repoInfo . ghRepoName) (commitInfo ^. commit) Evaluated
+    DB.setCommitStatus (commitInfo ^. repoInfo . repoId . repoUser) (commitInfo ^. repoInfo . repoId . repoName) (commitInfo ^. commit) Evaluated
     reportLogs runReporter $ mkLogLine $ showPretty (err e)
     reportBuildResult runReporter $ build
       & status ?~ Failure

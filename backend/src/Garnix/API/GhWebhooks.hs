@@ -71,9 +71,9 @@ ghWebhookCheckSuite ev
       (iAuth, tok) <- getAuthAndToken (whChecksInstallationId <$> evCheckSuiteInstallation ev)
       let commitInfo =
             CommitInfo
-              { _commitInfoReqUser = GhLogin . whUserLogin $ senderOfEvent ev,
+              { _commitInfoReqUser = ForgeLogin githubForge . GhLogin . whUserLogin $ senderOfEvent ev,
                 _commitInfoRepoPublicity = RepoIsPublic . not . whRepoIsPrivate $ repoForEvent ev,
-                _commitInfoRepoInfo = RepoInfo iAuth tok owner' repo',
+                _commitInfoRepoInfo = RepoInfo iAuth tok (RepoId githubForge owner' repo'),
                 _commitInfoBranch = branch',
                 _commitInfoPrFromFork = Nothing,
                 _commitInfoCommit = commit'
@@ -152,9 +152,9 @@ ghWebhookPullRequest ev = do
               else Nothing
       let commitInfo =
             CommitInfo
-              { _commitInfoReqUser = GhLogin . whUserLogin $ senderOfEvent ev,
+              { _commitInfoReqUser = ForgeLogin githubForge . GhLogin . whUserLogin $ senderOfEvent ev,
                 _commitInfoRepoPublicity = RepoIsPublic . not . whRepoIsPrivate $ repoForEvent ev,
-                _commitInfoRepoInfo = RepoInfo iAuth tok owner' repo',
+                _commitInfoRepoInfo = RepoInfo iAuth tok (RepoId githubForge owner' repo'),
                 _commitInfoBranch = Nothing,
                 _commitInfoPrFromFork = prFromFork,
                 _commitInfoCommit = commit'
@@ -189,9 +189,9 @@ ghWebhookPush ev
         Just s -> pure . GhLogin . whUserLogin $ s
       let commitInfo =
             CommitInfo
-              { _commitInfoReqUser = reqUser,
+              { _commitInfoReqUser = ForgeLogin githubForge reqUser,
                 _commitInfoRepoPublicity = RepoIsPublic . not . whRepoIsPrivate $ repoForEvent ev,
-                _commitInfoRepoInfo = RepoInfo iAuth tok owner' repo',
+                _commitInfoRepoInfo = RepoInfo iAuth tok (RepoId githubForge owner' repo'),
                 _commitInfoBranch = branch',
                 _commitInfoPrFromFork = Nothing,
                 _commitInfoCommit = commit'

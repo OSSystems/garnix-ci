@@ -39,6 +39,18 @@ instance Loggable GhRepoOwner where
 instance Loggable GhRepoName where
   asLog (GhRepoName n) = [("gh_repo", n)]
 
+-- | Not logged while there is only one forge: emitting it would add a constant
+-- field to every log line for no information. Revisit when a second forge
+-- exists.
+instance Loggable ForgeSlug where
+  asLog _ = []
+
+instance Loggable RepoId where
+  asLog (RepoId forge' owner name) = asLog forge' <> asLog owner <> asLog name
+
+instance Loggable ForgeLogin where
+  asLog (ForgeLogin forge' login') = asLog forge' <> asLog login'
+
 instance Loggable GhPullRequestId where
   asLog (GhPullRequestId n) = [("gh_pr", show n)]
 
