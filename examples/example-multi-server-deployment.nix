@@ -93,6 +93,7 @@ in
         self.nixosModules.garnix
         {
           fileSystems."/".device = "foo";
+          fileSystems."/".fsType = "ext4";
           boot.loader.systemd-boot.enable = true;
           system.stateVersion = "25.11";
           services.garnixServer = {
@@ -136,6 +137,7 @@ in
         ../nix/modules/monitoring-client.nix
         {
           fileSystems."/".device = "foo";
+          fileSystems."/".fsType = "ext4";
           boot.loader.systemd-boot.enable = true;
           system.stateVersion = "25.11";
           sops.defaultSopsFile = ../secrets/dev.yaml;
@@ -169,6 +171,7 @@ in
         ../opensearch/nixos-module.nix
         ({ lib, config, ... }: {
           fileSystems."/".device = "foo";
+          fileSystems."/".fsType = "ext4";
           boot.loader.systemd-boot.enable = true;
           system.stateVersion = "25.11";
           sops.defaultSopsFile = ../secrets/dev.yaml;

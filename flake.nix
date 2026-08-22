@@ -1,5 +1,5 @@
 {
-  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.11-small";
+  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
   inputs.sops-nix = {
     url = "github:Mic92/sops-nix";
@@ -44,8 +44,6 @@
     url = "github:numtide/treefmt-nix";
     inputs.nixpkgs.follows = "nixpkgs";
   };
-
-  inputs.nixpkgsUnstable.url = "github:NixOS/nixpkgs/nixos-unstable";
 
   inputs.libkrun = {
     url = "github:containers/libkrun";
@@ -112,7 +110,6 @@
         system:
         let
           pkgs = import nixpkgs { inherit system overlays; };
-          pkgsUnstable = import flakeInputs.nixpkgsUnstable { inherit system; };
           lib = nixpkgs.lib;
           namespace = prefix: attrSet: lib.mapAttrs' (name: value: { name = "${prefix}_${name}";inherit value; }) attrSet;
           subDirInputs = {
@@ -154,7 +151,7 @@
             buildInputs = [
               pkgs.just
               pkgs.nil
-              pkgsUnstable.nix
+              pkgs.nix
               (pkgs.callPackage ./nix/packages/withSecrets.nix { })
             ]
             ++ backend.devShellInputs

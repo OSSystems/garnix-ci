@@ -11,6 +11,7 @@
       ({ ... }: {
         # Minimum host plumbing. Replace with your real disk/boot setup.
         fileSystems."/".device = "/dev/disk/by-label/nixos";
+        fileSystems."/".fsType = "ext4";
         boot.loader.systemd-boot.enable = true;
         system.stateVersion = "25.11";
         networking.hostName = "garnix-selfhost";

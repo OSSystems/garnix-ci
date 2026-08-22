@@ -7,26 +7,25 @@
 let
   cfg = config.garnix.actionRunner;
   devModeSshKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIIsTYAj7lBPpDHSXA4kz07+PbvqElJhPG5bLbxYj255Z";
-  pkgsUnstable = import flakeInputs.nixpkgsUnstable { system = pkgs.system; };
-  libkrun = pkgsUnstable.libkrun.overrideAttrs (old: {
+  libkrun = pkgs.libkrun.overrideAttrs (old: {
     src = flakeInputs.libkrun;
-    cargoDeps = pkgsUnstable.rustPlatform.fetchCargoVendor {
+    cargoDeps = pkgs.rustPlatform.fetchCargoVendor {
       src = flakeInputs.libkrun;
       hash = "sha256-2ZjrOdrwnR1oaGmCZc/13LIlH3qPI7g9kBaYAEpwpSE=";
     };
   });
-  crunWithLibkrun = pkgsUnstable.crun.overrideAttrs (old: {
+  crunWithLibkrun = pkgs.crun.overrideAttrs (old: {
     pname = "crun-libkrun";
-    buildInputs = (old.buildInputs or [ ]) ++ [ libkrun pkgsUnstable.libkrunfw pkgsUnstable.pkg-config pkgsUnstable.makeWrapper ];
+    buildInputs = (old.buildInputs or [ ]) ++ [ libkrun pkgs.libkrunfw pkgs.pkg-config pkgs.makeWrapper ];
     configureFlags = (old.configureFlags or [ ]) ++ [ "--with-libkrun" ];
     postInstall = (old.postInstall or "") + ''
       # Ensure crun can dlopen libkrun*.so at runtime
       wrapProgram $out/bin/crun \
-        --prefix LD_LIBRARY_PATH : ${pkgsUnstable.lib.makeLibraryPath [ pkgsUnstable.libkrun ]} \
-        --set-default KRUNFW_PATH ${pkgsUnstable.libkrunfw}/share/libkrun
+        --prefix LD_LIBRARY_PATH : ${pkgs.lib.makeLibraryPath [ pkgs.libkrun ]} \
+        --set-default KRUNFW_PATH ${pkgs.libkrunfw}/share/libkrun
       wrapProgram $out/bin/krun \
         --prefix LD_LIBRARY_PATH : "$RUNTIME_LD_PATH" \
-        --set-default KRUNFW_PATH ${pkgsUnstable.libkrunfw}/share/libkrun
+        --set-default KRUNFW_PATH ${pkgs.libkrunfw}/share/libkrun
     '';
   });
 
