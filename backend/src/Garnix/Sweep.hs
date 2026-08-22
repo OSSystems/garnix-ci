@@ -36,9 +36,9 @@ sweepBuilds live = do
   builds <- DB.getOrphanedBuilds live
   unless (null builds) $ do
     log Notice $ "sweepOrphans: " <> show (length builds) <> " abandoned build(s)"
-    forM_ (groupOn (\build -> (build ^. repoUser, build ^. repoName)) builds)
-      $ \((owner, repoName), repoBuilds) ->
-        withRepoInfo owner repoName (length repoBuilds) $ \repoInfo -> do
+    forM_ (groupOn (\build -> RepoId githubForge (build ^. repoUser) (build ^. repoName)) builds)
+      $ \(repo, repoBuilds) ->
+        withRepoInfo repo (length repoBuilds) $ \repoInfo -> do
           forM_ repoBuilds $ \build ->
             closeBuild (reporterFor repoInfo (build ^. gitCommit)) build
           forM_ (groupOn (^. gitCommit) repoBuilds) $ \(commitHash, commitBuilds) ->
@@ -63,9 +63,9 @@ sweepRuns live = do
   runs <- DB.getOrphanedRuns live
   unless (null runs) $ do
     log Notice $ "sweepOrphans: " <> show (length runs) <> " abandoned run(s)"
-    forM_ (groupOn (\(run, _) -> (run ^. repoUser, run ^. repoName)) runs)
-      $ \((owner, repoName), repoRuns) ->
-        withRepoInfo owner repoName (length repoRuns) $ \repoInfo ->
+    forM_ (groupOn (\(run, _) -> RepoId githubForge (run ^. repoUser) (run ^. repoName)) runs)
+      $ \(repo, repoRuns) ->
+        withRepoInfo repo (length repoRuns) $ \repoInfo ->
           forM_ repoRuns $ \(run, mGhRunId) -> case mGhRunId of
             Nothing -> DB.setRunStatus (run ^. id) (Just Cancelled)
             Just ghRunId -> do
@@ -78,8 +78,8 @@ sweepStuckMetaChecks live = do
   commits <- DB.getStuckMetaChecks live
   unless (null commits) $ do
     log Notice $ "sweepOrphans: " <> show (length commits) <> " unreported meta check(s)"
-    forM_ commits $ \(owner, repoName, commitHash) ->
-      withRepoInfo owner repoName 1 $ \repoInfo ->
+    forM_ commits $ \(repo, commitHash) ->
+      withRepoInfo repo 1 $ \repoInfo ->
         MetaCheck.update
           (reporterFor repoInfo commitHash)
           (minimalCommitInfo repoInfo commitHash)
@@ -89,8 +89,8 @@ sweepEvaluations live = do
   evaluations <- DB.getOrphanedEvaluations live
   unless (null evaluations) $ do
     log Notice $ "sweepOrphans: " <> show (length evaluations) <> " abandoned evaluation(s)"
-    forM_ evaluations $ \(owner, repoName, commitHash) ->
-      withRepoInfo owner repoName 1 $ \repoInfo -> do
+    forM_ evaluations $ \(repo, commitHash) ->
+      withRepoInfo repo 1 $ \repoInfo -> do
         let reporter = reporterFor repoInfo commitHash
         runReporter <- createNewRun reporter MetaCheck
         MetaCheck.updateFail
@@ -98,10 +98,10 @@ sweepEvaluations live = do
           (minimalCommitInfo repoInfo commitHash)
           runReporter
           Nothing
-        DB.setCommitStatus owner repoName commitHash Evaluated
+        DB.setCommitStatus repo commitHash Evaluated
 
-withRepoInfo :: GhRepoOwner -> GhRepoName -> Int -> (RepoInfo -> M ()) -> M ()
-withRepoInfo owner repoName subjects action = do
+withRepoInfo :: RepoId -> Int -> (RepoInfo -> M ()) -> M ()
+withRepoInfo repo subjects action = do
   credentials <-
     ( (Right <$> fetchCredentials)
         `catchError` (pure . Left . show . pretty . err)
@@ -114,21 +114,21 @@ withRepoInfo owner repoName subjects action = do
   where
     fetchCredentials :: M (Maybe RepoInfo)
     fetchCredentials =
-      getGarnixInstallationId owner repoName >>= \case
+      getGarnixInstallationId (repo ^. repoUser) (repo ^. repoName) >>= \case
         Nothing -> pure Nothing
         Just installationId -> do
           installationAuth <- getInstallation (Id (fromInteger installationId))
           token <- getAccessToken installationAuth
-          pure $ Just $ RepoInfo installationAuth token (RepoId githubForge owner repoName)
+          pure $ Just $ RepoInfo installationAuth token repo
 
     skip reason =
       log Warning
         $ "sweepOrphans: leaving "
         <> show subjects
         <> " abandoned item(s) of "
-        <> getGhLogin (getGhRepoOwner owner)
+        <> getGhLogin (getGhRepoOwner (repo ^. repoUser))
         <> "/"
-        <> getGhRepoName repoName
+        <> getGhRepoName (repo ^. repoName)
         <> " open: "
         <> reason
 

@@ -7,28 +7,28 @@ import Garnix.Monad.SubProcess.Deprecated qualified as Deprecated
 import Garnix.Prelude
 import Garnix.Types
 
-getRepoPublicKey :: GhRepoOwner -> GhRepoName -> M PublicKey
-getRepoPublicKey owner name = fst <$> getRepoKeys owner name
+getRepoPublicKey :: RepoId -> M PublicKey
+getRepoPublicKey repo = fst <$> getRepoKeys repo
 
-getActionPublicKey :: GhRepoOwner -> GhRepoName -> PackageName -> M PublicKey
-getActionPublicKey owner name action = fst <$> getActionKeys owner name action
+getActionPublicKey :: RepoId -> PackageName -> M PublicKey
+getActionPublicKey repo action = fst <$> getActionKeys repo action
 
-getRepoKeys :: GhRepoOwner -> GhRepoName -> M (PublicKey, PrivateKey)
-getRepoKeys owner name = do
-  mkey <- DB.getRepoKeyDB owner name
+getRepoKeys :: RepoId -> M (PublicKey, PrivateKey)
+getRepoKeys repo = do
+  mkey <- DB.getRepoKeyDB repo
   case mkey of
     Nothing -> do
       (candidatePubKey, candidatePrivKey) <- generateKeys
-      DB.setRepoKeyDB owner name candidatePubKey candidatePrivKey
+      DB.setRepoKeyDB repo candidatePubKey candidatePrivKey
     Just key -> pure key
 
-getActionKeys :: GhRepoOwner -> GhRepoName -> PackageName -> M (PublicKey, PrivateKey)
-getActionKeys owner name action = do
-  mkey <- DB.getActionKeyDB owner name action
+getActionKeys :: RepoId -> PackageName -> M (PublicKey, PrivateKey)
+getActionKeys repo action = do
+  mkey <- DB.getActionKeyDB repo action
   case mkey of
     Nothing -> do
       (candidatePubKey, candidatePrivKey) <- generateKeys
-      DB.setActionKeyDB owner name action candidatePubKey candidatePrivKey
+      DB.setActionKeyDB repo action candidatePubKey candidatePrivKey
     Just key -> pure key
 
 generateKeys :: M (Candidate PublicKey, Candidate PrivateKey)

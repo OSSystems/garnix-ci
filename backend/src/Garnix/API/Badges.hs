@@ -9,10 +9,10 @@ import Garnix.Monad
 import Garnix.Prelude
 import Garnix.Types
 
-badgesAPI :: GhRepoOwner -> GhRepoName -> Maybe Branch -> M Badge
-badgesAPI owner repo mGivenBranch = do
+badgesAPI :: RepoId -> Maybe Branch -> M Badge
+badgesAPI repoId'@(RepoId _forge owner repo) mGivenBranch = do
   let branchSummary :: Branch -> M Badge
-      branchSummary branch = buildSummary <$> DB.getLatestBuildsForBranch owner repo branch
+      branchSummary branch = buildSummary <$> DB.getLatestBuildsForBranch repoId' branch
   case mGivenBranch of
     Just givenBranch -> branchSummary givenBranch
     Nothing -> do

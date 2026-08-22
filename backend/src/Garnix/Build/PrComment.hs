@@ -42,8 +42,7 @@ commentOnFailure commitInfo = ignoringAllErrors $ do
       -- comment twice.
       claimed <-
         DB.claimFailureComment
-          (commitInfo ^. repoInfo . repoId . repoUser)
-          (commitInfo ^. repoInfo . repoId . repoName)
+          (commitInfo ^. repoInfo . repoId)
           (commitInfo ^. commit)
       if not claimed
         then log Informational "commentOnFailure: already commented on this commit - not commenting again"
@@ -58,8 +57,7 @@ mkBody commitInfo = do
   fromRelativeUrl <- relativeUrlConverter
   failed <-
     DB.getBuildsAndRunsByCommit
-      (commitInfo ^. repoInfo . repoId . repoUser)
-      (commitInfo ^. repoInfo . repoId . repoName)
+      (commitInfo ^. repoInfo . repoId)
       (commitInfo ^. commit)
       <&> \case
         CommitEvaluating -> []

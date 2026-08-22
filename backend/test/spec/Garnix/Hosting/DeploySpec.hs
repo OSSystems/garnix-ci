@@ -465,8 +465,8 @@ spec = do
 commitInfoFor :: GhLogin -> Text -> CommitInfo
 commitInfoFor owner repo =
   defaultCommitInfo
-    & repoInfo . ghRepoOwner .~ GhRepoOwner owner
-    & repoInfo . ghRepoName .~ GhRepoName repo
+    & repoInfo . repoId . repoUser .~ GhRepoOwner owner
+    & repoInfo . repoId . repoName .~ GhRepoName repo
 
 -- | A successful @nixosConfiguration@ build of one package, with an optional
 -- persistence name. Every field is concrete rather than a placeholder:

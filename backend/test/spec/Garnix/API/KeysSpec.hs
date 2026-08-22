@@ -23,7 +23,7 @@ spec =
       $ property
       $ \(PrintableString org, PrintableString name) -> do
         PublicKey key <- runTest $ do
-          getRepoPublicKey (coerceT org) (coerceT name)
+          getRepoPublicKey (RepoId githubForge (coerceT org) (coerceT name))
         cs key `shouldStartWith` "age1"
         all isAlphaNum (cs key :: String) `shouldBe` True
 
@@ -43,13 +43,13 @@ spec =
               (key1, key2) <-
                 runTest $ do
                   (,)
-                    <$> getRepoPublicKey (coerceT org1) (coerceT name1)
-                    <*> getRepoPublicKey (coerceT org2) (coerceT name2)
+                    <$> getRepoPublicKey (RepoId githubForge (coerceT org1) (coerceT name1))
+                    <*> getRepoPublicKey (RepoId githubForge (coerceT org2) (coerceT name2))
               key1 `shouldNotBe` key2
 
     it "returns the same age key for the same repository even under concurrency" $ do
       keys <- runTest $ do
-        replicateConcurrently 100 $ getRepoPublicKey "owner" "repo"
+        replicateConcurrently 100 $ getRepoPublicKey (RepoId githubForge "owner" "repo")
       length (nub keys) `shouldBe` 1
 
 coerceT :: (Coercible Text a) => String -> a

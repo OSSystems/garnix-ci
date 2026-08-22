@@ -19,28 +19,28 @@ spec = do
   around_ Deprecated.addTestSecrets $ inM $ beforeM_ truncateDBM $ aroundM_ suppressLogsWhenPassing $ do
     describe "getBadgeStatus" $ do
       it "should say 'build status unknown' when there are no builds" $ do
-        badge <- badgesAPI repositoryLogin repositoryName repositoryBranch
+        badge <- badgesAPI (RepoId githubForge repositoryLogin repositoryName) repositoryBranch
         badgeMessage badge `shouldBeM` "build status unknown"
 
       it "should say number of build succeeded if everything succeeds" $ do
         badge <- do
           let commitInfo = defaultCommitInfo & repoPublicity .~ RepoIsPublic True
           build successFlake commitInfo
-          badgesAPI repositoryLogin repositoryName repositoryBranch
+          badgesAPI (RepoId githubForge repositoryLogin repositoryName) repositoryBranch
         badgeMessage badge `shouldBeM` "2 builds succeeded"
 
       it "should say 'all builds failed' if all builds fail" $ do
         badge <- do
           let commitInfo = defaultCommitInfo & repoPublicity .~ RepoIsPublic True
           build emptyFlake commitInfo
-          badgesAPI repositoryLogin repositoryName repositoryBranch
+          badgesAPI (RepoId githubForge repositoryLogin repositoryName) repositoryBranch
         badgeMessage badge `shouldBeM` "all builds failed"
 
       it "should say '<n> builds succeeded out of <total>' if some fail" $ do
         badge <- do
           let commitInfo = defaultCommitInfo & repoPublicity .~ RepoIsPublic True
           build failureFlake commitInfo
-          badgesAPI repositoryLogin repositoryName repositoryBranch
+          badgesAPI (RepoId githubForge repositoryLogin repositoryName) repositoryBranch
         badgeMessage badge `shouldBeM` "1 build succeeded out of 2"
 
       it "should show the most recent build results" $ do
@@ -49,29 +49,29 @@ spec = do
                 & repoPublicity .~ RepoIsPublic True
                 & commit .~ "3"
         build successFlake commitInfo1
-        badge1 <- badgesAPI repositoryLogin repositoryName repositoryBranch
+        badge1 <- badgesAPI (RepoId githubForge repositoryLogin repositoryName) repositoryBranch
         badgeMessage badge1 `shouldBeM` "2 builds succeeded"
         let commitInfo2 = commitInfo1 & commit .~ "1"
         build failureFlake commitInfo2
-        badge2 <- badgesAPI repositoryLogin repositoryName repositoryBranch
+        badge2 <- badgesAPI (RepoId githubForge repositoryLogin repositoryName) repositoryBranch
         badgeMessage badge2 `shouldBeM` "1 build succeeded out of 2"
         let commitInfo3 = commitInfo2 & commit .~ "2"
         build successFlake commitInfo3
-        badge3 <- badgesAPI repositoryLogin repositoryName repositoryBranch
+        badge3 <- badgesAPI (RepoId githubForge repositoryLogin repositoryName) repositoryBranch
         badgeMessage badge3 `shouldBeM` "2 builds succeeded"
 
       it "should say 'build status unknown' on private repos" $ do
         badge <- do
           let commitInfo = defaultCommitInfo & repoPublicity .~ RepoIsPublic False
           build successFlake commitInfo
-          badgesAPI repositoryLogin repositoryName repositoryBranch
+          badgesAPI (RepoId githubForge repositoryLogin repositoryName) repositoryBranch
         badgeMessage badge `shouldBeM` "build status unknown"
 
       it "should say 'build status unknown' when there are no commits in the given branch" $ do
         badge <- do
           let commitInfo = defaultCommitInfo & repoPublicity .~ RepoIsPublic True
           build successFlake commitInfo
-          badgesAPI repositoryLogin repositoryName Nothing
+          badgesAPI (RepoId githubForge repositoryLogin repositoryName) Nothing
         badgeMessage badge `shouldBeM` "build status unknown"
 
       it "ignores later commits on other branches" $ do
@@ -86,7 +86,7 @@ spec = do
                   & repoPublicity .~ RepoIsPublic True
                   & branch ?~ "b"
           build emptyFlake commitInfoB
-          badgesAPI repositoryLogin repositoryName (Just "a")
+          badgesAPI (RepoId githubForge repositoryLogin repositoryName) (Just "a")
         badgeMessage badge `shouldBeM` "2 builds succeeded"
 
       context "pending" $ do
@@ -99,27 +99,27 @@ spec = do
                 & status .~ Nothing
         it "should say builds in progress if no builds are complete" $ do
           void $ withBuild identity
-          badge <- badgesAPI repositoryLogin repositoryName repositoryBranch
+          badge <- badgesAPI (RepoId githubForge repositoryLogin repositoryName) repositoryBranch
           badgeMessage badge `shouldBeM` "build in progress"
 
         it "should report 1 build completed and 1 in progress" $ do
           void $ withBuild identity
           void $ withBuild $ \b -> b & status ?~ Success
-          badge <- badgesAPI repositoryLogin repositoryName repositoryBranch
+          badge <- badgesAPI (RepoId githubForge repositoryLogin repositoryName) repositoryBranch
           badgeMessage badge `shouldBeM` "1 build succeeded, 1 build in progress"
 
         it "should report 1 build completed and multiple in progress" $ do
           void $ withBuild identity
           void $ withBuild identity
           void $ withBuild $ \b -> b & status ?~ Success
-          badge <- badgesAPI repositoryLogin repositoryName repositoryBranch
+          badge <- badgesAPI (RepoId githubForge repositoryLogin repositoryName) repositoryBranch
           badgeMessage badge `shouldBeM` "1 build succeeded, 2 builds in progress"
 
         it "should report multiple completed and one in progress" $ do
           void $ withBuild identity
           void $ withBuild $ \b -> b & status ?~ Success
           void $ withBuild $ \b -> b & status ?~ Success
-          badge <- badgesAPI repositoryLogin repositoryName repositoryBranch
+          badge <- badgesAPI (RepoId githubForge repositoryLogin repositoryName) repositoryBranch
           badgeMessage badge `shouldBeM` "2 builds succeeded, 1 build in progress"
 
         it "should report multiple completed and multiple in progress" $ do
@@ -127,7 +127,7 @@ spec = do
           void $ withBuild identity
           void $ withBuild $ \b -> b & status ?~ Success
           void $ withBuild $ \b -> b & status ?~ Success
-          badge <- badgesAPI repositoryLogin repositoryName repositoryBranch
+          badge <- badgesAPI (RepoId githubForge repositoryLogin repositoryName) repositoryBranch
           badgeMessage badge `shouldBeM` "2 builds succeeded, 2 builds in progress"
 
         it "should report success, failure, and pending" $ do
@@ -137,7 +137,7 @@ spec = do
           void $ withBuild $ \b -> b & status ?~ Success
           void $ withBuild $ \b -> b & status ?~ Failure
           void $ withBuild $ \b -> b & status ?~ Failure
-          badge <- badgesAPI repositoryLogin repositoryName repositoryBranch
+          badge <- badgesAPI (RepoId githubForge repositoryLogin repositoryName) repositoryBranch
           badgeMessage badge `shouldBeM` "2 succeeded, 2 failed, and 2 in progress"
 
 repositoryLogin :: GhRepoOwner

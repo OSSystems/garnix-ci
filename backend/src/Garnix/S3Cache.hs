@@ -47,8 +47,8 @@ import System.IO qualified as IO
 import System.IO.Temp (withSystemTempDirectory)
 import Prelude qualified
 
-upload :: RunReporter -> GhRepoOwner -> GhRepoName -> EvaluationResult -> RepoPublicity -> M ()
-upload = curry5 $ mockable #s3CacheUploadMock $ \(runReporter, repoOwner, repoName, evalResult, repoPublicity) -> do
+upload :: RunReporter -> RepoId -> EvaluationResult -> RepoPublicity -> M ()
+upload = curry4 $ mockable #s3CacheUploadMock $ \(runReporter, repo, evalResult, repoPublicity) -> do
   enabled <- view #s3CacheEnabled
   if not enabled
     then log Informational "s3 cache disabled; skipping upload"
@@ -62,7 +62,7 @@ upload = curry5 $ mockable #s3CacheUploadMock $ \(runReporter, repoOwner, repoNa
         when (skippedForDeletion > 0)
           $ addEvent #s3CacheUploadsSkippedDeleting (fromIntegral skippedForDeletion)
         forM_ notClaimed $ \storePath -> do
-          DB.tagCacheUploadForS3Cache repoOwner repoName $ getHash storePath
+          DB.tagCacheUploadForS3Cache repo $ getHash storePath
         forConcurrently_ notInS3Cache $ \storePath -> do
           dirSize <- liftIO $ getDirSize $ cs $ getStorePath storePath
           limit <- view (#s3CacheEnv . #maxUploadSize)
@@ -79,7 +79,7 @@ upload = curry5 $ mockable #s3CacheUploadMock $ \(runReporter, repoOwner, repoNa
                       <> ". Not uploading to the garnix binary cache."
                   )
             else do
-              uploadStorePath repoOwner repoName storePath repoPublicity <?> "uploading to s3-cache"
+              uploadStorePath repo storePath repoPublicity <?> "uploading to s3-cache"
               reportLogs runReporter $ mkLogLine ("Uploaded " <> getStorePath storePath <> " to the garnix binary cache.")
 
 recordCacheAccess :: StoreHash -> M ()
@@ -284,8 +284,8 @@ getDirSize path = do
           isFile <- doesFileExist path
           if isFile then getFileSize path else pure 0
 
-uploadStorePath :: GhRepoOwner -> GhRepoName -> StorePath -> RepoPublicity -> M ()
-uploadStorePath repoOwner repoName storePath repoPublicity = do
+uploadStorePath :: RepoId -> StorePath -> RepoPublicity -> M ()
+uploadStorePath repo@(RepoId _forge repoOwner _repoName) storePath repoPublicity = do
   nixConfig <- view #userNixConfig
   withPoolM s3UploadPool repoOwner
     $ withBinaryFileInTempDir
@@ -334,7 +334,7 @@ uploadStorePath repoOwner repoName storePath repoPublicity = do
             fileSize,
             fileHash
           }
-      DB.tagCacheUploadForS3Cache repoOwner repoName $ getHash storePath
+      DB.tagCacheUploadForS3Cache repo $ getHash storePath
       incrementEvent #s3CacheUploads
 
 isPublicForCache :: GhRepoOwner -> RepoPublicity -> M Bool

@@ -34,7 +34,7 @@ data RerunEvent = RerunEvent
 
 handlePullRequest :: (HasCallStack) => Reporter -> CommitInfo -> GhPullRequestId -> M (Promise ())
 handlePullRequest reporter commitInfo prId = do
-  assertIsAllowedToBuild (commitInfo ^. repoInfo . repoId . repoUser) (commitInfo ^. repoInfo . repoId . repoName)
+  assertIsAllowedToBuild (commitInfo ^. repoInfo . repoId)
 
   withSpan commitInfo $ spawn $ do
     -- A PR from a fork has no branch on the base repo, so nothing has built it
@@ -55,7 +55,7 @@ handlePullRequest reporter commitInfo prId = do
 handleCommit :: (HasCallStack) => Reporter -> Bool -> CommitInfo -> M (Promise ())
 handleCommit reporter allowDuplicateRun commitInfo = do
   withSpan commitInfo $ do
-    assertIsAllowedToBuild (commitInfo ^. repoInfo . repoId . repoUser) (commitInfo ^. repoInfo . repoId . repoName)
+    assertIsAllowedToBuild (commitInfo ^. repoInfo . repoId)
     pushResult <- case commitInfo ^. branch of
       Nothing -> do
         log Informational "handleCommit: CommitInfo is missing branch. Not registering push"
@@ -63,8 +63,7 @@ handleCommit reporter allowDuplicateRun commitInfo = do
       Just branch -> do
         Just
           <$> DB.registerPush
-            (commitInfo ^. repoInfo . repoId . repoUser)
-            (commitInfo ^. repoInfo . repoId . repoName)
+            (commitInfo ^. repoInfo . repoId)
             (commitInfo ^. commit)
             branch
     case (allowDuplicateRun, pushResult) of
@@ -94,11 +93,11 @@ handleRerun ev = do
               _commitInfoCommit = build' ^. gitCommit
             }
     let reporter = openSearchReporter <> mkGithubReporter (commitInfo ^. repoInfo) (commitInfo ^. commit)
-    assertIsAllowedToBuild (build' ^. repoUser) (build' ^. repoName)
+    assertIsAllowedToBuild (commitInfo ^. repoInfo . repoId)
     withSpan commitInfo $ rerunBuild reporter build' commitInfo
 
-assertIsAllowedToBuild :: GhRepoOwner -> GhRepoName -> M ()
-assertIsAllowedToBuild owner repo = do
-  isDenied <- DB.isDenylisted owner repo
+assertIsAllowedToBuild :: RepoId -> M ()
+assertIsAllowedToBuild repo = do
+  isDenied <- DB.isDenylisted repo
   when isDenied $ do
     throw IsDeniedAccess

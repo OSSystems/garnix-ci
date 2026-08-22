@@ -436,7 +436,7 @@ spec = do
           GH.withLocalRepo ghState "owner" "repo" identity defaultCommitInfo (GH.simpleSetup flake) $ \commitInfo -> do
             _result <- try $ testHandleCommit commitInfo
             call <- fromSingleton . map (_1 .~ ()) <$> getMockCalls #s3CacheUploadMock
-            sort ((^.. _4 . #toUpload . each . to Nix.getName) call) `shouldBeM` ["good", "parent"]
+            sort ((^.. _3 . #toUpload . each . to Nix.getName) call) `shouldBeM` ["good", "parent"]
 
       it "pins its packages until upload is finished" $ do
         random :: Int <- randomIO
@@ -457,7 +457,7 @@ spec = do
                     };
                   }
                 |]
-            tryDeleting (_, _, _, evalResult, _) = do
+            tryDeleting (_, _, evalResult, _) = do
               let pathStr = Nix.getStorePath $ Nix.getDrvPath $ derivation evalResult
               (_exitCode :: ExitCode, StderrRaw err, StdoutTrimmed _out) <- run $ cmd "nix" & addArgs ["store", "delete", pathStr, "--extra-experimental-features", "nix-command flakes"]
               liftIO $ putMVar mvar (show err)
@@ -770,9 +770,9 @@ spec = do
               )
       context "commits table" $ do
         it "writes and reads commits to and from the db correctly" $ do
-          DB.newCommit "owner" "repo" "aaaaaa"
-          DB.setCommitStatus "owner" "repo" "aaaaaa" Evaluated
-          commit <- DB.getCommit "owner" "repo" "aaaaaa"
+          DB.newCommit (RepoId githubForge "owner" "repo") "aaaaaa"
+          DB.setCommitStatus (RepoId githubForge "owner" "repo") "aaaaaa" Evaluated
+          commit <- DB.getCommit (RepoId githubForge "owner" "repo") "aaaaaa"
           commit
             `shouldBeM` Just
               ( Commit
@@ -788,7 +788,7 @@ spec = do
           let invalidFlake = "{"
           GH.withLocalRepo ghState "owner" "repo" identity defaultCommitInfo (GH.simpleSetup invalidFlake) $ \commitInfo -> do
             expectErr $ testHandleCommit commitInfo
-            commit' <- DB.getCommit "owner" "repo" (commitInfo ^. commit)
+            commit' <- DB.getCommit (RepoId githubForge "owner" "repo") (commitInfo ^. commit)
             (commit' ^? _Just . status) `shouldBeM` Just Evaluated
 
         it "sets the commit status to Evaluating during evaluation" $ GH.withFakeGithubInterface $ \ghState -> do
@@ -797,7 +797,7 @@ spec = do
             withGithubMock
               getRemoteLens
               ( \_ -> do
-                  commit' <- DB.getCommit "owner" "repo" (commitInfo ^. commit)
+                  commit' <- DB.getCommit (RepoId githubForge "owner" "repo") (commitInfo ^. commit)
                   (commit' ^? _Just . status) `shouldBeM` Just Evaluating
                   throw $ OtherError "test should stop here"
               )
@@ -807,20 +807,20 @@ spec = do
         it "sets the commit status to Evaluated after packages are created in the db" $ GH.withFakeGithubInterface $ \ghState -> do
           GH.withLocalRepo ghState "owner" "repo" identity defaultCommitInfo (GH.simpleSetup simpleFlake) $ \commitInfo -> do
             testHandleCommit commitInfo
-            commit' <- DB.getCommit "owner" "repo" (commitInfo ^. commit)
+            commit' <- DB.getCommit (RepoId githubForge "owner" "repo") (commitInfo ^. commit)
             (commit' ^? _Just . status) `shouldBeM` Just Evaluated
 
         it "sets commit meta-check to successful after build succeeds" $ GH.withFakeGithubInterface $ \ghState -> do
           GH.withLocalRepo ghState "owner" "repo" identity defaultCommitInfo (GH.simpleSetup simpleFlake) $ \commitInfo -> do
             testHandleCommit commitInfo
-            commit' <- DB.getCommit "owner" "repo" (commitInfo ^. commit)
+            commit' <- DB.getCommit (RepoId githubForge "owner" "repo") (commitInfo ^. commit)
             (commit' ^? _Just . metaCheck) `shouldBeM` Just CheckSuccess
 
         it "sets commit meta-check to failure after build fails" $ GH.withFakeGithubInterface $ \ghState -> do
           GH.withLocalRepo ghState "owner" "repo" identity defaultCommitInfo (GH.simpleSetup simpleFlake) $ \commitInfo -> do
             mockBuildPkg (pure Failure) $ do
               testHandleCommit commitInfo
-              commit' <- DB.getCommit "owner" "repo" (commitInfo ^. commit)
+              commit' <- DB.getCommit (RepoId githubForge "owner" "repo") (commitInfo ^. commit)
               (commit' ^? _Just . metaCheck) `shouldBeM` Just CheckFail
 
       context "Github meta-check" $ do

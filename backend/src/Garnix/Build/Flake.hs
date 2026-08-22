@@ -40,7 +40,7 @@ runBuildFlake reporter buildKind commitInfo withCheckout = do
           rethrowEither err
     flip catchEither onFail $ do
       reportOnError startingBuildRunReporter startingBuild commitInfo $ do
-        repoConfig <- DB.getRepoConfig (commitInfo ^. repoInfo . repoId . repoUser) (commitInfo ^. repoInfo . repoId . repoName)
+        repoConfig <- DB.getRepoConfig (commitInfo ^. repoInfo . repoId)
         runWithCheckout withCheckout commitInfo $ \config -> do
           let policy =
                 if config ^. commentOnFailure
@@ -55,7 +55,7 @@ runBuildFlake reporter buildKind commitInfo withCheckout = do
                 startingBuild
                   & status ?~ Success
                   & endTime ?~ now
-            DB.setCommitStatus (commitInfo ^. repoInfo . repoId . repoUser) (commitInfo ^. repoInfo . repoId . repoName) (commitInfo ^. commit) Evaluated
+            DB.setCommitStatus (commitInfo ^. repoInfo . repoId) (commitInfo ^. commit) Evaluated
             reportBuildResult startingBuildRunReporter updatedBuild
 
             FodCheck.withFodChecker reporter commitInfo $ \fodChecker -> do

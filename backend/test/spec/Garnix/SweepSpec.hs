@@ -94,30 +94,30 @@ spec = inM
         heartbeat
         sweepOrphans
 
-        runs <- DB.getRuns "owner" "repo" defaultCommit
+        runs <- DB.getRuns (RepoId githubForge "owner" "repo") defaultCommit
         ((^. status) <$> runs) `shouldBeM` [Just Cancelled]
         statusOf ghState (run ^. name) >>= (`shouldBeM` Just RunReportStatusCancelled)
 
     it "fails the meta check of an evaluation that never finished" $ do
       withFakeGithubInterface $ \ghState -> do
         mkRepo ghState "owner" "repo" identity
-        local (#evalInstance .~ deadInstance) $ DB.newCommit "owner" "repo" defaultCommit
+        local (#evalInstance .~ deadInstance) $ DB.newCommit (RepoId githubForge "owner" "repo") defaultCommit
         heartbeat
         sweepOrphans
 
         statusOf ghState "All Garnix checks"
           >>= (`shouldBeM` Just RunReportStatusFailure)
-        commit' <- DB.getCommit "owner" "repo" defaultCommit
+        commit' <- DB.getCommit (RepoId githubForge "owner" "repo") defaultCommit
         ((^. status) <$> commit') `shouldBeM` Just Evaluated
 
     it "leaves an evaluation alone while the process running it is alive" $ do
       withFakeGithubInterface $ \ghState -> do
         mkRepo ghState "owner" "repo" identity
-        DB.newCommit "owner" "repo" defaultCommit
+        DB.newCommit (RepoId githubForge "owner" "repo") defaultCommit
         heartbeat
         sweepOrphans
 
-        commit' <- DB.getCommit "owner" "repo" defaultCommit
+        commit' <- DB.getCommit (RepoId githubForge "owner" "repo") defaultCommit
         ((^. status) <$> commit') `shouldBeM` Just Evaluating
 
     it "stops counting a process once it misses the whole window" $ do
@@ -150,8 +150,8 @@ spec = inM
 
     buildOwnedBy :: Text -> M Build
     buildOwnedBy owner = local (#evalInstance .~ owner) $ do
-      DB.newCommit "owner" "repo" defaultCommit
-      DB.setCommitStatus "owner" "repo" defaultCommit Evaluated
+      DB.newCommit (RepoId githubForge "owner" "repo") defaultCommit
+      DB.setCommitStatus (RepoId githubForge "owner" "repo") defaultCommit Evaluated
       build <-
         DB.newBuildDB
           defaultCommitInfo
@@ -165,7 +165,7 @@ spec = inM
 
     onlyBuild :: M Build
     onlyBuild =
-      DB.getBuildsByCommit "owner" "repo" defaultCommit >>= \case
+      DB.getBuildsByCommit (RepoId githubForge "owner" "repo") defaultCommit >>= \case
         [build] -> pure build
         builds -> liftIO $ assertFailure $ "expected exactly one build, got " <> Prelude.show (length builds)
 

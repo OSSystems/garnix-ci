@@ -69,7 +69,7 @@ rerunBuild reporter build commitInfo = do
   let build' = build & githubRunId .~ Garnix.Monad.ghRunId runReporter
   DB.reportBuildResultDB build' <?> "Adding build github ID to DB"
   reportOnError runReporter build' commitInfo $ do
-    repoConfig <- DB.getRepoConfig (commitInfo ^. repoInfo . repoId . repoUser) (commitInfo ^. repoInfo . repoId . repoName)
+    repoConfig <- DB.getRepoConfig (commitInfo ^. repoInfo . repoId)
     Checkout.runWithCheckout Checkout.remoteWithConfig commitInfo $ \config -> do
       withAuthorization (config ^. flakeDir) repoConfig commitInfo $ do
         reportBuildResult runReporter build'

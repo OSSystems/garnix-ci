@@ -19,13 +19,13 @@ data CommitAPI route = CommitAPI
 commitAPI :: AuthResult AuthJwtPayload -> CommitAPI (AsServerT M)
 commitAPI (Authenticated ((^. #user) -> user')) =
   CommitAPI
-    { _commitAPIgetCommitsForRepo = getCommitsForRepo (Just user'),
+    { _commitAPIgetCommitsForRepo = \owner name -> getCommitsForRepo (Just user') (RepoId githubForge owner name),
       _commitAPIgetCommitsForUser = getCommitsForUser user',
       _commitAPIgetSingleCommit = getSingleCommit (Just user')
     }
 commitAPI _ =
   CommitAPI
-    { _commitAPIgetCommitsForRepo = getCommitsForRepo Nothing,
+    { _commitAPIgetCommitsForRepo = \owner name -> getCommitsForRepo Nothing (RepoId githubForge owner name),
       _commitAPIgetCommitsForUser = throw Unauthorized,
       _commitAPIgetSingleCommit = getSingleCommit Nothing
     }
@@ -50,8 +50,8 @@ instance ToJSON GetCommit where
   toEncoding = ourToEncoding
   toJSON = ourToJSON
 
-getCommitsForRepo :: (HasCallStack) => Maybe User -> GhRepoOwner -> GhRepoName -> M ListCommits
-getCommitsForRepo user repoOwner repoName = do
+getCommitsForRepo :: (HasCallStack) => Maybe User -> RepoId -> M ListCommits
+getCommitsForRepo user repo@(RepoId _forge repoOwner repoName) = do
   installationId <- getGarnixInstallationId repoOwner repoName
   iAuth <- case installationId of
     Nothing -> throw $ NoSuchRepo {_owner = repoOwner, _name = repoName}
@@ -59,7 +59,7 @@ getCommitsForRepo user repoOwner repoName = do
   repoPublicity <- getRepoPublicity iAuth repoOwner repoName
   hasAccess <- hasAccessToRepo user repoPublicity repoOwner repoName
   when (not hasAccess) $ throw NoSuchRepo {_owner = repoOwner, _name = repoName}
-  ListCommits <$> DB.getCommitsByOwnerAndRepo repoOwner repoName
+  ListCommits <$> DB.getCommitsByOwnerAndRepo repo
 
 getCommitsForUser :: User -> M ListCommits
 getCommitsForUser user = do
@@ -71,7 +71,7 @@ getSingleCommit user' commit = do
   summary <- DB.getCommitSummary commit
   hasAccess <- hasAccessTo user' (summary ^. repoIsPublic) (summary ^. reqUser) (summary ^. repoOwner) (summary ^. repoName)
   when (not hasAccess) $ throw (NoSuchCommit commit)
-  result <- DB.getBuildsAndRunsByCommit (summary ^. repoOwner) (summary ^. repoName) commit
+  result <- DB.getBuildsAndRunsByCommit (RepoId githubForge (summary ^. repoOwner) (summary ^. repoName)) commit
   pure $ case result of
     CommitEvaluating -> GetCommit summary [] []
     CommitEvaluated _ builds runs ->

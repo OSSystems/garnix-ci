@@ -16,7 +16,7 @@ import Garnix.Types as Types
 
 update :: Reporter -> CommitInfo -> M ()
 update reporter commitInfo = do
-  DB.getBuildsAndRunsByCommit (commitInfo ^. repoInfo . repoId . repoUser) (commitInfo ^. repoInfo . repoId . repoName) (commitInfo ^. commit)
+  DB.getBuildsAndRunsByCommit (commitInfo ^. repoInfo . repoId) (commitInfo ^. commit)
     >>= \case
       CommitEvaluating -> pure ()
       CommitEvaluated commitState builds _ ->
@@ -44,8 +44,7 @@ update reporter commitInfo = do
     setCheckTo commit' newStatus = do
       updatedCheck <-
         DB.setMetaCheck
-          (commitInfo ^. repoInfo . repoId . repoUser)
-          (commitInfo ^. repoInfo . repoId . repoName)
+          (commitInfo ^. repoInfo . repoId)
           (commitInfo ^. commit)
           ( DB.CheckStatusUpdate
               { _checkStatusUpdateFrom = commit' ^. metaCheck,
@@ -65,7 +64,7 @@ update reporter commitInfo = do
 
 newReport :: Reporter -> CommitInfo -> M RunReporter
 newReport reporter commitInfo = do
-  void $ DB.newCommit (commitInfo ^. repoInfo . repoId . repoUser) (commitInfo ^. repoInfo . repoId . repoName) (commitInfo ^. commit)
+  void $ DB.newCommit (commitInfo ^. repoInfo . repoId) (commitInfo ^. commit)
   createNewRun reporter MetaCheck
 
 updateFail :: CommentPolicy -> CommitInfo -> RunReporter -> Maybe (Either SomeException ErrorWithContext) -> M ()
@@ -76,8 +75,7 @@ updateFail commentPolicy commitInfo runReporter e = do
     Nothing -> pure ()
   updated <-
     DB.setMetaCheck
-      (commitInfo ^. repoInfo . repoId . repoUser)
-      (commitInfo ^. repoInfo . repoId . repoName)
+      (commitInfo ^. repoInfo . repoId)
       (commitInfo ^. commit)
       ( DB.CheckStatusUpdate
           { _checkStatusUpdateFrom = CheckPending,
@@ -94,8 +92,7 @@ updateSuccess :: CommitInfo -> RunReporter -> M ()
 updateSuccess commitInfo runReporter = do
   updated <-
     DB.setMetaCheck
-      (commitInfo ^. repoInfo . repoId . repoUser)
-      (commitInfo ^. repoInfo . repoId . repoName)
+      (commitInfo ^. repoInfo . repoId)
       (commitInfo ^. commit)
       ( DB.CheckStatusUpdate
           { _checkStatusUpdateFrom = CheckPending,

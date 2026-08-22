@@ -141,7 +141,7 @@ spec = do
     describe "upload" $ do
       it "uploads public store paths" $ do
         (evalResult, _) <- localTestBuild simpleFlake
-        upload mempty "owner" "repo" evalResult (RepoIsPublic True)
+        upload mempty (RepoId githubForge "owner" "repo") evalResult (RepoIsPublic True)
         paths <- listBucket "garage-public"
         sort paths
           `shouldBeM` sort
@@ -153,7 +153,7 @@ spec = do
       it "uploads store paths of private repos of configured owners to the public bucket" $ do
         (evalResult, storePath) <- localTestBuild simpleFlake
         local ((#s3CacheEnv . #publicRepoOwners) .~ Set.fromList ["alice"]) $ do
-          upload mempty "Alice" "private-repo" evalResult (RepoIsPublic False)
+          upload mempty (RepoId githubForge "Alice" "private-repo") evalResult (RepoIsPublic False)
         paths <- listBucket "garage-public"
         sort paths
           `shouldBeM` sort
@@ -167,7 +167,7 @@ spec = do
       it "uploads store paths of private repos of other owners to the private bucket" $ do
         (evalResult, storePath) <- localTestBuild simpleFlake
         local ((#s3CacheEnv . #publicRepoOwners) .~ Set.fromList ["alice"]) $ do
-          upload mempty "bob" "private-repo" evalResult (RepoIsPublic False)
+          upload mempty (RepoId githubForge "bob" "private-repo") evalResult (RepoIsPublic False)
         paths <- listBucket "garage-public"
         paths `shouldBeM` []
         result <- DB.getS3CacheStoreHash (getHash storePath)
@@ -175,22 +175,22 @@ spec = do
 
       it "doesn't re-upload existing store paths" $ do
         (evalResult, _) <- localTestBuild simpleFlake
-        upload mempty "owner" "repo" evalResult (RepoIsPublic True)
+        upload mempty (RepoId githubForge "owner" "repo") evalResult (RepoIsPublic True)
         clearBuckets
-        upload mempty "owner" "repo" evalResult (RepoIsPublic True)
+        upload mempty (RepoId githubForge "owner" "repo") evalResult (RepoIsPublic True)
         paths <- listBucket "garage-public"
         paths `shouldBeM` []
 
       it "correctly updates s3 cache fields on store paths that were uploaded to the old cache" $ do
         (evalResult, storePath) <- localTestBuild simpleFlake
-        DB.tagCacheUpload "owner" "repo" [storePath]
-        upload mempty "owner" "repo" evalResult (RepoIsPublic True)
+        DB.tagCacheUpload (RepoId githubForge "owner" "repo") [storePath]
+        upload mempty (RepoId githubForge "owner" "repo") evalResult (RepoIsPublic True)
         result <- DB.getS3CacheStoreHash (getHash storePath)
         result `shouldSatisfyM` isJust
 
       it "logs with span_package" $ do
         (evalResult, _) <- localTestBuild simpleFlake
-        logs <- captureLogs_ $ upload mempty "owner" "repo" evalResult (RepoIsPublic True)
+        logs <- captureLogs_ $ upload mempty (RepoId githubForge "owner" "repo") evalResult (RepoIsPublic True)
         nubOrd (fmap (Prelude.lookup "span_package" . (^. #context)) logs) `shouldBeM` [Just "foo"]
 
       it "doesn't upload store paths that are in cache.nixos.org" $ do
@@ -234,7 +234,7 @@ spec = do
             pure $ (output ^?! key (fromString $ cs storePath) . key "deriver" . _String)
               & DrvPath . fromRight . Nix.parseStorePath
           let evaluationResult = EvaluationResult drvPath [storePath] (Nix.BuildOutputs ("out" ~> storePath))
-          upload mempty "owner" "repo" evaluationResult (RepoIsPublic True)
+          upload mempty (RepoId githubForge "owner" "repo") evaluationResult (RepoIsPublic True)
           paths <- listBucket "garage-public"
           paths `shouldBeM` []
 
@@ -268,7 +268,7 @@ spec = do
                   };
                 }
               |]
-        upload mempty "owner" "repo" evalResult (RepoIsPublic True)
+        upload mempty (RepoId githubForge "owner" "repo") evalResult (RepoIsPublic True)
         paths <- listBucket "garage-public"
         sort (fmap (T.drop 32 . (^. _ObjectKey)) paths)
           `shouldBeM` sort ["-foo.nar.xz", "-dep.nar.xz"]
@@ -303,7 +303,7 @@ spec = do
           (parentDrvPath, parentStorePath) <- getFlakePackageDrvAndStorePath "parent"
           (_, goodStorePath) <- getFlakePackageDrvAndStorePath "good"
           let evalResult = EvaluationResult parentDrvPath [parentStorePath, goodStorePath] $ Nix.BuildOutputs mempty
-          upload mempty "owner" "repo" evalResult (RepoIsPublic True)
+          upload mempty (RepoId githubForge "owner" "repo") evalResult (RepoIsPublic True)
           paths <- listBucket "garage-public"
           sort (fmap (T.drop 32 . (^. _ObjectKey)) paths)
             `shouldBeM` sort ["-good.nar.xz"]
@@ -312,7 +312,7 @@ spec = do
         (evalResult, storePath) <- localTestBuild simpleFlake
         result <- withTestReporter_ $ \reporter -> do
           runReporter <- createNewRun reporter $ ReportBuild "build-name" undefined
-          upload runReporter "owner" "repo" evalResult (RepoIsPublic True)
+          upload runReporter (RepoId githubForge "owner" "repo") evalResult (RepoIsPublic True)
         result
           `shouldBeM` ( "build-name"
                           ~> TestReport ("Uploaded " <> Nix.getStorePath storePath <> " to the garnix binary cache.") Nothing
@@ -344,7 +344,7 @@ spec = do
         result <- withTestReporter_ $ \reporter -> do
           runReporter <- createNewRun reporter $ ReportBuild "build-name" undefined
           local ((#s3CacheEnv . #maxUploadSize) .~ 1024) $ do
-            upload runReporter "owner" "repo" evalResult (RepoIsPublic True)
+            upload runReporter (RepoId githubForge "owner" "repo") evalResult (RepoIsPublic True)
         paths <- listBucket "garage-public"
         paths `shouldBeM` []
         result
@@ -428,8 +428,8 @@ spec = do
         let publicFlake = flakeWithDepWithRandomSnippets publicRandom sharedDepRandom
         (privateResult, _) <- localTestBuild $ pure $ privateFlake
         (publicResult, _) <- localTestBuild $ pure $ publicFlake
-        upload mempty "alice" "private-repo" privateResult (RepoIsPublic False)
-        upload mempty "bob" "public-repo" publicResult (RepoIsPublic True)
+        upload mempty (RepoId githubForge "alice" "private-repo") privateResult (RepoIsPublic False)
+        upload mempty (RepoId githubForge "bob" "public-repo") publicResult (RepoIsPublic True)
         depHash <- withSystemTempDirectory "mock-garnix-cache" $ \tmp -> do
           liftIO $ writeFile (tmp </> "flake.nix") (cs publicFlake)
           hashForDerivation tmp "bar"
@@ -455,7 +455,7 @@ spec = do
     describe "narinfo endpoint" $ do
       it "allows downloading public uploaded nar files from the new cache" $ withServer $ \server -> do
         (evalResult, storePath) <- localTestBuild simpleFlake
-        upload mempty "owner" "repo" evalResult (RepoIsPublic True)
+        upload mempty (RepoId githubForge "owner" "repo") evalResult (RepoIsPublic True)
         liftIO $ garbageCollectStorePath (cs storePath)
         response <- assert200 $ server.get ("/api/cache/" <> cs (getHash storePath) <> ".narinfo")
         log Informational $ cs $ response ^. responseBody
@@ -479,7 +479,7 @@ spec = do
             GH.mkRepo github (GhRepoOwner $ user ^. githubLogin) "repo"
               $ (#publicity .~ RepoIsPublic False)
             (evalResult, storePath) <- localTestBuild simpleFlake
-            upload mempty (GhRepoOwner $ user ^. githubLogin) "repo" evalResult (RepoIsPublic False)
+            upload mempty (RepoId githubForge (GhRepoOwner $ user ^. githubLogin) "repo") evalResult (RepoIsPublic False)
             liftIO $ garbageCollectStorePath (cs storePath)
             narInfoResponse <- server.get ("/api/cache/" <> cs (getHash storePath) <> ".narinfo")
             narInfoResponse ^. responseStatus `shouldBeM` notFound404
@@ -489,7 +489,7 @@ spec = do
               GH.mkRepo github (GhRepoOwner $ user ^. githubLogin) "repo"
                 $ (#publicity .~ RepoIsPublic False)
               (evalResult, storePath) <- localTestBuild simpleFlake
-              upload mempty (GhRepoOwner $ user ^. githubLogin) "repo" evalResult (RepoIsPublic False)
+              upload mempty (RepoId githubForge (GhRepoOwner $ user ^. githubLogin) "repo") evalResult (RepoIsPublic False)
               liftIO $ garbageCollectStorePath (cs storePath)
               pure storePath
 
@@ -553,7 +553,7 @@ spec = do
               GH.mkRepo github (GhRepoOwner $ user ^. githubLogin) "repo"
                 $ (#publicity .~ RepoIsPublic False)
               (evalResult, storePath) <- localTestBuild simpleFlake
-              upload mempty (GhRepoOwner $ user ^. githubLogin) "repo" evalResult (RepoIsPublic False)
+              upload mempty (RepoId githubForge (GhRepoOwner $ user ^. githubLogin) "repo") evalResult (RepoIsPublic False)
               liftIO $ garbageCollectStorePath (cs storePath)
               let plainTextToken = "hunter2"
               hashPassword plainTextToken >>= DB.insertAccessTokenForUser (user ^. id) "test token" (AccessTokenScopes {api = False, cache = True})
@@ -575,7 +575,7 @@ spec = do
       it "serves compressed nar files" $ do
         withServer $ \server -> do
           (evalResult, storePath) <- localTestBuild simpleFlake
-          upload mempty "owner" "repo" evalResult (RepoIsPublic True)
+          upload mempty (RepoId githubForge "owner" "repo") evalResult (RepoIsPublic True)
           narInfoResponse <- server.get ("/api/cache/" <> cs (getHash storePath) <> ".narinfo")
           let extract = extractFromNarInfo narInfoResponse
           extract "Compression" `shouldBeM` "xz"
@@ -605,7 +605,7 @@ spec = do
 
       it "contains the 'References' field" $ withServer $ \server -> do
         (evalResult, storePath) <- localTestBuild flakeWithDep
-        upload mempty "owner" "repo" evalResult (RepoIsPublic True)
+        upload mempty (RepoId githubForge "owner" "repo") evalResult (RepoIsPublic True)
         reference <- do
           StdoutRaw output <-
             run $ cmd "nix"

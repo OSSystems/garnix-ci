@@ -714,7 +714,7 @@ copyKeys (SshUser user) repo server = do
           & addArgs (sshArgs <> [user <> "@" <> ip] <> sudoArgs <> args)
   doRemotely ["mkdir", "-p", cs (takeDirectory keyLocation)]
   (_, privKey) <-
-    getRepoKeys (repo ^. repoId . repoUser) (repo ^. repoId . repoName) <?> "Get private keys"
+    getRepoKeys (repo ^. repoId) <?> "Get private keys"
   repoSecretsKey <- view #repoSecretsEncryptionKeyPath
   exportResult <-
     liftIO

@@ -398,7 +398,7 @@ spec = do
                       . at "action test-action"
                       . _Just
                       . _2
-            PublicKey actionKey <- getActionPublicKey "garnix-io" "repo" "test-action"
+            PublicKey actionKey <- getActionPublicKey (RepoId githubForge "garnix-io" "repo") "test-action"
             let message = "hi there!"
 
             (Shake.Exit ExitSuccess, Shake.Stdout encrypted) <-
@@ -422,7 +422,7 @@ spec = do
           let count = 20
           keys <-
             forConcurrently [1 :: Int .. 20]
-              $ \c -> getActionPublicKey "garnix-io" "repo" (PackageName $ "action" <> show c)
+              $ \c -> getActionPublicKey (RepoId githubForge "garnix-io" "repo") (PackageName $ "action" <> show c)
           length (nub keys) `shouldBeM` count
 
         it "adds the repo contents when withRepoContents is true" $ GH.withFakeGithubInterface $ \ghState -> do

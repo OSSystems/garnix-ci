@@ -86,8 +86,8 @@ newUser ghLogin email' sub agreeToEmails' = do
     [] -> throw $ UserAlreadyExists ghLogin
     _ -> throw $ OtherError "impossible: more than two users created"
 
-getRepoConfig :: GhRepoOwner -> GhRepoName -> M RepoConfig
-getRepoConfig repoOwner repoName = do
+getRepoConfig :: RepoId -> M RepoConfig
+getRepoConfig (RepoId _forge repoOwner repoName) = do
   configuredEvalMemory <- getConfiguredEvalMemory repoOwner repoName
   repoConfig <-
     map (\(skipInputChecks, evalMemory) -> RepoConfig skipInputChecks (fromMaybe configuredEvalMemory evalMemory))
@@ -338,8 +338,8 @@ setBuildUploaded buildId = do
         WHERE id = ${buildId}
       |]
 
-getLatestBuildsForBranch :: GhRepoOwner -> GhRepoName -> Branch -> M [Build]
-getLatestBuildsForBranch owner name branch = do
+getLatestBuildsForBranch :: RepoId -> Branch -> M [Build]
+getLatestBuildsForBranch (RepoId _forge owner name) branch = do
   pgQueryPrism
     _Build
     [pgSQL|
@@ -386,8 +386,8 @@ getLatestBuildsForBranch owner name branch = do
 data RegisterPushResult = NewPush | AlreadyPushed
   deriving stock (Eq, Show, Generic)
 
-registerPush :: GhRepoOwner -> GhRepoName -> CommitHash -> Branch -> M RegisterPushResult
-registerPush repoOwner repoName commit branch = do
+registerPush :: RepoId -> CommitHash -> Branch -> M RegisterPushResult
+registerPush (RepoId _forge repoOwner repoName) commit branch = do
   pgQuery
     [pgSQL|
       INSERT INTO pushes
@@ -410,8 +410,8 @@ registerPush repoOwner repoName commit branch = do
       [_ :: Maybe Bool] -> pure NewPush
       _ -> throw $ OtherError "Impossible: more than one result"
 
-getCommitsByOwnerAndRepo :: GhRepoOwner -> GhRepoName -> M [CommitSummary]
-getCommitsByOwnerAndRepo repoOwner repoName = do
+getCommitsByOwnerAndRepo :: RepoId -> M [CommitSummary]
+getCommitsByOwnerAndRepo (RepoId _forge repoOwner repoName) = do
   map
     ( \( repoOwner :: GhRepoOwner,
          repoName :: GhRepoName,
@@ -452,8 +452,8 @@ getCommitsByOwnerAndRepo repoOwner repoName = do
         LIMIT 100
       |]
 
-getCommit :: GhRepoOwner -> GhRepoName -> CommitHash -> M (Maybe Commit)
-getCommit owner name commit =
+getCommit :: RepoId -> CommitHash -> M (Maybe Commit)
+getCommit (RepoId _forge owner name) commit =
   pgQueryPrism
     _Commit
     [pgSQL|
@@ -473,8 +473,8 @@ getCommit owner name commit =
       [] -> pure Nothing
       _ -> throw $ OtherError "Impossible: more than one result"
 
-newCommit :: GhRepoOwner -> GhRepoName -> CommitHash -> M ()
-newCommit owner name commit = do
+newCommit :: RepoId -> CommitHash -> M ()
+newCommit (RepoId _forge owner name) commit = do
   evalHost <- view #hostname
   evalInstance <- view #evalInstance
   now <- liftIO getCurrentTime
@@ -494,8 +494,8 @@ newCommit owner name commit = do
               started_at = ${now}
       |]
 
-setCommitStatus :: GhRepoOwner -> GhRepoName -> CommitHash -> CommitStatus -> M ()
-setCommitStatus owner name commit st =
+setCommitStatus :: RepoId -> CommitHash -> CommitStatus -> M ()
+setCommitStatus (RepoId _forge owner name) commit st =
   void
     $ pgExec
       [pgSQL|
@@ -528,8 +528,8 @@ data CheckStatusUpdate = CheckStatusUpdate
 --
 -- As it is, buildA's thread would still attempt to set the check to CheckFail, but only if its current
 -- state is CheckPending, which is not. So no change will happen, which is what we want.
-setMetaCheck :: GhRepoOwner -> GhRepoName -> CommitHash -> CheckStatusUpdate -> M Bool
-setMetaCheck owner name commit (CheckStatusUpdate {_checkStatusUpdateFrom = from, _checkStatusUpdateTo = to}) = do
+setMetaCheck :: RepoId -> CommitHash -> CheckStatusUpdate -> M Bool
+setMetaCheck (RepoId _forge owner name) commit (CheckStatusUpdate {_checkStatusUpdateFrom = from, _checkStatusUpdateTo = to}) = do
   if from == to
     then pure False
     else
@@ -547,8 +547,8 @@ setMetaCheck owner name commit (CheckStatusUpdate {_checkStatusUpdateFrom = from
 -- | Atomically claim the right to post the pull request failure comment for
 -- this commit. Returns True exactly once per commit, even across re-runs -
 -- unlike 'setMetaCheck', whose 'pending' state 'newCommit' resets on every run.
-claimFailureComment :: GhRepoOwner -> GhRepoName -> CommitHash -> M Bool
-claimFailureComment owner name commit =
+claimFailureComment :: RepoId -> CommitHash -> M Bool
+claimFailureComment (RepoId _forge owner name) commit =
   (== 1)
     <$> pgExec
       [pgSQL|
@@ -560,20 +560,20 @@ claimFailureComment owner name commit =
           AND NOT failure_commented
       |]
 
-getBuildsAndRunsByCommit :: GhRepoOwner -> GhRepoName -> CommitHash -> M FullCommitState
-getBuildsAndRunsByCommit repoOwner repoName commitHash = do
-  mCommit <- getCommit repoOwner repoName commitHash
+getBuildsAndRunsByCommit :: RepoId -> CommitHash -> M FullCommitState
+getBuildsAndRunsByCommit repo commitHash = do
+  mCommit <- getCommit repo commitHash
   case mCommit of
     Nothing -> pure CommitEvaluating
     Just commit -> case commit ^. status of
       Evaluating -> pure CommitEvaluating
       Evaluated -> do
-        builds <- getBuildsByCommit repoOwner repoName commitHash
-        runs <- getRuns repoOwner repoName commitHash
+        builds <- getBuildsByCommit repo commitHash
+        runs <- getRuns repo commitHash
         pure $ CommitEvaluated commit builds runs
 
-getBuildsByCommit :: GhRepoOwner -> GhRepoName -> CommitHash -> M [Build]
-getBuildsByCommit repoOwner repoName commitHash = do
+getBuildsByCommit :: RepoId -> CommitHash -> M [Build]
+getBuildsByCommit (RepoId _forge repoOwner repoName) commitHash = do
   pgQuery
     [pgSQL|
       SELECT DISTINCT ON (git_commit, package_type, system, package)
@@ -656,8 +656,8 @@ getBuildsByCommit repoOwner repoName commitHash = do
               }
       )
 
-getRuns :: GhRepoOwner -> GhRepoName -> CommitHash -> M [Run]
-getRuns repoOwner repoName commitHash = do
+getRuns :: RepoId -> CommitHash -> M [Run]
+getRuns (RepoId _forge repoOwner repoName) commitHash = do
   pgQuery
     [pgSQL|
       SELECT id, name, repo_user, repo_name, git_commit, branch, status, req_user, start_time, end_time
@@ -763,8 +763,8 @@ newRun name commitInfo = do
     _ -> throw $ OtherError "newRun: Unexpected number of updates"
 
 -- todo remove?
-tagCacheUpload :: GhRepoOwner -> GhRepoName -> [StorePath] -> M ()
-tagCacheUpload repoOwner repoName =
+tagCacheUpload :: RepoId -> [StorePath] -> M ()
+tagCacheUpload (RepoId _forge repoOwner repoName) =
   \case
     [] -> pure ()
     storePaths -> do
@@ -852,8 +852,8 @@ finalizeS3CacheUpload s3CacheStoreHash = do
         WHERE hash = ${hash};
       |]
 
-tagCacheUploadForS3Cache :: GhRepoOwner -> GhRepoName -> StoreHash -> M ()
-tagCacheUploadForS3Cache repoOwner repoName hash = do
+tagCacheUploadForS3Cache :: RepoId -> StoreHash -> M ()
+tagCacheUploadForS3Cache (RepoId _forge repoOwner repoName) hash = do
   void
     $ pgExec
       [pgSQL|
@@ -1773,9 +1773,10 @@ getOrphanedRuns liveInstances =
           )
       )
 
-getStuckMetaChecks :: [Text] -> M [(GhRepoOwner, GhRepoName, CommitHash)]
+getStuckMetaChecks :: [Text] -> M [(RepoId, CommitHash)]
 getStuckMetaChecks liveInstances =
-  pgQuery
+  map (\(owner, name, commit) -> (RepoId githubForge owner name, commit))
+    <$> pgQuery
     [pgSQL|
       SELECT c.repo_user, c.repo_name, c.git_commit
       FROM commits c
@@ -1795,9 +1796,10 @@ getStuckMetaChecks liveInstances =
       LIMIT 200
     |]
 
-getOrphanedEvaluations :: [Text] -> M [(GhRepoOwner, GhRepoName, CommitHash)]
+getOrphanedEvaluations :: [Text] -> M [(RepoId, CommitHash)]
 getOrphanedEvaluations liveInstances =
-  pgQuery
+  map (\(owner, name, commit) -> (RepoId githubForge owner name, commit))
+    <$> pgQuery
     [pgSQL|
       SELECT repo_user, repo_name, git_commit
       FROM commits
@@ -1860,8 +1862,8 @@ getCurrentMonthUsages owners = do
         GROUP BY repo_user
       |]
 
-getRepoKeyDB :: GhRepoOwner -> GhRepoName -> M (Maybe (PublicKey, PrivateKey))
-getRepoKeyDB owner name = do
+getRepoKeyDB :: RepoId -> M (Maybe (PublicKey, PrivateKey))
+getRepoKeyDB (RepoId _forge owner name) = do
   results <-
     pgQuery
       [pgSQL|
@@ -1878,12 +1880,11 @@ getRepoKeyDB owner name = do
 -- | In case of conflict, we return the key already in the DB, to prevent
 -- overwriting
 setRepoKeyDB ::
-  GhRepoOwner ->
-  GhRepoName ->
+  RepoId ->
   Candidate PublicKey ->
   Candidate PrivateKey ->
   M (PublicKey, PrivateKey)
-setRepoKeyDB owner name (Candidate pub) (Candidate priv) = do
+setRepoKeyDB repo@(RepoId _forge owner name) (Candidate pub) (Candidate priv) = do
   void
     $ pgQuery
       [pgSQL|
@@ -1901,12 +1902,12 @@ setRepoKeyDB owner name (Candidate pub) (Candidate priv) = do
        )
      ON CONFLICT DO NOTHING
      |]
-  getRepoKeyDB owner name >>= \case
+  getRepoKeyDB repo >>= \case
     Nothing -> throw $ OtherError "Impossible setRepoKeyDB: expected a set key"
     Just v -> pure v
 
-getActionKeyDB :: GhRepoOwner -> GhRepoName -> PackageName -> M (Maybe (PublicKey, PrivateKey))
-getActionKeyDB owner name action = do
+getActionKeyDB :: RepoId -> PackageName -> M (Maybe (PublicKey, PrivateKey))
+getActionKeyDB (RepoId _forge owner name) action = do
   results <-
     pgQuery
       [pgSQL|
@@ -1924,13 +1925,12 @@ getActionKeyDB owner name action = do
 -- | In case of conflict, we return the key already in the DB, to prevent
 -- overwriting
 setActionKeyDB ::
-  GhRepoOwner ->
-  GhRepoName ->
+  RepoId ->
   PackageName ->
   Candidate PublicKey ->
   Candidate PrivateKey ->
   M (PublicKey, PrivateKey)
-setActionKeyDB owner name action (Candidate pub) (Candidate priv) = do
+setActionKeyDB repo@(RepoId _forge owner name) action (Candidate pub) (Candidate priv) = do
   void
     $ pgQuery
       [pgSQL|
@@ -1950,12 +1950,12 @@ setActionKeyDB owner name action (Candidate pub) (Candidate priv) = do
        )
      ON CONFLICT DO NOTHING
      |]
-  getActionKeyDB owner name action >>= \case
+  getActionKeyDB repo action >>= \case
     Nothing -> throw $ OtherError "Impossible setRepoKeyDB: expected a set key"
     Just v -> pure v
 
-isDenylisted :: GhRepoOwner -> GhRepoName -> M Bool
-isDenylisted owner name = do
+isDenylisted :: RepoId -> M Bool
+isDenylisted (RepoId _forge owner name) = do
   result :: [Text] <-
     pgQuery
       [pgSQL|
