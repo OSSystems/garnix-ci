@@ -719,6 +719,13 @@ newtype RequestingGhLogin = RequestingGhLogin {getRequestingGhLogin :: GhLogin}
       IsString
     )
 
+-- | The account a repository lives under.
+--
+-- The @Gh@ prefix on this type (and on 'GhLogin' and 'GhRepoName') is
+-- historical: garnix only supported GitHub when they were introduced. They are
+-- forge-agnostic now -- the forge is named separately, by 'ForgeSlug'. The
+-- prefix is kept only because renaming it would touch every use site without
+-- changing any meaning.
 newtype GhRepoOwner = GhRepoOwner {getGhRepoOwner :: GhLogin}
   deriving stock (Eq, Show, Generic)
   deriving newtype
@@ -768,6 +775,55 @@ newtype GhRepoName = GhRepoName {getGhRepoName :: Text}
       Pretty,
       IsString
     )
+
+-- * Forges
+
+-- | Identifies a forge (code-hosting service) that garnix talks to.
+newtype ForgeSlug = ForgeSlug {getForgeSlug :: Text}
+  deriving stock (Eq, Show, Generic)
+  deriving newtype
+    ( ToJSON,
+      FromJSON,
+      ToJSONKey,
+      Ord,
+      Servant.FromHttpApiData,
+      Servant.ToHttpApiData,
+      PGParameter "character varying",
+      PGParameter "text",
+      PGColumn "character varying",
+      PGColumn "text",
+      Pretty,
+      IsString
+    )
+
+-- | The one forge garnix currently supports. Construction sites name it
+-- explicitly rather than defaulting to it, so that adding a second forge is a
+-- type error at every site that has to change.
+githubForge :: ForgeSlug
+githubForge = ForgeSlug "github"
+
+-- | A repository, fully qualified by the forge it lives on.
+--
+-- This is deliberately a product of all three components: there is no way to
+-- refer to a repository without naming its forge.
+data RepoId = RepoId
+  { _repoIdForge :: ForgeSlug,
+    _repoIdRepoUser :: GhRepoOwner,
+    _repoIdRepoName :: GhRepoName
+  }
+  deriving stock (Eq, Ord, Show, Generic)
+
+-- | An account, fully qualified by the forge it lives on: the same login name
+-- on two forges is two different accounts.
+data ForgeLogin = ForgeLogin
+  { _forgeLoginForge :: ForgeSlug,
+    _forgeLoginGhLogin :: GhLogin
+  }
+  deriving stock (Eq, Ord, Show, Generic)
+
+-- | The login of a user on the forge the given repository lives on.
+forgeLoginOn :: RepoId -> GhLogin -> ForgeLogin
+forgeLoginOn repo = ForgeLogin (_repoIdForge repo)
 
 newtype InternalCacheToken = InternalCacheToken {getInternalCacheToken :: Text}
   deriving stock (Eq, Show, Generic)
@@ -1626,6 +1682,8 @@ data DatabaseConnection
   | Transaction PGConnection
 
 makeFields ''Repo
+makeFields ''RepoId
+makeFields ''ForgeLogin
 makeFields ''Build
 makeFields ''OpenSearchMessage
 makeFields ''Package
