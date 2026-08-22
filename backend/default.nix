@@ -5,7 +5,6 @@
 , ...
 }:
 let
-  pkgsUnstable = import flakeInputs.nixpkgsUnstable { inherit system; };
   secretSetup = ''
     SOPS_AGE_KEY=$(${lib.getExe pkgs.ssh-to-age} -private-key -i ${../nix/data/ssh-key-for-local-dev-secrets})
     export SOPS_AGE_KEY
@@ -32,7 +31,7 @@ let
   garnixRuntimeDependencies = [
     pkgs.util-linux
     pkgs.git
-    pkgsUnstable.nix
+    pkgs.nix
     pkgs.openssh
     pkgs.coreutils-full
     pkgs.bubblewrap

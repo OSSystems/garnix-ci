@@ -53,6 +53,7 @@ in
         {
           # VM disk plumbing (overridden in vmVariant anyway).
           fileSystems."/".device = "/dev/disk/by-label/nixos";
+          fileSystems."/".fsType = "ext4";
           boot.loader.systemd-boot.enable = true;
           system.stateVersion = "25.11";
           networking.hostName = "garnix-selfhost-vm";

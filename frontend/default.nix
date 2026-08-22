@@ -82,9 +82,9 @@ in
   shellHook = populateArtifacts;
   devShellInputs = [
     pkgs.nodejs
-    pkgs.nodePackages.prettier
-    pkgs.nodePackages.typescript
-    pkgs.nodePackages.typescript-language-server
-    pkgs.nodePackages.vscode-langservers-extracted
+    pkgs.prettier
+    pkgs.typescript
+    pkgs.typescript-language-server
+    pkgs.vscode-langservers-extracted
   ];
 }
