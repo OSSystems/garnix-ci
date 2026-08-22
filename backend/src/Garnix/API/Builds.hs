@@ -63,7 +63,8 @@ instance FromJSON SubmitTestBuild
 
 submitTestBuild :: SubmitTestBuild -> M ()
 submitTestBuild SubmitTestBuild {owner, repo, testCommit} = do
-  installationId <- getGarnixInstallationId owner repo
+  let repoId' = RepoId githubForge owner repo
+  installationId <- getGarnixInstallationId repoId'
   case installationId of
     Nothing -> throw NotFound
     Just id -> do
@@ -73,7 +74,7 @@ submitTestBuild SubmitTestBuild {owner, repo, testCommit} = do
             CommitInfo
               { _commitInfoReqUser = ForgeLogin githubForge "garnix-io",
                 _commitInfoRepoPublicity = RepoIsPublic False,
-                _commitInfoRepoInfo = RepoInfo iAuth tok (RepoId githubForge owner repo),
+                _commitInfoRepoInfo = RepoInfo iAuth tok repoId',
                 _commitInfoBranch = Nothing,
                 _commitInfoPrFromFork = Just $ PrFromFork $ getGhLogin (getGhRepoOwner owner) <> "/" <> getGhRepoName repo,
                 _commitInfoCommit = testCommit

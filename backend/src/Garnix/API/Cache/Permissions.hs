@@ -18,8 +18,8 @@ data Permission
   | Disallowed
   deriving (Eq, Ord, Show)
 
-getRepoPermissions :: (HasCallStack) => Maybe GhLogin -> GhRepoOwner -> GhRepoName -> M Permission
-getRepoPermissions mUser owner repo =
+getRepoPermissions :: (HasCallStack) => Maybe GhLogin -> RepoId -> M Permission
+getRepoPermissions mUser repoId'@(RepoId _forge owner repo) =
   lookupCache __getRepoPermissionsCache (mUser, owner, repo)
     $ withTextSpans
       [ ("function", "Garnix.API.Cache.Permissions.getRepoPermission"),
@@ -27,7 +27,7 @@ getRepoPermissions mUser owner repo =
         ("repo_perm_owner", show owner),
         ("repo_perm_repo", show repo)
       ]
-    $ getGarnixInstallationId owner repo
+    $ getGarnixInstallationId repoId'
     >>= \case
       Nothing -> do
         log Warning "Cache.getRepoPermissions: could not get garnixInstallationId"
@@ -35,7 +35,7 @@ getRepoPermissions mUser owner repo =
       Just id -> do
         log Informational "Cache.getRepoPermissions: got garnixInstallationId"
         iAuth <- getInstallation (Id $ fromInteger id)
-        repoPublicity <- try $ getRepoPublicity iAuth owner repo
+        repoPublicity <- try $ getRepoPublicity iAuth repoId'
         log Informational $ "repoPublicity: " <> show repoPublicity
         case (repoPublicity, mUser) of
           (Left err, _) -> do
@@ -48,7 +48,7 @@ getRepoPermissions mUser owner repo =
             log Informational "repo is private and no authentication claim"
             pure Disallowed
           (Right (RepoIsPublic False), Just user) -> do
-            collaborators <- getRepoCollaborators iAuth owner repo
+            collaborators <- getRepoCollaborators iAuth repoId'
             case collaborators of
               RepoNotFound -> do
                 log Warning "Repository not found, denying access"

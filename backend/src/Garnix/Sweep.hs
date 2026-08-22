@@ -114,7 +114,7 @@ withRepoInfo repo subjects action = do
   where
     fetchCredentials :: M (Maybe RepoInfo)
     fetchCredentials =
-      getGarnixInstallationId (repo ^. repoUser) (repo ^. repoName) >>= \case
+      getGarnixInstallationId repo >>= \case
         Nothing -> pure Nothing
         Just installationId -> do
           installationAuth <- getInstallation (Id (fromInteger installationId))

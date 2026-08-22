@@ -10,13 +10,13 @@ import Garnix.Prelude
 import Garnix.Types
 
 badgesAPI :: RepoId -> Maybe Branch -> M Badge
-badgesAPI repoId'@(RepoId _forge owner repo) mGivenBranch = do
+badgesAPI repoId' mGivenBranch = do
   let branchSummary :: Branch -> M Badge
       branchSummary branch = buildSummary <$> DB.getLatestBuildsForBranch repoId' branch
   case mGivenBranch of
     Just givenBranch -> branchSummary givenBranch
     Nothing -> do
-      eitherRepo <- getDefaultBranch Nothing owner repo
+      eitherRepo <- getDefaultBranch Nothing repoId'
       case eitherRepo of
         Nothing -> pure $ Badge "build status unknown"
         Just defaultBranch -> branchSummary defaultBranch

@@ -148,7 +148,7 @@ spec = inM $ aroundM_ suppressLogsWhenPassing $ beforeM_ truncateDBM $ describe 
 
       it "allows collaborators to see the commit" $ do
         user <- testUser "dev-user" "foo@example.com"
-        withGithubMock repoCollaboratorsLens (\_ _ _ -> pure $ GhCollaborators ["dev-user"]) $ do
+        withGithubMock repoCollaboratorsLens (\_ _ -> pure $ GhCollaborators ["dev-user"]) $ do
           foo <- testBuild $ (gitCommit .~ "aaaaaa") . (package .~ "foo") . (startTime .~ parseTimestamp "2010-03-04T01:00:00Z") . (repoIsPublic .~ RepoIsPublic False)
           testCommit $ hash .~ "aaaaaa"
           result <- try $ getSingleCommit (Just user) "aaaaaa"
@@ -324,7 +324,7 @@ spec = inM $ aroundM_ suppressLogsWhenPassing $ beforeM_ truncateDBM $ describe 
   describe "/api/commits/repo/<owner>/<name>" $ do
     let mkTestCommits :: GhRepoOwner -> GhRepoName -> M (Build, Build)
         mkTestCommits targetRepoOwner targetRepoName = do
-          repoPublicity <- getRepoPublicity undefined targetRepoOwner targetRepoName
+          repoPublicity <- getRepoPublicity undefined (RepoId githubForge targetRepoOwner targetRepoName)
           [commitA : _, commitB : _] <- forM ["aaaaaa", "bbbbbb"] $ \commit -> do
             now <- liftIO getCurrentTime
             forM ["pkg-a", "pkg-b"] $ \pkg -> do

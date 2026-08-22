@@ -432,7 +432,7 @@ withGithubMock :: Lens' GithubInterface g -> g -> M a -> M a
 withGithubMock l result action =
   local (#githubInterface . l .~ result) action
 
-repoCollaboratorsLens :: Lens' GithubInterface (InstallationAuth -> GhRepoOwner -> GhRepoName -> M GhCollaborators)
+repoCollaboratorsLens :: Lens' GithubInterface (InstallationAuth -> RepoId -> M GhCollaborators)
 repoCollaboratorsLens = lens _githubInterfaceGetRepoCollaborators (\gi f -> gi {_githubInterfaceGetRepoCollaborators = f})
 
 getRemoteLens :: Lens' GithubInterface (CommitInfo -> M RemoteUrl)

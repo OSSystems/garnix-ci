@@ -44,7 +44,7 @@ realGithubInterface =
         appAuth <- view #githubAppAuth
         liftIO $ GHA.mkInstallationAuth appAuth id',
       _githubInterfaceGetInstallations = getInstallations,
-      _githubInterfaceGetGarnixInstallationId = \(GhRepoOwner (GhLogin owner)) (GhRepoName repoName) -> do
+      _githubInterfaceGetGarnixInstallationId = \(RepoId _forge (GhRepoOwner (GhLogin owner)) (GhRepoName repoName)) -> do
         appAuth <- view #githubAppAuth
         currentTime <- utcTimeToPOSIXSeconds <$> liftIO getCurrentTime
         let expireTime = currentTime + (550 :: NominalDiffTime)
@@ -80,20 +80,20 @@ realGithubInterface =
       _githubInterfaceGetAccessToken = \iAuth -> do
         mgr <- view #manager
         _retryGithubRequest (liftIO (GHA.obtainAccessToken mgr iAuth))
-          >>= handleGithubRequestErrors "getAccessToken" "garnix" "garnix-github-app"
+          >>= handleGithubRequestErrors "getAccessToken" (RepoId githubForge "garnix" "garnix-github-app")
           >>= \case
             (GH.OAuth v) -> pure $ GhToken $ cs v
             _ -> throw $ OtherError "getAccessToken: unexpected auth token type",
-      _githubInterfaceGetDefaultBranch = \miAuth owner repo ->
+      _githubInterfaceGetDefaultBranch = \miAuth repoId'@(RepoId _forge owner repo) ->
         case miAuth of
           Nothing -> do
             mgr <- view #manager
             _retryGithubRequest (liftIO (GH.executeRequestWithMgr' mgr (GH.repositoryR (coerce owner) (coerce repo))))
-              >>= handleGithubRequestErrors "getDefaultBranch" owner repo
+              >>= handleGithubRequestErrors "getDefaultBranch" repoId'
               >>= \branch -> pure $ Branch <$> GH.repoDefaultBranch branch
           Just iAuth ->
             executeAppRequest iAuth (GH.repositoryR (coerce owner) (coerce repo))
-              >>= handleGithubRequestErrors "getDefaultBranch" owner repo
+              >>= handleGithubRequestErrors "getDefaultBranch" repoId'
               >>= \branch -> pure $ Branch <$> GH.repoDefaultBranch branch,
       _githubInterfaceGetHeadCommit = getHeadCommitForBranch,
       _githubInterfaceNewBuildReport = createBuildReportGH,
@@ -141,10 +141,10 @@ realGithubInterface =
                   <> "/"
                   <> repo'
                   <> ".git",
-      _githubInterfaceGetRepoCollaborators = \iAuth owner@(GhRepoOwner (GhLogin repoOwner)) repo@(GhRepoName repoName) -> do
+      _githubInterfaceGetRepoCollaborators = \iAuth repoId'@(RepoId _forge (GhRepoOwner (GhLogin repoOwner)) (GhRepoName repoName)) -> do
         let req = GH.collaboratorsOnR (GH.mkName Proxy repoOwner) (GH.mkName Proxy repoName) GH.FetchAll
         executeAppRequest iAuth req
-          >>= handleGithubRequestErrors "getRepoCollaborators" owner repo
+          >>= handleGithubRequestErrors "getRepoCollaborators" repoId'
           >>= \case
             collaborators ->
               pure
@@ -153,10 +153,10 @@ realGithubInterface =
                 . GH.untagName
                 . GH.simpleUserLogin
                 <$> Vector.toList collaborators,
-      _githubInterfaceGetRepoPublicity = \iAuth owner@(GhRepoOwner (GhLogin repoOwner)) repo@(GhRepoName repoName) -> do
+      _githubInterfaceGetRepoPublicity = \iAuth repoId'@(RepoId _forge (GhRepoOwner (GhLogin repoOwner)) (GhRepoName repoName)) -> do
         let req = GH.repositoryR (GH.mkName Proxy repoOwner) (GH.mkName Proxy repoName)
         executeAppRequest iAuth req
-          >>= handleGithubRequestErrors "getRepoPublicity" owner repo
+          >>= handleGithubRequestErrors "getRepoPublicity" repoId'
           >>= \r -> pure $ RepoIsPublic $ not $ GH.repoPrivate r,
       _githubInterfaceGetInstalledOrgs = getInstalledOrgs,
       _githubInterfaceGetReposInInstallationAccessibleTo = getReposInInstallationAccessibleTo,
@@ -196,8 +196,8 @@ getInstallations (GhToken userToken) = do
         . _Integral
         . to (GH.mkId Proxy)
 
-getHeadCommitForBranch :: GhToken -> GhRepoOwner -> GhRepoName -> Branch -> M CommitHash
-getHeadCommitForBranch (GhToken token) owner repo branch = do
+getHeadCommitForBranch :: GhToken -> RepoId -> Branch -> M CommitHash
+getHeadCommitForBranch (GhToken token) repoId'@(RepoId _forge owner repo) branch = do
   let auth = GH.OAuth (cs token)
       request =
         GH.query
@@ -209,7 +209,7 @@ getHeadCommitForBranch (GhToken token) owner repo branch = do
           ]
           []
   executeRequest @Aeson.Value auth request
-    >>= handleGithubRequestErrors "getHeadCommit" owner repo
+    >>= handleGithubRequestErrors "getHeadCommit" repoId'
     >>= maybe throwBadFormat pure
     . (^? key "commit" . key "sha" . _String . to CommitHash)
   where
@@ -219,9 +219,9 @@ getHeadCommitForBranch (GhToken token) owner repo branch = do
       log Error $ "_githubInterfaceGetHeadCommit failed for '" <> context <> "': Could not find 'commit.sha'."
       throw . OtherError $ "Could not get the HEAD commit for " <> context
 
-openGithubPullRequestInternal :: GhRepoOwner -> GhRepoName -> PullRequest -> M PullRequestResult
-openGithubPullRequestInternal ghOwner@(GhRepoOwner (GhLogin owner)) ghRepo@(GhRepoName repo) pr = do
-  installationId <- getGarnixInstallationId ghOwner ghRepo
+openGithubPullRequestInternal :: RepoId -> PullRequest -> M PullRequestResult
+openGithubPullRequestInternal repoId'@(RepoId _forge ghOwner@(GhRepoOwner (GhLogin owner)) ghRepo@(GhRepoName repo)) pr = do
+  installationId <- getGarnixInstallationId repoId'
   iAuth <- case installationId of
     Nothing -> throw $ GarnixAppUnauthorized ghOwner ghRepo
     Just id -> getInstallation (Id $ fromInteger id)
@@ -342,45 +342,45 @@ getInstalledOrgs (GhToken tok) = do
 -- * Making Github requests
 
 createBuildReportGH :: (HasCallStack) => RepoInfo -> GhRunReport -> M GhRunId
-createBuildReportGH (RepoInfo iAuth _ (RepoId _ owner@(GhRepoOwner (GhLogin repoUser)) repo@(GhRepoName repoName))) report = do
+createBuildReportGH (RepoInfo iAuth _ repoId'@(RepoId _forge (GhRepoOwner (GhLogin repoUser)) (GhRepoName repoName))) report = do
   run <- fromRunReport report
   res <-
     executeAppRequest @Aeson.Value iAuth
       $ GH.Command GH.Post ["repos", repoUser, repoName, "check-runs"] (Aeson.encode run)
-  handleGithubRequestErrors "createBuildReportGH" owner repo res >>= \case
+  handleGithubRequestErrors "createBuildReportGH" repoId' res >>= \case
     v ->
       case v ^? key "id" . _Integer of
         Nothing -> throw $ FailedToParseCreateReportResult v
         Just v -> pure $ fromInteger v
 
 updateBuildReportGH :: (HasCallStack) => GhRunId -> GhRunReport -> RepoInfo -> M ()
-updateBuildReportGH runId report (RepoInfo iAuth _ (RepoId _ owner@(GhRepoOwner (GhLogin repoUser)) repo@(GhRepoName repoName))) = do
+updateBuildReportGH runId report (RepoInfo iAuth _ repoId'@(RepoId _forge (GhRepoOwner (GhLogin repoUser)) (GhRepoName repoName))) = do
   run <- fromRunReport report
   res <-
     executeAppRequest @Aeson.Value iAuth
       $ GH.Command GH.Patch ["repos", repoUser, repoName, "check-runs", show runId] (Aeson.encode run)
-  handleGithubRequestErrors "updateBuildReportGH" owner repo res $> ()
+  handleGithubRequestErrors "updateBuildReportGH" repoId' res $> ()
 
 -- | The pull requests a commit is the head of. Only needs @pull_requests: read@.
 getPullRequestsForCommitGH :: (HasCallStack) => RepoInfo -> CommitHash -> M [GhPullRequestId]
-getPullRequestsForCommitGH (RepoInfo iAuth _ (RepoId _forge owner@(GhRepoOwner (GhLogin repoUser)) repo@(GhRepoName repoName))) (CommitHash commit') = do
+getPullRequestsForCommitGH (RepoInfo iAuth _ repoId'@(RepoId _forge (GhRepoOwner (GhLogin repoUser)) (GhRepoName repoName))) (CommitHash commit') = do
   res <-
     executeAppRequest @Aeson.Value iAuth
       $ GH.query ["repos", repoUser, repoName, "commits", commit', "pulls"] []
-  v <- handleGithubRequestErrors "getPullRequestsForCommitGH" owner repo res
+  v <- handleGithubRequestErrors "getPullRequestsForCommitGH" repoId' res
   pure $ v ^.. _Array . each . key "number" . _Integral . to GhPullRequestId
 
 -- | Comment on a pull request. Unlike check runs, this does trigger a Github
 -- notification. Needs @pull_requests: write@.
 commentOnPullRequestGH :: (HasCallStack) => RepoInfo -> GhPullRequestId -> Text -> M ()
-commentOnPullRequestGH (RepoInfo iAuth _ (RepoId _forge owner@(GhRepoOwner (GhLogin repoUser)) repo@(GhRepoName repoName))) (GhPullRequestId prId) body = do
+commentOnPullRequestGH (RepoInfo iAuth _ repoId'@(RepoId _forge (GhRepoOwner (GhLogin repoUser)) (GhRepoName repoName))) (GhPullRequestId prId) body = do
   res <-
     executeAppRequest @Aeson.Value iAuth
       $ GH.Command
         GH.Post
         ["repos", repoUser, repoName, "issues", show prId, "comments"]
         (Aeson.encode $ Aeson.object ["body" Aeson..= body])
-  handleGithubRequestErrors "commentOnPullRequestGH" owner repo res $> ()
+  handleGithubRequestErrors "commentOnPullRequestGH" repoId' res $> ()
 
 fromRunReport :: GhRunReport -> M GhRun
 fromRunReport (GhRunReport name commit url status' title summary logs') = do
@@ -408,8 +408,8 @@ fromRunReport (GhRunReport name commit url status' title summary logs') = do
           RunReportStatusCancelled -> Just "cancelled"
       }
 
-handleGithubRequestErrors :: (HasCallStack) => Text -> GhRepoOwner -> GhRepoName -> Either GH.Error a -> M a
-handleGithubRequestErrors method owner name = \case
+handleGithubRequestErrors :: (HasCallStack) => Text -> RepoId -> Either GH.Error a -> M a
+handleGithubRequestErrors method (RepoId _forge owner name) = \case
   Left githubError | hasStatus (== 404) githubError -> do
     log Informational $ "Request " <> method <> " failed with 404. Error: " <> show githubError
     throw $ NoSuchRepo {_owner = owner, _name = name}

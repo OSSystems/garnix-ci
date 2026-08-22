@@ -160,10 +160,10 @@ mkFakeGithubInterface = do
         },
       GithubInterface
         { _githubInterfaceGetAccessToken = \_ -> pure $ notImplemented "_githubInterfaceGetAccessToken",
-          _githubInterfaceGetDefaultBranch = \_ repoOwner repoName -> do
+          _githubInterfaceGetDefaultBranch = \_ (RepoId _forge repoOwner repoName) -> do
             repo <- lookupRepoImpl repoCollection repoOwner repoName
             pure $ repo >>= \r -> r ^. #defaultBranch,
-          _githubInterfaceGetHeadCommit = \_ repoOwner repoName branch -> do
+          _githubInterfaceGetHeadCommit = \_ (RepoId _forge repoOwner repoName) branch -> do
             repo <- lookupRepoImpl repoCollection repoOwner repoName
             case repo of
               Nothing ->
@@ -234,13 +234,13 @@ mkFakeGithubInterface = do
             appAuth <- view #githubAppAuth
             liftIO $ GHA.mkInstallationAuth appAuth id',
           _githubInterfaceGetInstallations = const $ pure [],
-          _githubInterfaceGetGarnixInstallationId = \_ _ -> pure $ Just 1,
-          _githubInterfaceGetRepoPublicity = \_ owner name -> do
+          _githubInterfaceGetGarnixInstallationId = \_ -> pure $ Just 1,
+          _githubInterfaceGetRepoPublicity = \_ (RepoId _forge owner name) -> do
             repo <- lookupRepoImpl repoCollection owner name
             case repo of
               Just repo -> pure $ repo ^. #publicity
               Nothing -> throw $ NoSuchRepo {_owner = owner, _name = name},
-          _githubInterfaceGetRepoCollaborators = \_iAuth owner repo -> do
+          _githubInterfaceGetRepoCollaborators = \_iAuth (RepoId _forge owner repo) -> do
             repo <- lookupRepoImpl repoCollection owner repo
             case repo of
               Nothing -> pure RepoNotFound
@@ -248,7 +248,7 @@ mkFakeGithubInterface = do
                 -- Github returns the owner in the collaborators list
                 pure $ GhCollaborators (getGhRepoOwner owner : r ^. #collaborators),
           _githubInterfaceGetReposInInstallationAccessibleTo = \_ _ -> pure [],
-          _githubInterfaceOpenGithubPullRequest = \owner@(GhRepoOwner (GhLogin o)) repo@(GhRepoName r) pr -> do
+          _githubInterfaceOpenGithubPullRequest = \(RepoId _forge owner@(GhRepoOwner (GhLogin o)) repo@(GhRepoName r)) pr -> do
             updateRepo repoCollection owner repo (#pullRequestBranch ?~ (pr ^. headBranch))
 
             repo <- lookupRepoImpl repoCollection owner repo

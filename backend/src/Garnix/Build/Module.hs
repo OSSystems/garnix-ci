@@ -29,21 +29,22 @@ getCommitInfo :: GhLogin -> ModuleValues.GetRepoAndModuleValues -> M CommitInfo
 getCommitInfo reqUser modules = do
   case (modules ^. #repo_user, modules ^. #repo_name) of
     (Just user, Just repo) -> do
-      installationId <- getGarnixInstallationId user repo
+      let repoId' = RepoId githubForge user repo
+      installationId <- getGarnixInstallationId repoId'
       iAuth <- case installationId of
         Nothing -> throw $ NoSuchRepo {_owner = user, _name = repo}
         Just id -> getInstallation (Id $ fromInteger id)
-      repoPublicity <- getRepoPublicity iAuth user repo
-      getDefaultBranch (Just iAuth) user repo >>= \case
+      repoPublicity <- getRepoPublicity iAuth repoId'
+      getDefaultBranch (Just iAuth) repoId' >>= \case
         Nothing -> throw $ NoSuchRepo {_owner = user, _name = repo}
         Just branch -> do
           token <- getAccessToken iAuth
-          commit <- getHeadCommit token user repo branch
+          commit <- getHeadCommit token repoId' branch
           pure
             $ CommitInfo
               { _commitInfoReqUser = ForgeLogin githubForge reqUser,
                 _commitInfoRepoPublicity = repoPublicity,
-                _commitInfoRepoInfo = RepoInfo iAuth token (RepoId githubForge user repo),
+                _commitInfoRepoInfo = RepoInfo iAuth token repoId',
                 _commitInfoBranch = Just branch,
                 _commitInfoPrFromFork = Nothing,
                 _commitInfoCommit = commit

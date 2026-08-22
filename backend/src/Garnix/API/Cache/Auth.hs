@@ -36,8 +36,8 @@ getStoreHashPermission storeHash authorization = do
     case repos of
       [] -> pure Allowed
       repos -> do
-        permissions <- forM repos $ \(repoOwner, repoName) -> do
-          getRepoPermissions mGhLogin repoOwner repoName
+        permissions <- forM repos $ \repo -> do
+          getRepoPermissions mGhLogin repo
         pure $ if Allowed `elem` permissions then Allowed else Disallowed
   where
     isAccessTokenValidCached :: StoreHash -> GhLogin -> AccessToken -> M Bool

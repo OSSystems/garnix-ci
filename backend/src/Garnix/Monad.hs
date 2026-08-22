@@ -400,19 +400,19 @@ realRemoteUrl (RemoteUrl url) = url
 data GithubInterface = GithubInterface
   { _githubInterfaceGetInstallation :: (HasCallStack) => GH.Id GHA.Installation -> M GHA.InstallationAuth,
     _githubInterfaceGetInstallations :: (HasCallStack) => GhToken -> M [GH.Id GHA.Installation],
-    _githubInterfaceGetGarnixInstallationId :: (HasCallStack) => GhRepoOwner -> GhRepoName -> M (Maybe Integer),
+    _githubInterfaceGetGarnixInstallationId :: (HasCallStack) => RepoId -> M (Maybe Integer),
     _githubInterfaceGetAccessToken :: (HasCallStack) => GHA.InstallationAuth -> M GhToken,
-    _githubInterfaceGetDefaultBranch :: (HasCallStack) => Maybe GHA.InstallationAuth -> GhRepoOwner -> GhRepoName -> M (Maybe Branch),
-    _githubInterfaceGetHeadCommit :: (HasCallStack) => GhToken -> GhRepoOwner -> GhRepoName -> Branch -> M CommitHash,
+    _githubInterfaceGetDefaultBranch :: (HasCallStack) => Maybe GHA.InstallationAuth -> RepoId -> M (Maybe Branch),
+    _githubInterfaceGetHeadCommit :: (HasCallStack) => GhToken -> RepoId -> Branch -> M CommitHash,
     _githubInterfaceNewBuildReport :: (HasCallStack) => RepoInfo -> GhRunReport -> M GhRunId,
     _githubInterfaceUpdateBuildReport :: (HasCallStack) => GhRunId -> GhRunReport -> RepoInfo -> M (),
     _githubInterfaceDoesRepoFileExist :: (HasCallStack) => CommitInfo -> FilePath -> M DoesFileExist,
     _githubInterfaceGetRemote :: (HasCallStack) => CommitInfo -> M RemoteUrl,
-    _githubInterfaceGetRepoCollaborators :: (HasCallStack) => InstallationAuth -> GhRepoOwner -> GhRepoName -> M GhCollaborators,
-    _githubInterfaceGetRepoPublicity :: (HasCallStack) => InstallationAuth -> GhRepoOwner -> GhRepoName -> M RepoPublicity,
+    _githubInterfaceGetRepoCollaborators :: (HasCallStack) => InstallationAuth -> RepoId -> M GhCollaborators,
+    _githubInterfaceGetRepoPublicity :: (HasCallStack) => InstallationAuth -> RepoId -> M RepoPublicity,
     _githubInterfaceGetInstalledOrgs :: (HasCallStack) => GhToken -> M [GhUserOrgMembership],
     _githubInterfaceGetReposInInstallationAccessibleTo :: (HasCallStack) => GH.Id GHA.Installation -> GhToken -> M [Text],
-    _githubInterfaceOpenGithubPullRequest :: (HasCallStack) => GhRepoOwner -> GhRepoName -> PullRequest -> M PullRequestResult,
+    _githubInterfaceOpenGithubPullRequest :: (HasCallStack) => RepoId -> PullRequest -> M PullRequestResult,
     _githubInterfaceExchangeOauthCode :: (HasCallStack) => Text -> OAuthCode -> M (GhUserCredentials Text),
     _githubInterfaceRefreshUserCredentials :: (HasCallStack) => Text -> M (GhUserCredentials Text),
     _githubInterfaceGetPullRequestsForCommit :: (HasCallStack) => RepoInfo -> CommitHash -> M [GhPullRequestId],
@@ -476,25 +476,25 @@ getInstallations token = do
   gh <- view #githubInterface
   _githubInterfaceGetInstallations gh token
 
-getGarnixInstallationId :: GhRepoOwner -> GhRepoName -> M (Maybe Integer)
-getGarnixInstallationId owner name = do
+getGarnixInstallationId :: RepoId -> M (Maybe Integer)
+getGarnixInstallationId repo = do
   gh <- view #githubInterface
-  _githubInterfaceGetGarnixInstallationId gh owner name
+  _githubInterfaceGetGarnixInstallationId gh repo
 
 getAccessToken :: GHA.InstallationAuth -> M GhToken
 getAccessToken iAuth = do
   gh <- view #githubInterface
   _githubInterfaceGetAccessToken gh iAuth
 
-getDefaultBranch :: Maybe GHA.InstallationAuth -> GhRepoOwner -> GhRepoName -> M (Maybe Branch)
-getDefaultBranch miAuth owner repo = do
+getDefaultBranch :: Maybe GHA.InstallationAuth -> RepoId -> M (Maybe Branch)
+getDefaultBranch miAuth repo = do
   gh <- view #githubInterface
-  _githubInterfaceGetDefaultBranch gh miAuth owner repo
+  _githubInterfaceGetDefaultBranch gh miAuth repo
 
-getHeadCommit :: GhToken -> GhRepoOwner -> GhRepoName -> Branch -> M CommitHash
-getHeadCommit token owner repo branch = do
+getHeadCommit :: GhToken -> RepoId -> Branch -> M CommitHash
+getHeadCommit token repo branch = do
   gh <- view #githubInterface
-  _githubInterfaceGetHeadCommit gh token owner repo branch
+  _githubInterfaceGetHeadCommit gh token repo branch
 
 newBuildReport :: RepoInfo -> GhRunReport -> M GhRunId
 newBuildReport repoInfo build' = do
@@ -511,20 +511,20 @@ getRemote commitInfo = do
   gh <- view #githubInterface
   _githubInterfaceGetRemote gh commitInfo
 
-getRepoCollaborators :: (HasCallStack) => InstallationAuth -> GhRepoOwner -> GhRepoName -> M GhCollaborators
-getRepoCollaborators iAuth owner repo = do
+getRepoCollaborators :: (HasCallStack) => InstallationAuth -> RepoId -> M GhCollaborators
+getRepoCollaborators iAuth repo = do
   gh <- view #githubInterface
-  _githubInterfaceGetRepoCollaborators gh iAuth owner repo
+  _githubInterfaceGetRepoCollaborators gh iAuth repo
 
 doesRepoFileExist :: (HasCallStack) => CommitInfo -> FilePath -> M DoesFileExist
 doesRepoFileExist commitInfo path = do
   gh <- view #githubInterface
   _githubInterfaceDoesRepoFileExist gh commitInfo path
 
-getRepoPublicity :: (HasCallStack) => InstallationAuth -> GhRepoOwner -> GhRepoName -> M RepoPublicity
-getRepoPublicity iAuth owner name = do
+getRepoPublicity :: (HasCallStack) => InstallationAuth -> RepoId -> M RepoPublicity
+getRepoPublicity iAuth repo = do
   gh <- view #githubInterface
-  _githubInterfaceGetRepoPublicity gh iAuth owner name
+  _githubInterfaceGetRepoPublicity gh iAuth repo
 
 getInstalledOrgs :: (HasCallStack) => GhToken -> M [GhUserOrgMembership]
 getInstalledOrgs tok = do
@@ -536,10 +536,10 @@ getReposInInstallationAccessibleTo installation token = do
   gh <- view #githubInterface
   _githubInterfaceGetReposInInstallationAccessibleTo gh installation token
 
-openGithubPullRequest :: (HasCallStack) => GhRepoOwner -> GhRepoName -> PullRequest -> M PullRequestResult
-openGithubPullRequest owner name pr = do
+openGithubPullRequest :: (HasCallStack) => RepoId -> PullRequest -> M PullRequestResult
+openGithubPullRequest repo pr = do
   gh <- view #githubInterface
-  _githubInterfaceOpenGithubPullRequest gh owner name pr
+  _githubInterfaceOpenGithubPullRequest gh repo pr
 
 exchangeOauthCode :: (HasCallStack) => Text -> OAuthCode -> M (GhUserCredentials Text)
 exchangeOauthCode callbackUrl code = do

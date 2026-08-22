@@ -785,10 +785,11 @@ tagCacheUpload (RepoId _forge repoOwner repoName) =
               ON CONFLICT DO NOTHING
           |]
 
-getReposForHash :: StoreHash -> M [(GhRepoOwner, GhRepoName)]
+getReposForHash :: StoreHash -> M [RepoId]
 getReposForHash hash = do
-  pgQuery
-    [pgSQL|
+  map (uncurry (RepoId githubForge))
+    <$> pgQuery
+      [pgSQL|
       SELECT repo_owner, repo_name
       FROM cache_store_hash_tags
       WHERE hash = ${hash}

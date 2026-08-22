@@ -23,7 +23,7 @@ spec = inM
           GH.withFakeGithubInterface $ \st -> do
             GH.mkRepo st "owner" "repo"
               $ (#publicity .~ RepoIsPublic True)
-            result <- getRepoPermissions Nothing "owner" "repo"
+            result <- getRepoPermissions Nothing (RepoId githubForge "owner" "repo")
             result `shouldBeM` Allowed
 
         it "returns false for private repos" $ do
@@ -31,26 +31,26 @@ spec = inM
             GH.mkRepo st "owner" "repo"
               $ (#publicity .~ RepoIsPublic False)
               . (#collaborators .~ [])
-            result <- getRepoPermissions Nothing "owner" "repo"
+            result <- getRepoPermissions Nothing (RepoId githubForge "owner" "repo")
             result `shouldBeM` Disallowed
 
         it "returns false for non-existing repos" $ do
           GH.withFakeGithubInterface $ \_ghFake -> do
-            result <- getRepoPermissions Nothing "owner" "repo"
+            result <- getRepoPermissions Nothing (RepoId githubForge "owner" "repo")
             result `shouldBeM` Disallowed
 
         it "caches responses" $ do
           GH.withFakeGithubInterface $ \st -> do
             GH.mkRepo st "owner" "repo"
               $ (#publicity .~ RepoIsPublic True)
-            result <- getRepoPermissions Nothing "owner" "repo"
+            result <- getRepoPermissions Nothing (RepoId githubForge "owner" "repo")
             result `shouldBeM` Allowed
             GH.mkRepo st "owner" "repo"
               $ (#publicity .~ RepoIsPublic False)
-            result <- getRepoPermissions Nothing "owner" "repo"
+            result <- getRepoPermissions Nothing (RepoId githubForge "owner" "repo")
             result `shouldBeM` Allowed
             clearCache __getRepoPermissionsCache
-            result <- getRepoPermissions Nothing "owner" "repo"
+            result <- getRepoPermissions Nothing (RepoId githubForge "owner" "repo")
             result `shouldBeM` Disallowed
 
       describe "with authenticated request" $ do
@@ -58,7 +58,7 @@ spec = inM
           GH.withFakeGithubInterface $ \st -> do
             GH.mkRepo st "owner" "repo"
               $ (#publicity .~ RepoIsPublic True)
-            result <- getRepoPermissions (Just "someone") "owner" "repo"
+            result <- getRepoPermissions (Just "someone") (RepoId githubForge "owner" "repo")
             result `shouldBeM` Allowed
 
         it "returns true for private repos where the requesting user is a collaborator" $ do
@@ -66,7 +66,7 @@ spec = inM
             GH.mkRepo st "owner" "repo"
               $ (#publicity .~ RepoIsPublic False)
               . (#collaborators .~ ["test-user"])
-            result <- getRepoPermissions (Just "test-user") "owner" "repo"
+            result <- getRepoPermissions (Just "test-user") (RepoId githubForge "owner" "repo")
             result `shouldBeM` Allowed
 
         it "returns false for private repos" $ do
@@ -74,24 +74,24 @@ spec = inM
             GH.mkRepo st "owner" "repo"
               $ (#publicity .~ RepoIsPublic False)
               . (#collaborators .~ [])
-            result <- getRepoPermissions (Just "test-user") "owner" "repo"
+            result <- getRepoPermissions (Just "test-user") (RepoId githubForge "owner" "repo")
             result `shouldBeM` Disallowed
 
         it "returns false for non-existing repos" $ do
           GH.withFakeGithubInterface $ \_ghFake -> do
-            result <- getRepoPermissions (Just "test-user") "owner" "repo"
+            result <- getRepoPermissions (Just "test-user") (RepoId githubForge "owner" "repo")
             result `shouldBeM` Disallowed
 
         it "caches responses" $ do
           GH.withFakeGithubInterface $ \st -> do
             GH.mkRepo st "owner" "repo"
               $ (#publicity .~ RepoIsPublic True)
-            result <- getRepoPermissions (Just "someone") "owner" "repo"
+            result <- getRepoPermissions (Just "someone") (RepoId githubForge "owner" "repo")
             result `shouldBeM` Allowed
             GH.mkRepo st "owner" "repo"
               $ (#publicity .~ RepoIsPublic False)
-            result <- getRepoPermissions (Just "someone") "owner" "repo"
+            result <- getRepoPermissions (Just "someone") (RepoId githubForge "owner" "repo")
             result `shouldBeM` Allowed
             clearCache __getRepoPermissionsCache
-            result <- getRepoPermissions (Just "someone") "owner" "repo"
+            result <- getRepoPermissions (Just "someone") (RepoId githubForge "owner" "repo")
             result `shouldBeM` Disallowed

@@ -120,8 +120,7 @@ createPullRequest user = do
     openPullRequest :: CommitInfo -> Branch -> Branch -> M PullRequestResult
     openPullRequest commitInfo baseBranch newBranch =
       openGithubPullRequest
-        (commitInfo ^. repoInfo . repoId . repoUser)
-        (commitInfo ^. repoInfo . repoId . repoName)
+        (commitInfo ^. repoInfo . repoId)
         PullRequest
           { _pullRequestTitle = "Enable garnix modules",
             _pullRequestBody = "This is an automated pull request created using [garnix modules](https://garnix.io/modules).\n\nCreate or edit your existing modules [here](https://garnix.io/modules/configure).",

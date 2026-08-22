@@ -396,7 +396,7 @@ spec = do
               hashForDerivation tmp "foo"
             waitFor (fromSeconds @Int 40) $ do
               repos <- DB.getReposForHash hash
-              repos `shouldBeM` [("owner", "repo")]
+              repos `shouldBeM` [RepoId githubForge "owner" "repo"]
 
       it "tags dependencies with the repo being built" $ do
         flake <- liftIO flakeWithDep
@@ -418,7 +418,7 @@ spec = do
               hashForDerivation tmp "bar"
             waitFor (fromSeconds @Int 40) $ do
               repos <- DB.getReposForHash barHash
-              liftIO $ repos `shouldBe` [("owner", "repo")]
+              liftIO $ repos `shouldBe` [RepoId githubForge "owner" "repo"]
 
       it "re-tags dependencies if they have been uploaded before" $ do
         privateRandom <- show <$> (randomIO :: M Int)
@@ -435,8 +435,8 @@ spec = do
           hashForDerivation tmp "bar"
         repos <- DB.getReposForHash depHash
         sort repos
-          `shouldBeM` [ ("alice", "private-repo"),
-                        ("bob", "public-repo")
+          `shouldBeM` [ RepoId githubForge "alice" "private-repo",
+                        RepoId githubForge "bob" "public-repo"
                       ]
 
     it "serves nix-cache-info endpoint" $ withServer $ \server -> do

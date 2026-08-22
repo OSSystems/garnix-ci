@@ -44,7 +44,7 @@ spec = inM $ aroundM_ suppressLogsWhenPassing $ beforeM_ truncateDBM $ do
       describe "/api/build/{id}" $ do
         describe "collaborators" $ do
           it "shows builds to collaborators even if they didn't start the build"
-            $ withGithubMock repoCollaboratorsLens (\_ _ _ -> pure $ GhCollaborators ["dev-user"])
+            $ withGithubMock repoCollaboratorsLens (\_ _ -> pure $ GhCollaborators ["dev-user"])
             $ do
               withServer $ \testServer -> do
                 now <- liftIO getCurrentTime

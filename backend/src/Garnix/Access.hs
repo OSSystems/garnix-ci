@@ -24,12 +24,13 @@ getRunWithAccess access user' runId = do
   run <- case run' of
     Just run -> pure run
     Nothing -> throw (NoSuchRun runId)
-  installationId <- getGarnixInstallationId (run ^. repoUser) (run ^. repoName)
+  let runRepo = RepoId githubForge (run ^. repoUser) (run ^. repoName)
+  installationId <- getGarnixInstallationId runRepo
   iAuth <- case installationId of
     Nothing -> throw $ OtherError "Failed to look up installation auth"
     Just id -> getInstallation (Id $ fromInteger id)
-  repoPublicity <- getRepoPublicity iAuth (run ^. repoUser) (run ^. repoName)
-  hasAccess <- accessCheck user' repoPublicity (run ^. reqUser) (run ^. repoUser) (run ^. repoName)
+  repoPublicity <- getRepoPublicity iAuth runRepo
+  hasAccess <- accessCheck user' repoPublicity (run ^. reqUser) runRepo
   when (not hasAccess) $ throw (NoSuchRun runId)
   pure run
 
@@ -39,44 +40,44 @@ getBuildWithAccess access user' buildId = do
         Read -> hasAccessTo
         Cancel -> canCancelBuild
   build <- DB.getBuild buildId
-  hasAccess <- accessCheck user' (build ^. repoIsPublic) (build ^. reqUser) (build ^. repoUser) (build ^. repoName)
+  hasAccess <- accessCheck user' (build ^. repoIsPublic) (build ^. reqUser) (RepoId githubForge (build ^. repoUser) (build ^. repoName))
   when (not hasAccess) $ throw (NoSuchBuild buildId)
   pure build
 
-hasAccessTo :: Maybe User -> RepoPublicity -> GhLogin -> GhRepoOwner -> GhRepoName -> M Bool
-hasAccessTo user' repoIsPublic reqUser owner name
+hasAccessTo :: Maybe User -> RepoPublicity -> GhLogin -> RepoId -> M Bool
+hasAccessTo user' repoIsPublic reqUser repo
   | user' ^? _Just . githubLogin == Just reqUser = pure True
-  | otherwise = hasAccessToRepo user' repoIsPublic owner name
+  | otherwise = hasAccessToRepo user' repoIsPublic repo
 
-hasAccessToRepo :: Maybe User -> RepoPublicity -> GhRepoOwner -> GhRepoName -> M Bool
-hasAccessToRepo user' repoIsPublic owner name
+hasAccessToRepo :: Maybe User -> RepoPublicity -> RepoId -> M Bool
+hasAccessToRepo user' repoIsPublic repo
   | isRepoPublic repoIsPublic = pure True
   | user' ^? _Just . subscriptionType == Just Admin = pure True
   | otherwise = case user' of
       Nothing -> pure False
       Just user -> do
-        collaborators <- getCollaborators owner name
+        collaborators <- getCollaborators repo
         case collaborators of
           RepoNotFound -> pure False
           GhCollaborators collaborators' -> pure $ (user ^. githubLogin) `elem` collaborators'
 
-getCollaborators :: GhRepoOwner -> GhRepoName -> M GhCollaborators
-getCollaborators owner repo = do
-  installationId <- getGarnixInstallationId owner repo
+getCollaborators :: RepoId -> M GhCollaborators
+getCollaborators repo = do
+  installationId <- getGarnixInstallationId repo
   case installationId of
     Nothing -> pure RepoNotFound
     Just id -> do
       iAuth <- getInstallation (Id $ fromInteger id)
-      getRepoCollaborators iAuth owner repo
+      getRepoCollaborators iAuth repo
 
-canCancelBuild :: Maybe User -> RepoPublicity -> GhLogin -> GhRepoOwner -> GhRepoName -> M Bool
-canCancelBuild user' _ reqUser owner name
+canCancelBuild :: Maybe User -> RepoPublicity -> GhLogin -> RepoId -> M Bool
+canCancelBuild user' _ reqUser repo
   | user' ^? _Just . subscriptionType == Just Admin = pure True
   | user' ^? _Just . githubLogin == Just reqUser = pure True
   | otherwise = case user' of
       Nothing -> pure False
       Just user -> do
-        collaborators <- getCollaborators owner name
+        collaborators <- getCollaborators repo
         case collaborators of
           RepoNotFound -> pure False
           GhCollaborators collaborators' -> pure $ (user ^. githubLogin) `elem` collaborators'

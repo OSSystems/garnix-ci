@@ -22,10 +22,10 @@ testGithubInterface tmp buildRef = do
           appAuth <- view #githubAppAuth
           liftIO $ GHA.mkInstallationAuth appAuth id',
         _githubInterfaceGetInstallations = const $ pure [],
-        _githubInterfaceGetGarnixInstallationId = \_ _ -> pure $ Just 1,
+        _githubInterfaceGetGarnixInstallationId = \_ -> pure $ Just 1,
         _githubInterfaceGetAccessToken = const $ pure (GhToken "test-token"),
-        _githubInterfaceGetDefaultBranch = \_ _ _ -> pure (Just $ Branch "main"),
-        _githubInterfaceGetHeadCommit = \_ _ _ _ -> pure defaultCommitHash,
+        _githubInterfaceGetDefaultBranch = \_ _ -> pure (Just $ Branch "main"),
+        _githubInterfaceGetHeadCommit = \_ _ _ -> pure defaultCommitHash,
         _githubInterfaceGetRemote = \_ -> do
           pure $ RemoteUrl ("file:///" <> cs tmp <> "/.git"),
         _githubInterfaceDoesRepoFileExist = \_ path -> liftIO $ do
@@ -44,11 +44,11 @@ testGithubInterface tmp buildRef = do
         _githubInterfaceUpdateBuildReport = \(GhRunId runId) runReport _ -> do
           let logs = _ghRunReportLogs runReport
           atomicModifyIORef' buildRef (\x -> (IntMap.insertWith (++) (fromIntegral runId) [(runReport ^. name, runReport ^. status, logs)] x, ())),
-        _githubInterfaceGetRepoCollaborators = \_ _ _ -> pure $ GhCollaborators [],
-        _githubInterfaceGetRepoPublicity = \_ _ _ -> return $ RepoIsPublic True,
+        _githubInterfaceGetRepoCollaborators = \_ _ -> pure $ GhCollaborators [],
+        _githubInterfaceGetRepoPublicity = \_ _ -> return $ RepoIsPublic True,
         _githubInterfaceGetInstalledOrgs = \_ -> pure [],
         _githubInterfaceGetReposInInstallationAccessibleTo = \_ _ -> pure [],
-        _githubInterfaceOpenGithubPullRequest = \_ _ _ -> pure $ PullRequestResult "",
+        _githubInterfaceOpenGithubPullRequest = \_ _ -> pure $ PullRequestResult "",
         _githubInterfaceExchangeOauthCode = \_ _ -> throw $ OtherError "exchangeOauthCode is not faked",
         _githubInterfaceRefreshUserCredentials = \_ -> throw $ OtherError "refreshUserCredentials is not faked",
         _githubInterfaceGetPullRequestsForCommit = \_ _ -> pure [],

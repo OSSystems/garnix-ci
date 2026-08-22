@@ -67,13 +67,13 @@ ghWebhookCheckSuite ev
       == CheckSuiteEventActionRequested
       || evCheckSuiteAction ev
       == CheckSuiteEventActionRerequested = do
-      (owner', repo') <- parseRepoFullname (whRepoFullName $ repoForEvent ev)
+      repoId' <- parseRepoFullname (whRepoFullName $ repoForEvent ev)
       (iAuth, tok) <- getAuthAndToken (whChecksInstallationId <$> evCheckSuiteInstallation ev)
       let commitInfo =
             CommitInfo
               { _commitInfoReqUser = ForgeLogin githubForge . GhLogin . whUserLogin $ senderOfEvent ev,
                 _commitInfoRepoPublicity = RepoIsPublic . not . whRepoIsPrivate $ repoForEvent ev,
-                _commitInfoRepoInfo = RepoInfo iAuth tok (RepoId githubForge owner' repo'),
+                _commitInfoRepoInfo = RepoInfo iAuth tok repoId',
                 _commitInfoBranch = branch',
                 _commitInfoPrFromFork = Nothing,
                 _commitInfoCommit = commit'
@@ -143,7 +143,7 @@ ghWebhookPullRequest ev = do
     handlePrEvent :: M (Promise ())
     handlePrEvent = do
       let commit' = CommitHash $ ev ^. payload . Types.head . sha
-      (owner', repo') <- parseRepoFullname (repoForEvent ev ^. fullName)
+      repoId' <- parseRepoFullname (repoForEvent ev ^. fullName)
       (iAuth, tok) <- getAuthAndToken (evPullReqInstallationId ev)
       (fromRepo, toRepo) <- getFromTo ev
       let prFromFork =
@@ -154,7 +154,7 @@ ghWebhookPullRequest ev = do
             CommitInfo
               { _commitInfoReqUser = ForgeLogin githubForge . GhLogin . whUserLogin $ senderOfEvent ev,
                 _commitInfoRepoPublicity = RepoIsPublic . not . whRepoIsPrivate $ repoForEvent ev,
-                _commitInfoRepoInfo = RepoInfo iAuth tok (RepoId githubForge owner' repo'),
+                _commitInfoRepoInfo = RepoInfo iAuth tok repoId',
                 _commitInfoBranch = Nothing,
                 _commitInfoPrFromFork = prFromFork,
                 _commitInfoCommit = commit'
@@ -179,7 +179,7 @@ ghWebhookPush :: (HasCallStack) => PushEvent -> M (Promise ())
 ghWebhookPush ev
   | evPushDeleted ev = emptyPromise
   | otherwise = do
-      (owner', repo') <- parseRepoFullname (whRepoFullName $ repoForEvent ev)
+      repoId' <- parseRepoFullname (whRepoFullName $ repoForEvent ev)
       (iAuth, tok) <- getAuthAndToken (whChecksInstallationId <$> evPushInstallation ev)
       commit' <- case evPushHeadSha ev of
         Nothing -> throw $ OtherError "Push without head sha"
@@ -191,7 +191,7 @@ ghWebhookPush ev
             CommitInfo
               { _commitInfoReqUser = ForgeLogin githubForge reqUser,
                 _commitInfoRepoPublicity = RepoIsPublic . not . whRepoIsPrivate $ repoForEvent ev,
-                _commitInfoRepoInfo = RepoInfo iAuth tok (RepoId githubForge owner' repo'),
+                _commitInfoRepoInfo = RepoInfo iAuth tok repoId',
                 _commitInfoBranch = branch',
                 _commitInfoPrFromFork = Nothing,
                 _commitInfoCommit = commit'
@@ -203,10 +203,10 @@ ghWebhookPush ev
       "refs" : "heads" : rest -> Just . Branch $ T.intercalate "/" rest
       _ -> Nothing
 
-parseRepoFullname :: Text -> M (GhRepoOwner, GhRepoName)
+parseRepoFullname :: Text -> M RepoId
 parseRepoFullname name =
   case T.splitOn "/" name of
-    [o, r] -> pure (GhRepoOwner (GhLogin o), GhRepoName r)
+    [o, r] -> pure (RepoId githubForge (GhRepoOwner (GhLogin o)) (GhRepoName r))
     x ->
       throw
         . OtherError

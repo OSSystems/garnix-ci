@@ -821,10 +821,6 @@ data ForgeLogin = ForgeLogin
   }
   deriving stock (Eq, Ord, Show, Generic)
 
--- | The login of a user on the forge the given repository lives on.
-forgeLoginOn :: RepoId -> GhLogin -> ForgeLogin
-forgeLoginOn repo = ForgeLogin (_repoIdForge repo)
-
 newtype InternalCacheToken = InternalCacheToken {getInternalCacheToken :: Text}
   deriving stock (Eq, Show, Generic)
 

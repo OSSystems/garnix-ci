@@ -52,12 +52,12 @@ instance ToJSON GetCommit where
 
 getCommitsForRepo :: (HasCallStack) => Maybe User -> RepoId -> M ListCommits
 getCommitsForRepo user repo@(RepoId _forge repoOwner repoName) = do
-  installationId <- getGarnixInstallationId repoOwner repoName
+  installationId <- getGarnixInstallationId repo
   iAuth <- case installationId of
     Nothing -> throw $ NoSuchRepo {_owner = repoOwner, _name = repoName}
     Just id -> getInstallation (Id $ fromInteger id)
-  repoPublicity <- getRepoPublicity iAuth repoOwner repoName
-  hasAccess <- hasAccessToRepo user repoPublicity repoOwner repoName
+  repoPublicity <- getRepoPublicity iAuth repo
+  hasAccess <- hasAccessToRepo user repoPublicity repo
   when (not hasAccess) $ throw NoSuchRepo {_owner = repoOwner, _name = repoName}
   ListCommits <$> DB.getCommitsByOwnerAndRepo repo
 
@@ -69,7 +69,7 @@ getCommitsForUser user = do
 getSingleCommit :: Maybe User -> CommitHash -> M GetCommit
 getSingleCommit user' commit = do
   summary <- DB.getCommitSummary commit
-  hasAccess <- hasAccessTo user' (summary ^. repoIsPublic) (summary ^. reqUser) (summary ^. repoOwner) (summary ^. repoName)
+  hasAccess <- hasAccessTo user' (summary ^. repoIsPublic) (summary ^. reqUser) (RepoId githubForge (summary ^. repoOwner) (summary ^. repoName))
   when (not hasAccess) $ throw (NoSuchCommit commit)
   result <- DB.getBuildsAndRunsByCommit (RepoId githubForge (summary ^. repoOwner) (summary ^. repoName)) commit
   pure $ case result of
