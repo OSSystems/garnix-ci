@@ -2,6 +2,7 @@ module Garnix.Incremental
   ( makeNormalizedFlake,
     renderNormalizedFlakeWithHelpers,
     withIntermediatesFlake,
+    incrementalCacheUrl,
     NormalizedFlake (..),
   )
 where
@@ -32,12 +33,21 @@ withIntermediatesFlake build action = do
       action Nothing
     _ -> do
       emptyDir' <- view #emptyDir
-      flakeContents <- liftIO . renderNormalizedFlakeWithHelpers emptyDir' =<< makeNormalizedFlake builds
+      cacheUrl <- incrementalCacheUrl
+      flakeContents <-
+        liftIO . renderNormalizedFlakeWithHelpers emptyDir' cacheUrl
+          =<< makeNormalizedFlake builds
       log Informational $ "Using the following flake file for garnix-incrementalize:\n "
         <> flakeContents
       withSystemTempDirectory "incremental-build" $ \fp -> do
         liftIO $ T.writeFile (fp <> "/flake.nix") flakeContents
         action (Just fp)
+
+-- | The garnix instance is its own binary cache; see "Garnix.API.Cache".
+incrementalCacheUrl :: M Text
+incrementalCacheUrl = do
+  base <- view #baseUrl
+  pure $ T.dropWhileEnd (== '/') base <> "/api/cache"
 
 previousCandidates :: M [CommitHash]
 previousCandidates = do
@@ -68,8 +78,8 @@ makeNormalizedFlake = foldM go mempty
                 )
               .~ storePath
 
-renderNormalizedFlakeWithHelpers :: FilePath -> NormalizedFlake -> IO Text
-renderNormalizedFlakeWithHelpers emptyDir' (NormalizedFlake f) = cs <$> rendered
+renderNormalizedFlakeWithHelpers :: FilePath -> Text -> NormalizedFlake -> IO Text
+renderNormalizedFlakeWithHelpers emptyDir' cacheUrl (NormalizedFlake f) = cs <$> rendered
   where
     renderSingle :: (PackageType, MaybeSystem, PackageName) -> Nix.StorePath -> Text -> Text
     renderSingle (typ, sys, PackageName name) s prev =
@@ -87,7 +97,9 @@ renderNormalizedFlakeWithHelpers emptyDir' (NormalizedFlake f) = cs <$> rendered
         <> ".intermediates"
         <> " = builtins.fetchClosure { "
         <> "     inputAddressed = true;" -- Is this worth changing?
-        <> "     fromStore = \"https://cache.garnix.io\"; "
+        <> "     fromStore = \""
+        <> cacheUrl
+        <> "\"; "
         <> "     fromPath = \""
         <> cs s
         <> "\";"
