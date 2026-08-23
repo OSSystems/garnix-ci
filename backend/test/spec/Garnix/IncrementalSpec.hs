@@ -101,9 +101,12 @@ renderNormalizedFlakeWithHelpersSpec = describe "renderNormalizedFlakeWithHelper
   let mkStorePath p = either error identity (Nix.parseStorePath @Text p)
       foo = "/nix/store/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA-foo"
       bar = "/nix/store/BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB-bar"
+      testCacheUrl :: Text
+      testCacheUrl = "https://garnix.example/api/cache"
   it "renders simple normalized flakes"
     $ renderNormalizedFlakeWithHelpers
       "emptyDir"
+      testCacheUrl
       ( mempty
           & at (TypePackage, IsSystem X8664Linux, "foo")
           ?~ mkStorePath foo
@@ -115,7 +118,7 @@ renderNormalizedFlakeWithHelpersSpec = describe "renderNormalizedFlakeWithHelper
             {
               packages.x86_64-linux.foo.intermediates = builtins.fetchClosure {
                 inputAddressed = true;
-                fromStore = "https://cache.garnix.io";
+                fromStore = "#{testCacheUrl}";
                 fromPath = "#{foo}";
               };
               .*
@@ -126,6 +129,7 @@ renderNormalizedFlakeWithHelpersSpec = describe "renderNormalizedFlakeWithHelper
   it "renders multiple attributes correctly"
     $ renderNormalizedFlakeWithHelpers
       "emptyDir"
+      testCacheUrl
       ( mempty
           & at (TypePackage, IsSystem X8664Linux, "foo")
           ?~ mkStorePath foo
@@ -139,12 +143,12 @@ renderNormalizedFlakeWithHelpersSpec = describe "renderNormalizedFlakeWithHelper
             {
               checks.x86_64-linux.bar.intermediates = builtins.fetchClosure {
                 inputAddressed = true;
-                fromStore = "https://cache.garnix.io";
+                fromStore = "#{testCacheUrl}";
                 fromPath = "#{bar}";
               };
               packages.x86_64-linux.foo.intermediates = builtins.fetchClosure {
                 inputAddressed = true;
-                fromStore = "https://cache.garnix.io";
+                fromStore = "#{testCacheUrl}";
                 fromPath = "#{foo}";
               };
               .*
@@ -155,6 +159,7 @@ renderNormalizedFlakeWithHelpersSpec = describe "renderNormalizedFlakeWithHelper
   it "renders the correct suffix for nixosConfigurations"
     $ renderNormalizedFlakeWithHelpers
       "emptyDir"
+      testCacheUrl
       ( mempty
           & at (TypeNixosConfiguration, NoSystem, "foo")
           ?~ mkStorePath foo
@@ -166,7 +171,7 @@ renderNormalizedFlakeWithHelpersSpec = describe "renderNormalizedFlakeWithHelper
             {
               nixosConfigurations.foo.config.system.build.toplevel.intermediates = builtins.fetchClosure {
                 inputAddressed = true;
-                fromStore = "https://cache.garnix.io";
+                fromStore = "#{testCacheUrl}";
                 fromPath = "#{foo}";
               };
               .*
