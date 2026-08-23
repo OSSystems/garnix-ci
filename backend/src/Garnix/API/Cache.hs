@@ -5,6 +5,7 @@ module Garnix.API.Cache
     -- * exported for tests
     XForwardedFor (..),
     isInternal,
+    nixCacheInfo,
     serveNarInfo,
   )
 where

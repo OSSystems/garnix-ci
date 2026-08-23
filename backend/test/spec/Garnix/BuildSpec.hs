@@ -19,6 +19,7 @@ import Data.Text.IO qualified as T
 import Data.Yaml (encode)
 import GHC.IO.Unsafe (unsafePerformIO)
 import Garnix.API.Builds
+import Garnix.API.Cache (nixCacheInfo)
 import Garnix.Build (buildFlake)
 import Garnix.Build.Types (derivation)
 import Garnix.BuildLogs.Types (LogLine (LogLine))
@@ -39,9 +40,9 @@ import Garnix.TestHelpers.Monad
 import Garnix.Types hiding (context, head)
 import Garnix.UserLogs (getLogLines)
 import Garnix.YamlConfig
-import Network.HTTP.Types (ok200, status200)
+import Network.HTTP.Types (notFound404, ok200, status200)
 import Network.HTTP.Types.Header (hContentType)
-import Network.Wai (Application, getRequestBodyChunk, responseLBS)
+import Network.Wai (Application, getRequestBodyChunk, pathInfo, responseLBS)
 import Network.Wai.Handler.Warp (testWithApplication)
 import Network.Wai.Handler.Warp qualified as Warp
 import System.Directory (copyFile, createDirectoryIfMissing)
@@ -507,7 +508,7 @@ spec = do
             result <- try $ testHandleCommit commitInfo
             (result & _Left %~ err) `shouldBeM` Left (OtherError "'../../../etc/passwd' is not a path within the repo")
 
-      context "incremental builds" $ do
+      context "incremental builds" $ aroundM_ withIncrementalCacheServer $ do
         let normalLog = [regex|inc> Starting\ninc> Finished\n|]
             incrementalLog = [regex|inc> Starting\ninc> hi\ninc> Finished\n|]
             mkFlake :: M Text
@@ -1110,6 +1111,17 @@ spec = do
                                     "requestingUser": #{user ^. githubLogin}
                                   }
                                 |]
+
+-- | @fetchClosure@ opens the store before it checks whether the path is already
+-- local, so these specs need a cache that answers even though they never download.
+withIncrementalCacheServer :: M () -> M ()
+withIncrementalCacheServer action = do
+  let app :: Application
+      app req send = send $ case pathInfo req of
+        ["api", "cache", "nix-cache-info"] -> responseLBS ok200 [] (cs nixCacheInfo)
+        _ -> responseLBS notFound404 [] ""
+  liftBaseOp (testWithApplication (pure app)) $ \port ->
+    local (#baseUrl .~ ("http://localhost:" <> cs (show port))) action
 
 testHandleCommit :: CommitInfo -> M ()
 testHandleCommit commitInfo = do
