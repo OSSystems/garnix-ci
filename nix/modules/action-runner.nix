@@ -1,33 +1,11 @@
 { config
 , pkgs
-, flakeInputs
 , lib
 , ...
 }:
 let
   cfg = config.garnix.actionRunner;
   devModeSshKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIIsTYAj7lBPpDHSXA4kz07+PbvqElJhPG5bLbxYj255Z";
-  libkrun = pkgs.libkrun.overrideAttrs (old: {
-    src = flakeInputs.libkrun;
-    cargoDeps = pkgs.rustPlatform.fetchCargoVendor {
-      src = flakeInputs.libkrun;
-      hash = "sha256-2ZjrOdrwnR1oaGmCZc/13LIlH3qPI7g9kBaYAEpwpSE=";
-    };
-  });
-  crunWithLibkrun = pkgs.crun.overrideAttrs (old: {
-    pname = "crun-libkrun";
-    buildInputs = (old.buildInputs or [ ]) ++ [ libkrun pkgs.libkrunfw pkgs.pkg-config pkgs.makeWrapper ];
-    configureFlags = (old.configureFlags or [ ]) ++ [ "--with-libkrun" ];
-    postInstall = (old.postInstall or "") + ''
-      # Ensure crun can dlopen libkrun*.so at runtime
-      wrapProgram $out/bin/crun \
-        --prefix LD_LIBRARY_PATH : ${pkgs.lib.makeLibraryPath [ pkgs.libkrun ]} \
-        --set-default KRUNFW_PATH ${pkgs.libkrunfw}/share/libkrun
-      wrapProgram $out/bin/krun \
-        --prefix LD_LIBRARY_PATH : "$RUNTIME_LD_PATH" \
-        --set-default KRUNFW_PATH ${pkgs.libkrunfw}/share/libkrun
-    '';
-  });
 
   bwrapRunner = pkgs.writeShellApplication {
     name = "bwrap-action-runner";
@@ -179,7 +157,7 @@ let
         --rm \
         --memory 4G \
         --timeout "$TIMEOUT_SECS" \
-        --runtime "${crunWithLibkrun}/bin/krun" \
+        --runtime "${pkgs.crun.override { withLibkrun = true; }}/bin/krun" \
         --mount type=bind,src="$TEMP"/registrations,target=/tmp/registrations \
         --env [PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin] \
         --env GARNIX_ACTION_PRIVATE_KEY_FILE=/run/secrets/"$SECRET_NAME"  \
