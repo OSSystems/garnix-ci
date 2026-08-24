@@ -35,7 +35,8 @@ withIntermediatesFlake build action = do
       emptyDir' <- view #emptyDir
       cacheUrl <- incrementalCacheUrl
       flakeContents <-
-        liftIO . renderNormalizedFlakeWithHelpers emptyDir' cacheUrl
+        liftIO
+          . renderNormalizedFlakeWithHelpers emptyDir' cacheUrl
           =<< makeNormalizedFlake builds
       log Informational $ "Using the following flake file for garnix-incrementalize:\n "
         <> flakeContents
@@ -76,7 +77,7 @@ makeNormalizedFlake = foldM go mempty
                   build ^. system,
                   build ^. package
                 )
-              .~ storePath
+                .~ storePath
 
 renderNormalizedFlakeWithHelpers :: FilePath -> Text -> NormalizedFlake -> IO Text
 renderNormalizedFlakeWithHelpers emptyDir' cacheUrl (NormalizedFlake f) = cs <$> rendered
