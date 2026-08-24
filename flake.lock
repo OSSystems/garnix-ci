@@ -82,22 +82,6 @@
         "type": "github"
       }
     },
-    "libkrun": {
-      "flake": false,
-      "locked": {
-        "lastModified": 1787153415,
-        "narHash": "sha256-COnhGQRYjV8VAx8hZREXOld9XnwCOFg3FYgtwGPoZHY=",
-        "owner": "containers",
-        "repo": "libkrun",
-        "rev": "766da0c745ccc0d0d627f49910af76a9fddd45ab",
-        "type": "github"
-      },
-      "original": {
-        "owner": "containers",
-        "repo": "libkrun",
-        "type": "github"
-      }
-    },
     "nixpkgs": {
       "locked": {
         "lastModified": 1787498568,
@@ -120,7 +104,6 @@
         "cradle": "cradle",
         "crane": "crane",
         "flake-utils": "flake-utils",
-        "libkrun": "libkrun",
         "nixpkgs": "nixpkgs",
         "sops-nix": "sops-nix",
         "treefmt-nix": "treefmt-nix",
