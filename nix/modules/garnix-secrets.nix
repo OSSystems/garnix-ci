@@ -1,8 +1,7 @@
-{
-  config,
-  lib,
-  pkgs,
-  ...
+{ config
+, lib
+, pkgs
+, ...
 }:
 
 let
@@ -190,9 +189,11 @@ let
 
       install -d -m 0750 -o root -g ${cfg.user} ${secretsCfg.dir}
     ''
-    + lib.concatMapStringsSep "\n" (s: ''
-      install -m ${s.mode or "0440"} -o ${s.owner or "root"} -g ${cfg.user} ${s.sourcePath} ${secretsCfg.dir}/${s.name}
-    '') installedSecrets;
+    + lib.concatMapStringsSep "\n"
+      (s: ''
+        install -m ${s.mode or "0440"} -o ${s.owner or "root"} -g ${cfg.user} ${s.sourcePath} ${secretsCfg.dir}/${s.name}
+      '')
+      installedSecrets;
   };
 in
 {
@@ -226,10 +227,12 @@ in
 
   config = lib.mkIf cfg.enable {
     assertions = lib.optionals (!config.garnix.devMode.enable) (
-      lib.map (s: {
-        assertion = !s.required || s.value != null;
-        message = "services.garnixServer.${s.option} must be set.";
-      }) requiredSecrets
+      lib.map
+        (s: {
+          assertion = !s.required || s.value != null;
+          message = "services.garnixServer.${s.option} must be set.";
+        })
+        requiredSecrets
     );
 
     systemd.services.garnix-secrets-stage = {

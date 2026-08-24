@@ -57,7 +57,6 @@ npm run dev
 
 Then point your browser to [localhost:3000](http://localhost:3000).
 
-
 # Acknowledgments
 
 We erased git history when open sourcing, so we'll be explicit here about our

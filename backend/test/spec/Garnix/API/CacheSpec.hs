@@ -14,9 +14,9 @@ spec :: Spec
 spec = inM $ do
   describe "serveNarInfo" $ do
     it "returns NotFound when s3CacheEnabled = False, without touching DB" $ do
-      withS3Disabled $
-        serveNarInfo Nothing (NarInfoFileName (StoreHash "deadbeef")) Nothing
-          `shouldThrowM` NotFound
+      withS3Disabled
+        $ serveNarInfo Nothing (NarInfoFileName (StoreHash "deadbeef")) Nothing
+        `shouldThrowM` NotFound
 
 withS3Disabled :: M a -> M a
 withS3Disabled = local (#s3CacheEnabled .~ False)

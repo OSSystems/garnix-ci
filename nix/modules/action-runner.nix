@@ -106,8 +106,14 @@ let
 
   runner = pkgs.writeShellApplication {
     name = "action-runner";
-    excludeShellChecks = [ "SC2102" "SC2016" ];
-    runtimeInputs = [ pkgs.coreutils pkgs.podman ];
+    excludeShellChecks = [
+      "SC2102"
+      "SC2016"
+    ];
+    runtimeInputs = [
+      pkgs.coreutils
+      pkgs.podman
+    ];
     text = ''
       COMMAND=$1
       TIMEOUT_SECS=$2

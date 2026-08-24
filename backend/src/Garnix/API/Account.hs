@@ -99,7 +99,6 @@ orgUsage (Authenticated (WebSession user ghToken)) org = do
   getUsageForOrg usage org
 orgUsage _ _ = throw Unauthorized
 
-
 data GetTokensResponseBody = GetTokensResponseBody
   { _getTokensResponseBodyTokens :: [AccessTokenMetadata]
   }
