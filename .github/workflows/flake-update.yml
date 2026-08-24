@@ -26,6 +26,7 @@ jobs:
           branch: flake-update
           commit-msg: "chore(nix): bump flake.lock"
           pr-title: "chore(nix): bump flake.lock"
+          pr-reviewers: znaniye
           pr-body: |
             Automated weekly bump. Merge once garnix is green; close it to skip a week.
 
