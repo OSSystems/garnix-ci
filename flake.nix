@@ -45,10 +45,6 @@
     inputs.nixpkgs.follows = "nixpkgs";
   };
 
-  inputs.libkrun = {
-    url = "github:containers/libkrun";
-    flake = false;
-  };
 
   outputs =
     flakeInputs@{ self
