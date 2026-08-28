@@ -254,6 +254,7 @@ withTestEnvironment tempDir action = do
       Just emptyDir' <- lookupEnv "EMPTY_DIR"
       featureFlagConfig <- getFeatureFlagConfig
       fodCheckPool <- Garnix.Monad.Pool.newPool 40 metrics #fodCheckQueueWaitTime #fodCheckQueueLen
+      compressionBudget <- newCompressionBudget
       withDefaultLogger $ \defaultLogger -> do
         ghInterface <- Deprecated.testGithubInterface tempDir buildRef
         let env =
@@ -293,6 +294,7 @@ withTestEnvironment tempDir action = do
                       },
                   nixEvalPool = nixEvalPool,
                   s3UploadPool = s3UploadPool,
+                  compressionBudget,
                   mocks,
                   spanCtx = [],
                   metrics = metrics,

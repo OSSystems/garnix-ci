@@ -52,7 +52,7 @@ import Garnix.NixConfig (nixConfDefaults)
 import Garnix.Orchestrator qualified as Orchestrator
 import Garnix.Password (hashPassword)
 import Garnix.Prelude
-import Garnix.S3Cache (upload)
+import Garnix.S3Cache (compress, parallelisableBlocks, upload)
 import Garnix.TestHelpers
 import Garnix.TestHelpers.GithubInterface qualified as GH
 import Garnix.TestHelpers.Monad
@@ -82,7 +82,58 @@ spec = do
           . inMWith
           . beforeM_ (truncateDBM >> clearBuckets)
           . aroundM_ (withUnmock #s3CacheUploadMock . suppressLogsWhenPassing)
+  describe "compressionThreadLimit" $ do
+    it "never hands out less than one thread" $ do
+      fmap compressionThreadLimit [1 .. 8] `shouldBe` [1, 1, 1, 1, 1, 1, 1, 2]
+
+    it "leaves room for the minimum number of concurrent compressions" $ do
+      let totals = [minimumConcurrentCompressions .. 256]
+      filter (\total -> compressionThreadLimit total * minimumConcurrentCompressions > total) totals
+        `shouldBe` []
+
+    it "grows with the machine" $ do
+      fmap compressionThreadLimit [16, 32, 64] `shouldBe` [4, 8, 16]
+
+  describe "parallelisableBlocks" $ do
+    it "asks for a single thread for anything xz compresses as one block" $ do
+      fmap parallelisableBlocks [0, 1, mebibytes 1, mebibytes 24] `shouldBe` [1, 1, 1, 1]
+
+    it "asks for one thread per additional block" $ do
+      fmap parallelisableBlocks [mebibytes 24 + 1, mebibytes 48, mebibytes 240]
+        `shouldBe` [2, 2, 10]
+
   wrap $ do
+    describe "compress" $ do
+      let roundTrip name expected = do
+            compressed <- compress name
+            run_ $ cmd "xz" & addArgs ["--test", compressed]
+            run_ $ cmd "unxz" & addArgs [compressed]
+            restored <- liftIO $ T.readFile name
+            restored `shouldBeM` expected
+
+      it "produces an archive that passes the xz integrity check" $ do
+        liftBaseOp_ inTempDirectory $ do
+          let contents = T.replicate 200000 "compressible nar-ish content\n"
+          liftIO $ T.writeFile "file" contents
+          blocks <- liftIO $ parallelisableBlocks <$> getFileSize "file"
+          blocks `shouldBeM` 1
+          roundTrip "file" contents
+
+      it "produces an archive that passes the xz integrity check when xz runs multi-threaded" $ do
+        liftBaseOp_ inTempDirectory $ do
+          let contents = T.replicate 1200000 "compressible nar-ish content\n"
+          liftIO $ T.writeFile "file" contents
+          blocks <- liftIO $ parallelisableBlocks <$> getFileSize "file"
+          blocks `shouldSatisfyM` (> 1)
+          roundTrip "file" contents
+
+      it "keeps archives intact when compressions contend for the thread budget" $ do
+        liftBaseOp_ inTempDirectory $ do
+          let contentsOf name = T.replicate 20 (cs name <> " padded content line\n")
+              names = fmap (\n -> "file" <> Prelude.show n) [1 :: Int .. 400]
+          liftIO $ forM_ names $ \name -> T.writeFile name (contentsOf name)
+          forConcurrently_ names $ \name -> roundTrip name (contentsOf name)
+
     describe "upload" $ do
       it "uploads public store paths" $ do
         (evalResult, _) <- localTestBuild simpleFlake
@@ -821,6 +872,9 @@ getFileHash file = do
       $ cmd "nix-hash"
       & addArgs ["--base32", "--type", "sha256", "--flat", file]
   pure narHash
+
+mebibytes :: Integer -> Integer
+mebibytes n = n * 1024 * 1024
 
 extractFromNarInfo :: Response Lazy.ByteString -> Text -> Text
 extractFromNarInfo narInfoResponse field =

@@ -10,6 +10,7 @@ where
 import Amazonka.Env qualified as Amazonka (Env)
 import Amazonka.S3 qualified as Amazonka
 import Control.Concurrent (MVar, modifyMVar_, newMVar, readMVar)
+import Control.Concurrent.STM (TVar, newTVarIO)
 import Control.Exception.Safe qualified as SafeException
 import Control.Lens (IndexedTraversal')
 import Control.Lens.Regex.Text qualified as RE
@@ -26,6 +27,7 @@ import Data.Time (Day)
 import Data.Time.Clock.System (getSystemTime, systemToUTCTime)
 import Data.UUID qualified
 import Data.UUID.V4 qualified
+import GHC.Conc (getNumProcessors)
 import Garnix.Async (Promise)
 import Garnix.Build.Types (EvaluationResult)
 import Garnix.BuildLogs.Types (LogLine)
@@ -56,6 +58,28 @@ import Servant.Auth.Server (CookieSettings, JWTSettings)
 import System.Directory (canonicalizePath)
 import System.Log.FastLogger as FastLogger
 import Text.Read (readMaybe)
+
+data CompressionBudget = CompressionBudget
+  { unreservedThreads :: TVar Int,
+    perCompressionLimit :: Int
+  }
+
+minimumConcurrentCompressions :: Int
+minimumConcurrentCompressions = 4
+
+compressionThreadLimit :: Int -> Int
+compressionThreadLimit totalThreads =
+  max 1 (totalThreads `div` minimumConcurrentCompressions)
+
+newCompressionBudget :: (MonadIO m) => m CompressionBudget
+newCompressionBudget = liftIO $ do
+  totalThreads <- getNumProcessors
+  unreservedThreads <- newTVarIO totalThreads
+  pure
+    CompressionBudget
+      { unreservedThreads,
+        perCompressionLimit = compressionThreadLimit totalThreads
+      }
 
 data Env = Env
   { testFeatures :: Set TestFeature,
@@ -95,7 +119,8 @@ data Env = Env
     hostname :: Text,
     githubLogDebounceDuration :: Duration,
     featureFlagConfig :: FeatureFlagConfig,
-    fodCheckPool :: Garnix.Monad.Pool.Pool ()
+    fodCheckPool :: Garnix.Monad.Pool.Pool (),
+    compressionBudget :: CompressionBudget
   }
   deriving stock (Generic)
 

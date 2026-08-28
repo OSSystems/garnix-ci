@@ -1,7 +1,8 @@
-module Garnix.S3Cache (upload, toNarFilePath) where
+module Garnix.S3Cache (upload, toNarFilePath, compress, parallelisableBlocks) where
 
 import Amazonka qualified
 import Amazonka.S3 qualified as Amazonka
+import Control.Concurrent.STM (atomically, modifyTVar', readTVar, retry, writeTVar)
 import Control.Lens
 import Control.Retry (RetryPolicyM, fullJitterBackoff, limitRetries, limitRetriesByCumulativeDelay)
 import Cradle
@@ -31,6 +32,7 @@ import System.Directory (doesDirectoryExist, doesFileExist, getFileSize, listDir
 import System.IO (withBinaryFile)
 import System.IO qualified as IO
 import System.IO.Temp (withSystemTempDirectory)
+import Prelude qualified
 
 upload :: RunReporter -> GhRepoOwner -> GhRepoName -> EvaluationResult -> RepoPublicity -> M ()
 upload = curry5 $ mockable #s3CacheUploadMock $ \(runReporter, repoOwner, repoName, evalResult, repoPublicity) -> do
@@ -154,10 +156,38 @@ withBinaryFileInTempDir action = do
 
 compress :: FilePath -> M FilePath
 compress file = do
-  run_ $ cmd "xz"
-    & addArgs [file]
-    & setWorkingDir (takeDirectory file)
+  fileSize <- liftIO $ getFileSize file
+  withCompressionThreads (parallelisableBlocks fileSize) $ \threads -> do
+    run_ $ cmd "xz"
+      & addArgs (threadArgs threads <> [file])
+      & setWorkingDir (takeDirectory file)
   pure (file <> ".xz")
+  where
+    threadArgs 1 = ["--threads=1"]
+    threadArgs threads =
+      [ "--threads=" <> Prelude.show threads,
+        "--block-size=" <> Prelude.show xzBlockSize
+      ]
+
+xzBlockSize :: Integer
+xzBlockSize = 24 * 1024 * 1024
+
+parallelisableBlocks :: Integer -> Int
+parallelisableBlocks fileSize =
+  fromInteger $ max 1 $ (fileSize + xzBlockSize - 1) `div` xzBlockSize
+
+withCompressionThreads :: Int -> (Int -> M a) -> M a
+withCompressionThreads usableThreads action = do
+  CompressionBudget {unreservedThreads, perCompressionLimit} <- view #compressionBudget
+  let maxReservable = min usableThreads perCompressionLimit
+      reserve = liftIO $ atomically $ do
+        unreserved <- readTVar unreservedThreads
+        when (unreserved < 1) retry
+        let reserved = min unreserved maxReservable
+        writeTVar unreservedThreads (unreserved - reserved)
+        pure reserved
+      release reserved = liftIO $ atomically $ modifyTVar' unreservedThreads (+ reserved)
+  bracket reserve release action
 
 nixosCacheKeyName :: Text
 nixosCacheKeyName = "cache.nixos.org-1"
