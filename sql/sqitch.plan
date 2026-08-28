@@ -2,3 +2,4 @@
 %project=garnix
 
 init 2026-05-20T00:00:00Z Julian K. Arni <julian.arni@artificial.io> # Initialize tables
+drop_billing_and_hetzner_schema [init] 2026-08-28T20:03:57Z Samuel Silva <samuel@ossystems.com.br> # Reconcile databases initialised before init stopped creating the billing and Hetzner schema; a no-op on a fresh database, but on an older one it drops those structures together with any orphaned billing and server rows still in them, and the revert recreates the structures empty without restoring their contents.
