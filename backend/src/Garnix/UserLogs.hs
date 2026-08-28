@@ -43,22 +43,36 @@ storeBuildLogLine build logLine = do
 storeLogLine :: AdditionalMetadata -> OpenSearchId -> LogLine -> M ()
 storeLogLine metadata = curry $ mockable #storeLogLineMock $ \(openSearchId, logLine) -> do
   reportingPort <- view #buildLogsReportingPort
-  forM_ reportingPort $ \reportingPort -> do
-    response <- withWreqOptions $ \options ->
-      Wreq.postWith
-        options
-        ("http://localhost:" <> (cs . show $ reportingPort))
-        (toJSON $ OpenSearchSerializedMessage openSearchId metadata logLine)
-    unless (statusIsSuccessful $ response ^. Wreq.responseStatus)
-      $ log Error
-      $ T.intercalate
-        " "
-        [ "[fluent-bit writer thread]",
-          "Received response with status code",
-          response ^. Wreq.responseStatus & show . statusCode,
-          "and body:",
-          response ^. Wreq.responseBody & cs
-        ]
+  forM_ reportingPort $ \reportingPort ->
+    postToCollector reportingPort (OpenSearchSerializedMessage openSearchId metadata logLine)
+      `catchAny` (reportDroppedLogLine . cs . show)
+
+postToCollector :: Int -> OpenSearchSerializedMessage -> M ()
+postToCollector reportingPort message = do
+  response <- withWreqOptions $ \options ->
+    Wreq.postWith
+      options
+      ("http://localhost:" <> (cs . show $ reportingPort))
+      (toJSON message)
+  unless (statusIsSuccessful $ response ^. Wreq.responseStatus)
+    $ reportDroppedLogLine
+    $ T.intercalate
+      " "
+      [ "received response with status code",
+        response ^. Wreq.responseStatus & show . statusCode,
+        "and body:",
+        response ^. Wreq.responseBody & cs
+      ]
+
+reportDroppedLogLine :: Text -> M ()
+reportDroppedLogLine reason =
+  log Error
+    $ T.intercalate
+      " "
+      [ "[fluent-bit writer thread]",
+        "Dropping user log line, local collector failed:",
+        reason
+      ]
 
 toOpenSearchKey :: OpenSearchId -> String
 toOpenSearchKey (FromRun _) = "runId"
