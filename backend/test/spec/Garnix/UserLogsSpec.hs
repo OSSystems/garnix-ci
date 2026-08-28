@@ -3,6 +3,7 @@ module Garnix.UserLogsSpec where
 import Control.Lens
 import Data.Aeson
 import Data.ByteString.Lazy
+import Garnix.BuildLogs.Types (LogLine (LogLine))
 import Garnix.Monad
 import Garnix.Prelude
 import Garnix.TestHelpers
@@ -109,8 +110,20 @@ mkOpenSearchReqMock build (metadata, query) = do
           }
         |]
 
+portWithNoCollectorListening :: Int
+portWithNoCollectorListening = 1
+
 spec :: Spec
 spec = describe "UserLogs" $ do
+  describe "storeBuildLogLine"
+    $ it "returns without throwing when the local collector is unreachable"
+    $ runTestM
+    $ do
+      build <- testBuild identity
+      withUnmock #storeLogLineMock
+        $ local (#buildLogsReportingPort ?~ portWithNoCollectorListening)
+        $ storeBuildLogLine build (LogLine (Just "some-package") Nothing "line written during a restart")
+
   describe "queryOpenSearch"
     $ it "parses OpenSearch responses"
     $ do
