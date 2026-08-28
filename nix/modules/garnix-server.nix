@@ -9,6 +9,10 @@
 let
   cfg = config.services.garnixServer;
   buildLogsFluentBitPort = 8888;
+  buildLogsCollector = {
+    unit = "fluent-bit.service";
+    enabled = config.garnix.fluent-bit.enable && config.garnix.fluent-bit.buildLogsPipeline.enable;
+  };
 
   remoteBuilderType = lib.types.submodule ({ ... }: {
     options = {
@@ -455,8 +459,10 @@ in
         flakeInputs.comment.packages.${stdenv.hostPlatform.system}.default
       ];
       wantedBy = [ "multi-user.target" ];
-      wants = [ "network-online.target" ];
-      after = [ "network-online.target" "garnix-secrets-stage.service" ];
+      wants = [ "network-online.target" ]
+        ++ lib.optional buildLogsCollector.enabled buildLogsCollector.unit;
+      after = [ "network-online.target" "garnix-secrets-stage.service" ]
+        ++ lib.optional buildLogsCollector.enabled buildLogsCollector.unit;
       requires = [ "garnix-secrets-stage.service" ];
       serviceConfig = {
         Type = "notify";
@@ -506,7 +512,7 @@ in
               --port ${toString cfg.port} \
               --monitoring-port ${toString cfg.monitoringPort} \
               --metrics-port ${toString cfg.metricsPort} \
-              --build-logs-reporting-port ${toString buildLogsFluentBitPort} \
+              ${lib.optionalString buildLogsCollector.enabled "--build-logs-reporting-port ${toString buildLogsFluentBitPort}"} \
               --build-logs-dir /var/lib/garnix/logs
         '';
       };
