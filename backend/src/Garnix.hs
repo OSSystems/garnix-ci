@@ -256,6 +256,7 @@ withEnv testFeatures buildLogsDir buildLogsReportingPort action = do
   mocks <- envMocks testFeatures
   featureFlagConfig <- getFeatureFlagConfig
   fodCheckPool <- Garnix.Monad.Pool.newPool 20 metrics #fodCheckQueueWaitTime #fodCheckQueueLen
+  compressionBudget <- newCompressionBudget
   withDefaultLogger $ \defaultLogger -> do
     let env =
           Env
@@ -298,6 +299,7 @@ withEnv testFeatures buildLogsDir buildLogsReportingPort action = do
                   },
               nixEvalPool = nixEvalPool,
               s3UploadPool = s3UploadPool,
+              compressionBudget,
               mocks = mocks,
               spanCtx = [],
               metrics = metrics,
