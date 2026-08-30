@@ -1,5 +1,38 @@
 { self, overlays, flakeInputs }:
 let
+  fleet = {
+    garnix5 = { fqdn = "prometheus-node-exporter.5.garnix.io"; };
+    garnix6 = { fqdn = "prometheus-node-exporter.6.garnix.io"; };
+    garnix7 = { fqdn = "prometheus-node-exporter.7.garnix.io"; };
+    garnix8 = { fqdn = "prometheus-node-exporter.8.garnix.io"; };
+    garnix9 = { fqdn = "prometheus-node-exporter.9.garnix.io"; };
+    arm-server-0 = { };
+    arm-1 = { };
+    opensearch1 = { };
+    opensearch2 = { };
+    opensearch3 = { };
+    monitoring = { };
+    db1 = { };
+    garnix-server1 = { scrapeNginx = true; scrapeNginxLog = true; scrapeGarnixServer = true; };
+    garnix-server2 = { scrapeNginx = true; scrapeNginxLog = true; scrapeGarnixServer = true; };
+    action-runner2 = { };
+    macMini1 = {
+      fqdn = "macMini1.garnix.io";
+      proxied = false;
+      port = 9100;
+    };
+    macMini2 = {
+      fqdn = "macMini2.garnix.io";
+      proxied = false;
+      port = 9100;
+    };
+  };
+
+  monitoring = {
+    domain = "garnix.io";
+    monitoredHosts = fleet;
+  };
+
   # The 11 hard-coded remote builders previously baked into
   # backend/nixos-module.nix, kept here as dev tooling.
   bigBuilders = builtins.map
@@ -115,6 +148,7 @@ in
           garnix = {
             devMode.enable = true;
             fluent-bit.enable = true;
+            inherit monitoring;
           };
         }
       ];
@@ -143,6 +177,7 @@ in
           sops.defaultSopsFile = ../secrets/dev.yaml;
           garnix = {
             devMode.enable = true;
+            inherit monitoring;
             monitoring-client.nodeId = "db1";
             database = {
               enable = true;
@@ -177,6 +212,7 @@ in
           sops.defaultSopsFile = ../secrets/dev.yaml;
           garnix = {
             devMode.enable = true;
+            inherit monitoring;
             monitoring-client.nodeId = "opensearch1";
             ipv6Address = "TODO";
             opensearch = {
