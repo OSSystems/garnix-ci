@@ -1,49 +1,33 @@
 { lib, config, ... }:
 let
-  monitoredHosts = {
-    garnix5 = { fqdn = "prometheus-node-exporter.5.garnix.io"; };
-    garnix6 = { fqdn = "prometheus-node-exporter.6.garnix.io"; };
-    garnix7 = { fqdn = "prometheus-node-exporter.7.garnix.io"; };
-    garnix8 = { fqdn = "prometheus-node-exporter.8.garnix.io"; };
-    garnix9 = { fqdn = "prometheus-node-exporter.9.garnix.io"; };
-    arm-server-0 = { };
-    arm-1 = { };
-    opensearch1 = { };
-    opensearch2 = { };
-    opensearch3 = { };
-    monitoring = { };
-    db1 = { };
-    garnix-server1 = { scrapeNginx = true; scrapeNginxLog = true; scrapeGarnixServer = true; };
-    garnix-server2 = { scrapeNginx = true; scrapeNginxLog = true; scrapeGarnixServer = true; };
-    action-runner2 = { };
-    macMini1 = {
-      fqdn = "macMini1.garnix.io";
-      proxied = false;
-      port = 9100;
-    };
-    macMini2 = {
-      fqdn = "macMini2.garnix.io";
-      proxied = false;
-      port = 9100;
-    };
-  };
+  cfg = config.garnix.monitoring;
 
-  monitoredHostsType = lib.types.submodule ({ name, config, ... }: {
+  monitoredHostType = lib.types.submodule ({ name, ... }: {
     options = {
       fqdn = lib.mkOption {
         type = lib.types.str;
-        default = "prometheus-node-exporter.${name}.garnix.io";
+        default =
+          if cfg.domain == null
+          then name
+          else "prometheus-node-exporter.${name}.${cfg.domain}";
         description = "The FQDN to reach the monitoring service";
       };
       proxied = lib.mkOption {
         type = lib.types.bool;
         default = true;
-        description = "Whether the prometheus node exporter is proxied by nginx (and needs https and basic auth)";
+        description = ''
+          Whether the exporters on this host are proxied by that host's nginx,
+          and so need https, basic auth, and the per-exporter metrics paths.
+          When false, the exporters are scraped directly over http.
+        '';
       };
       port = lib.mkOption {
         type = lib.types.nullOr lib.types.int;
         default = null;
-        description = "The FQDN to reach the monitoring service";
+        description = ''
+          Port the node exporter is reachable on. When null, the node
+          exporter's own port is used.
+        '';
       };
       scrapeNginx = lib.mkOption {
         type = lib.types.bool;
@@ -65,10 +49,37 @@ let
 in
 {
   options.garnix.monitoring = {
+    domain = lib.mkOption {
+      type = lib.types.nullOr lib.types.str;
+      default = null;
+      example = "example.com";
+      description = ''
+        Domain the default fqdn of each monitored host is derived from. When
+        null, a host's attribute name is used as its fqdn verbatim, which is
+        what a single-machine deployment scraping over loopback wants.
+      '';
+    };
+
     monitoredHosts = lib.mkOption {
-      type = lib.types.attrsOf monitoredHostsType;
-      readOnly = ! config.garnix.devMode.enable;
-      default = monitoredHosts;
+      type = lib.types.attrsOf monitoredHostType;
+      default = { };
+      description = "The hosts the monitoring server scrapes.";
+    };
+
+    basicAuth = {
+      username = lib.mkOption {
+        type = lib.types.str;
+        default = "prometheus";
+        description = "Basic auth user the server presents and the clients accept.";
+      };
+      passwordFile = lib.mkOption {
+        type = lib.types.nullOr lib.types.path;
+        default = null;
+        description = ''
+          File holding the basic auth password shared by the monitoring server
+          and its clients. When null, neither side sets up basic auth.
+        '';
+      };
     };
   };
 }

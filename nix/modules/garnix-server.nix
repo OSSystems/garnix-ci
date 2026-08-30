@@ -144,6 +144,9 @@ in
     ./fluent-bit.nix
     ./dev-mode.nix
     ./action-runner.nix
+    ./monitoring.nix
+    ./monitoring-server.nix
+    ./monitoring-client.nix
   ];
 
   options.services.garnixServer = {

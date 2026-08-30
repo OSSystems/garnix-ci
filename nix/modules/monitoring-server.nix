@@ -1,178 +1,298 @@
 { config
+, options
 , lib
+, pkgs
 , ...
 }:
 
 let
   cfg = config.garnix.monitoring-server;
+  monitoring = config.garnix.monitoring;
+  exporters = config.services.prometheus.exporters;
+
   prometheus-basic-auth = "/run/prometheus/prometheus-basic-auth";
-in
-{
-  options.garnix.monitoring-server = {
-    enable = lib.mkEnableOption "garnix monitoring server";
+  basicAuthEnabled = monitoring.basicAuth.passwordFile != null;
+
+  basicAuth = lib.optionalAttrs basicAuthEnabled {
+    basic_auth = {
+      inherit (monitoring.basicAuth) username;
+      password_file = prometheus-basic-auth;
+    };
   };
 
-  config = lib.mkIf cfg.enable {
-    sops = {
-      secrets.prometheus-node-exporter-1 = { };
+  grafanaUrl = "http://${cfg.listenAddress}:${toString cfg.grafana.port}";
+
+  jobs = [
+    {
+      name = "node";
+      hosts = monitoring.monitoredHosts;
+      port = host: if host.port != null then host.port else exporters.node.port;
+    }
+    {
+      name = "nginx";
+      hosts = lib.filterAttrs (_: h: h.scrapeNginx) monitoring.monitoredHosts;
+      metrics_path = "/nginx";
+      port = _: exporters.nginx.port;
+    }
+    {
+      name = "nginxlog";
+      hosts = lib.filterAttrs (_: h: h.scrapeNginxLog) monitoring.monitoredHosts;
+      metrics_path = "/nginxlog";
+      port = _: exporters.nginxlog.port;
+    }
+    {
+      name = "server-metrics";
+      hosts = lib.filterAttrs (_: h: h.scrapeGarnixServer) monitoring.monitoredHosts;
+      metrics_path = "/server-metrics";
+      port = _: config.services.garnixServer.metricsPort;
+    }
+  ];
+
+  proxiedJob = job: hosts: {
+    job_name = job.name;
+    scheme = "https";
+    static_configs = [{
+      targets = lib.mapAttrsToList
+        (_: h: h.fqdn + lib.optionalString (h.port != null) ":${toString h.port}")
+        hosts;
+    }];
+  } // basicAuth // lib.optionalAttrs (job ? metrics_path) { inherit (job) metrics_path; };
+
+  directJob = job: hosts: suffix: {
+    job_name = job.name + suffix;
+    scheme = "http";
+    static_configs = [{
+      targets = lib.mapAttrsToList (_: h: "${h.fqdn}:${toString (job.port h)}") hosts;
+    }];
+  };
+
+  scrapeConfigsFor = job:
+    let
+      proxied = lib.filterAttrs (_: h: h.proxied) job.hosts;
+      direct = lib.filterAttrs (_: h: ! h.proxied) job.hosts;
+    in
+    lib.optional (proxied != { }) (proxiedJob job proxied)
+    ++ lib.optional (direct != { })
+      (directJob job direct (lib.optionalString (proxied != { }) "_unproxied"));
+
+  sqlJob = {
+    job_name = "sql";
+    scheme = "https";
+    static_configs = [{ targets = [ cfg.sqlExporter.target ]; }];
+  } // basicAuth;
+in
+{
+  imports = [ ./monitoring.nix ];
+
+  options.garnix.monitoring-server = {
+    enable = lib.mkEnableOption "garnix monitoring server";
+
+    fqdn = lib.mkOption {
+      type = lib.types.str;
+      example = "monitoring.example.com";
+      description = "The FQDN Grafana is served under.";
     };
 
-    garnix.watchdog.enable = true;
+    listenAddress = lib.mkOption {
+      type = lib.types.str;
+      default = "127.0.0.1";
+      description = "Address Prometheus and Grafana bind to.";
+    };
 
-    services.grafana = {
-      enable = true;
-      settings = {
-        server.http_port = 2432;
-        date_formats.default_timezone = "utc";
-        server = {
-          domain = "monitoring.garnix.io";
-          root_url = "https://monitoring.garnix.io";
-        };
+    prometheus.port = lib.mkOption {
+      type = lib.types.port;
+      default = 2433;
+    };
+
+    grafana = {
+      port = lib.mkOption {
+        type = lib.types.port;
+        default = 2432;
       };
-      provision = {
-        enable = true;
 
-        dashboards.settings.providers = [
-          {
-            name = "garnixServer";
-            options.path = ../data/grafana-node-exporter-full.json;
-          }
-        ];
+      rootUrl = lib.mkOption {
+        type = lib.types.str;
+        default = "https://${cfg.fqdn}";
+        defaultText = lib.literalExpression ''"https://''${config.garnix.monitoring-server.fqdn}"'';
+        description = "Public URL Grafana generates links against.";
+      };
 
-        datasources.settings.datasources = [
-          {
-            name = "Prometheus";
-            type = "prometheus";
-            url = "http://localhost:${toString config.services.prometheus.port}";
-            jsonData = {
-              timeInterval = config.services.prometheus.globalConfig.scrape_interval;
-            };
-          }
-        ];
+      secretKeyFile = lib.mkOption {
+        type = lib.types.nullOr lib.types.path;
+        default = null;
+        description = ''
+          File holding Grafana's secret_key. When null, Grafana's built-in
+          default is used, which is fine only for a throwaway instance.
+        '';
       };
     };
 
-    services.prometheus = {
-      enable = true;
-      port = 2433;
-      globalConfig = {
-        scrape_interval = "30s";
-        scrape_timeout = "10s";
+    nginx = {
+      enable = lib.mkOption {
+        type = lib.types.bool;
+        default = true;
+        description = ''
+          Whether to serve Grafana through a local nginx vhost. Set to false to
+          put Grafana behind an ingress you already run, which then proxies to
+          listenAddress:grafana.port.
+        '';
       };
-      retentionTime = "90d";
-      scrapeConfigs =
-        let
-          formatTarget = monitoredHost:
-            if monitoredHost.port == null
-            then monitoredHost.fqdn
-            else "${monitoredHost.fqdn}:${toString monitoredHost.port}";
-        in
-        [
-          {
-            job_name = "node";
-            scheme = "https";
-            basic_auth = {
-              username = config.garnix.monitoring-client.basicAuth.username;
-              password_file = prometheus-basic-auth;
-            };
-            static_configs = [{
-              targets =
-                lib.mapAttrsToList (_: e: formatTarget e)
-                  (lib.filterAttrs (_:e: e.proxied)
-                    config.garnix.monitoring.monitoredHosts);
-            }];
-          }
-          {
-            job_name = "node_unproxied";
-            scheme = "http";
-            static_configs = [{
-              targets =
-                lib.mapAttrsToList (_: e: formatTarget e)
-                  (lib.filterAttrs (_:e: ! e.proxied)
-                  config.garnix.monitoring.monitoredHosts);
-            }];
-          }
-          {
-            job_name = "nginx";
-            scheme = "https";
-            basic_auth = {
-              username = config.garnix.monitoring-client.basicAuth.username;
-              password_file = prometheus-basic-auth;
-            };
-            metrics_path = "/nginx";
-            static_configs = [{
-              targets = lib.mapAttrsToList (_: e: e.fqdn) (lib.filterAttrs (_:e: e.scrapeNginx) config.garnix.monitoring.monitoredHosts);
-            }];
-          }
-          {
-            job_name = "nginxlog";
-            scheme = "https";
-            basic_auth = {
-              username = config.garnix.monitoring-client.basicAuth.username;
-              password_file = prometheus-basic-auth;
-            };
-            metrics_path = "/nginxlog";
-            static_configs = [{
-              targets = lib.mapAttrsToList (_: e: e.fqdn) (lib.filterAttrs (_:e: e.scrapeNginxLog) config.garnix.monitoring.monitoredHosts);
-            }];
-          }
-          {
-            job_name = "sql";
-            scheme = "https";
-            basic_auth = {
-              username = config.garnix.monitoring-client.basicAuth.username;
-              password_file = prometheus-basic-auth;
-            };
-            static_configs = [{
-              targets = [ "prometheus-sql-exporter.garnix.io" ];
-            }];
-          }
-          {
-            job_name = "server-metrics";
-            scheme = "https";
-            basic_auth = {
-              username = config.garnix.monitoring-client.basicAuth.username;
-              password_file = prometheus-basic-auth;
-            };
-            metrics_path = "/server-metrics";
-            static_configs = [{
-              targets = lib.mapAttrsToList (_: e: e.fqdn) (lib.filterAttrs (_:e: e.scrapeGarnixServer) config.garnix.monitoring.monitoredHosts);
-            }];
-          }
-        ];
+
+      acme.enable = lib.mkOption {
+        type = lib.types.bool;
+        default = cfg.nginx.enable;
+        defaultText = lib.literalExpression "config.garnix.monitoring-server.nginx.enable";
+        description = "Whether to request an ACME certificate for the Grafana vhost.";
+      };
     };
 
-    systemd.services.prometheus = {
-      serviceConfig = {
-        PrivateTmp = true;
-        LoadCredential = [
-          "basicAuthPassword:${config.garnix.monitoring-client.basicAuth.passwordFile}"
-        ];
-      };
-      unitConfig.RequiresMountsFor = [ config.systemd.services.prometheus.serviceConfig.WorkingDirectory ];
-      preStart = ''
-        cp "$CREDENTIALS_DIRECTORY/basicAuthPassword" ${prometheus-basic-auth}
+    watchdog.enable = lib.mkOption {
+      type = lib.types.bool;
+      default = true;
+      description = ''
+        Whether to run the watchdog daemon alongside the monitoring server.
+        Has no effect unless the watchdog module is in the module closure.
       '';
     };
 
-    services.nginx = {
-      enable = true;
-      recommendedProxySettings = true;
-      recommendedOptimisation = true;
-      proxyTimeout = "600s";
-      virtualHosts = {
-        "monitoring.garnix.io" = config.garnix.devMode.withDevCerts {
+    sqlExporter = {
+      enable = lib.mkOption {
+        type = lib.types.bool;
+        default = false;
+        description = "Whether to scrape a prometheus-sql-exporter.";
+      };
+
+      target = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = config.garnix.database.exporter.fqdn or null;
+        defaultText = lib.literalExpression "config.garnix.database.exporter.fqdn";
+        description = "Target of the sql exporter job.";
+      };
+    };
+
+    extraScrapeConfigs = lib.mkOption {
+      type = lib.types.listOf (lib.types.attrsOf lib.types.anything);
+      default = [ ];
+      description = "Scrape configs appended to the derived ones.";
+    };
+  };
+
+  config = lib.mkIf cfg.enable (lib.mkMerge [
+    {
+      assertions = [
+        {
+          assertion = cfg.grafana.secretKeyFile != null;
+          message = ''
+            garnix.monitoring-server.grafana.secretKeyFile must be set: grafana
+            no longer ships a default secret_key.
+          '';
+        }
+        {
+          assertion = cfg.sqlExporter.enable -> cfg.sqlExporter.target != null;
+          message = ''
+            garnix.monitoring-server.sqlExporter.target must be set when
+            sqlExporter.enable = true and the garnix database module is not
+            part of this configuration.
+          '';
+        }
+      ];
+
+      services.grafana = {
+        enable = true;
+        settings = {
+          date_formats.default_timezone = "utc";
+          server = {
+            http_addr = cfg.listenAddress;
+            http_port = cfg.grafana.port;
+            domain = cfg.fqdn;
+            root_url = cfg.grafana.rootUrl;
+          };
+        } // lib.optionalAttrs (cfg.grafana.secretKeyFile != null) {
+          security.secret_key = "$__file{${cfg.grafana.secretKeyFile}}";
+        };
+        provision = {
+          enable = true;
+
+          dashboards.settings.providers = [
+            {
+              name = "garnixServer";
+              options.path = pkgs.linkFarm "garnix-grafana-dashboards" [
+                {
+                  name = "node-exporter-full.json";
+                  path = ../data/grafana-node-exporter-full.json;
+                }
+              ];
+            }
+          ];
+
+          datasources.settings.datasources = [
+            {
+              name = "Prometheus";
+              type = "prometheus";
+              url = "http://${cfg.listenAddress}:${toString config.services.prometheus.port}";
+              jsonData = {
+                timeInterval = config.services.prometheus.globalConfig.scrape_interval;
+              };
+            }
+          ];
+        };
+      };
+
+      services.prometheus = {
+        enable = true;
+        inherit (cfg.prometheus) port;
+        inherit (cfg) listenAddress;
+        globalConfig = {
+          scrape_interval = "30s";
+          scrape_timeout = "10s";
+        };
+        retentionTime = "90d";
+        scrapeConfigs =
+          lib.concatMap scrapeConfigsFor jobs
+          ++ lib.optional cfg.sqlExporter.enable sqlJob
+          ++ cfg.extraScrapeConfigs;
+      };
+    }
+
+    (lib.optionalAttrs (options.garnix ? watchdog) {
+      garnix.watchdog.enable = cfg.watchdog.enable;
+    })
+
+    (lib.mkIf basicAuthEnabled {
+      systemd.services.prometheus = {
+        serviceConfig = {
+          PrivateTmp = true;
+          LoadCredential = [
+            "basicAuthPassword:${monitoring.basicAuth.passwordFile}"
+          ];
+        };
+        unitConfig.RequiresMountsFor = [ config.systemd.services.prometheus.serviceConfig.WorkingDirectory ];
+        preStart = ''
+          cp "$CREDENTIALS_DIRECTORY/basicAuthPassword" ${prometheus-basic-auth}
+        '';
+      };
+    })
+
+    (lib.mkIf cfg.nginx.enable {
+      services.nginx = {
+        enable = true;
+        recommendedProxySettings = true;
+        recommendedOptimisation = true;
+        proxyTimeout = "600s";
+        virtualHosts.${cfg.fqdn} = config.garnix.devMode.withDevCerts {
           addSSL = true;
-          enableACME = true;
-          locations."/".proxyPass = "http://${config.services.grafana.settings.server.http_addr}:" + toString config.services.grafana.settings.server.http_port;
+          enableACME = cfg.nginx.acme.enable;
+          locations."/".proxyPass = grafanaUrl;
           locations."/api/live" = {
-            proxyPass = "http://${config.services.grafana.settings.server.http_addr}:" + toString config.services.grafana.settings.server.http_port;
+            proxyPass = grafanaUrl;
             proxyWebsockets = true;
           };
         };
       };
-    };
-    security.acme.certs."monitoring.garnix.io" = { };
+    })
 
-  };
+    (lib.mkIf cfg.nginx.acme.enable {
+      security.acme.certs.${cfg.fqdn} = { };
+    })
+  ]);
 }
