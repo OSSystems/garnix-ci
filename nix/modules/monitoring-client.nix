@@ -7,30 +7,32 @@
 
 let
   cfg = config.garnix.monitoring-client;
+  monitoring = config.garnix.monitoring;
+  basicAuthEnabled = monitoring.basicAuth.passwordFile != null;
+
+  node = monitoring.monitoredHosts.${cfg.nodeId} or {
+    fqdn = cfg.nodeId;
+    scrapeNginx = false;
+    scrapeNginxLog = false;
+    scrapeGarnixServer = false;
+  };
+
+  protected = attrs: attrs // lib.optionalAttrs basicAuthEnabled {
+    inherit (cfg.nginx) basicAuthFile;
+  };
 in
 
 {
+  imports = [ ./monitoring.nix ];
+
   options.garnix.monitoring-client = {
     enable = lib.mkEnableOption "garnix client monitoring";
 
     nodeId = lib.mkOption {
-      type =
-        let
-          values = lib.attrNames config.garnix.monitoring.monitoredHosts;
-          definitionPositions = lib.concatMapStringsSep "\n" (def: "  ${def.file}")
-            options.garnix.monitoring.monitoredHosts.definitionsWithLocations;
-        in
-        lib.types.enum values // {
-          description =
-            lib.concatStringsSep "\n" [
-              "one of the values of the option `garnix.monitoring.monitoredHosts`, defined at:"
-              definitionPositions
-              "Currently allowed values are:"
-              ("  " + (lib.concatStringsSep ", " values))
-              "Please make sure the nodeId for this machine has been added to the monitoredHosts."
-            ];
-        };
-      description = "this server's prometheus endpoint";
+      type = lib.types.str;
+      default = config.networking.hostName;
+      defaultText = lib.literalExpression "config.networking.hostName";
+      description = "This host's key in `garnix.monitoring.monitoredHosts`.";
     };
 
     nginx = {
@@ -47,27 +49,22 @@ in
       };
     };
 
-    fqdn = lib.mkOption {
-      type = lib.types.str;
-      default = if config.garnix.devMode.enable then "test" else config.garnix.monitoring.monitoredHosts.${cfg.nodeId}.fqdn;
-      description = "The FQDN for this host's prometheus instance";
+    openFirewall = lib.mkOption {
+      type = lib.types.bool;
+      default = cfg.nginx.enable;
+      defaultText = lib.literalExpression "config.garnix.monitoring-client.nginx.enable";
+      description = "Whether to open ports 80 and 443.";
     };
 
-    basicAuth = {
-      username = lib.mkOption {
-        type = lib.types.str;
-        default = "prometheus";
-      };
-      passwordFile = lib.mkOption {
-        type = lib.types.str;
-        default = config.sops.secrets.prometheus-node-exporter-1.path;
-      };
+    fqdn = lib.mkOption {
+      type = lib.types.str;
+      default = if config.garnix.devMode.enable then "test" else node.fqdn;
+      defaultText = lib.literalExpression "the fqdn of this host in garnix.monitoring.monitoredHosts";
+      description = "The FQDN for this host's prometheus instance";
     };
   };
 
   config = lib.mkIf cfg.enable (
-    # This has to be done like this to avoid nix complaining about either
-    # missing module options that only exist on linux, or infinite recursion.
     if (builtins.hasAttr "launchd" options) then
       {
         services.prometheus.exporters.node.enable = true;
@@ -75,16 +72,27 @@ in
     else
       lib.mkMerge [
         {
-          sops.secrets.prometheus-node-exporter-1 = { };
+          assertions = [
+            {
+              assertion = monitoring.monitoredHosts ? ${cfg.nodeId};
+              message = ''
+                garnix.monitoring-client.nodeId is "${cfg.nodeId}", which is not a
+                key of garnix.monitoring.monitoredHosts. Add it there, or set
+                nodeId to one of: ${lib.concatStringsSep ", " (lib.attrNames monitoring.monitoredHosts)}
+              '';
+            }
+          ];
+
+          networking.firewall.allowedTCPPorts = lib.optionals cfg.openFirewall [ 80 443 ];
 
           services.prometheus.exporters = {
             node = {
               enable = true;
               enabledCollectors = [ "systemd" "processes" ];
             };
-            nginx.enable = config.garnix.monitoring.monitoredHosts.${cfg.nodeId}.scrapeNginx;
+            nginx.enable = node.scrapeNginx;
             nginxlog = {
-              enable = config.garnix.monitoring.monitoredHosts.${cfg.nodeId}.scrapeNginxLog;
+              enable = node.scrapeNginxLog;
               group = "nginx";
               settings.namespaces = [
                 {
@@ -99,57 +107,44 @@ in
         (lib.mkIf cfg.nginx.enable {
           security.acme = {
             acceptTerms = true;
-            certs."${cfg.fqdn}" = {
-              email = "jkarni@riseup.net";
-            };
+            certs.${cfg.fqdn} = { };
           };
-
-          networking.firewall.allowedTCPPorts = [ 80 443 ];
 
           services.nginx = {
             enable = true;
             recommendedProxySettings = true;
             recommendedOptimisation = true;
-            # This is needed for long domain names
             serverNamesHashBucketSize = 128;
             proxyTimeout = "600s";
-            virtualHosts."${cfg.fqdn}" = config.garnix.devMode.withDevCerts {
+            virtualHosts.${cfg.fqdn} = config.garnix.devMode.withDevCerts {
               forceSSL = true;
               enableACME = true;
               locations = {
-                "/" = {
-                  inherit (cfg.nginx) basicAuthFile;
+                "/" = protected {
                   proxyPass = "http://[::1]:${toString config.services.prometheus.exporters.node.port}";
                 };
-                "/nginx" = lib.mkIf config.garnix.monitoring.monitoredHosts.${cfg.nodeId}.scrapeNginx {
-                  inherit (cfg.nginx) basicAuthFile;
+                "/nginx" = lib.mkIf node.scrapeNginx (protected {
                   proxyPass = "http://[::1]:${toString config.services.prometheus.exporters.nginx.port}/metrics";
-                };
-                "/nginxlog" = lib.mkIf config.garnix.monitoring.monitoredHosts.${cfg.nodeId}.scrapeNginxLog {
-                  inherit (cfg.nginx) basicAuthFile;
+                });
+                "/nginxlog" = lib.mkIf node.scrapeNginxLog (protected {
                   proxyPass = "http://[::1]:${toString config.services.prometheus.exporters.nginxlog.port}/metrics";
-                };
-                "/server-metrics" = lib.mkIf config.garnix.monitoring.monitoredHosts.${cfg.nodeId}.scrapeGarnixServer {
-                  inherit (cfg.nginx) basicAuthFile;
+                });
+                "/server-metrics" = lib.mkIf node.scrapeGarnixServer (protected {
                   proxyPass = "http://127.0.0.1:${toString config.services.garnixServer.metricsPort}/";
-                };
+                });
               };
             };
           };
+        })
+        (lib.mkIf (cfg.nginx.enable && basicAuthEnabled) {
+          systemd.services.nginx = {
+            serviceConfig.LoadCredential = [
+              "basicAuthPassword:${monitoring.basicAuth.passwordFile}"
+            ];
 
-          # Create the htpasswd file for basic auth from the password that's stored in SOPS.
-          # The nginx service runs with PrivateTmp set to true, so this file will only
-          # be accessible to nginx.
-          systemd.services = {
-            nginx = {
-              serviceConfig.LoadCredential = [
-                "basicAuthPassword:${cfg.basicAuth.passwordFile}"
-              ];
-
-              preStart = ''
-                ${pkgs.apacheHttpd}/bin/htpasswd -icm ${cfg.nginx.basicAuthFile} ${cfg.basicAuth.username} < "$CREDENTIALS_DIRECTORY/basicAuthPassword"
-              '';
-            };
+            preStart = ''
+              ${pkgs.apacheHttpd}/bin/htpasswd -icm ${cfg.nginx.basicAuthFile} ${monitoring.basicAuth.username} < "$CREDENTIALS_DIRECTORY/basicAuthPassword"
+            '';
           };
         })
       ]
