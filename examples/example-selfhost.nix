@@ -20,6 +20,26 @@ let
     boot.loader.systemd-boot.enable = true;
     system.stateVersion = "25.11";
   };
+
+  opensearchHost = {
+    inherit (hostPlumbing) fileSystems boot system;
+
+    imports = [
+      flakeInputs.sops-nix.nixosModules.sops
+      ../opensearch/nixos-module.nix
+    ];
+
+    sops.defaultSopsFile = ../secrets/dev.yaml;
+    services.openssh.enable = true;
+
+    garnix.opensearch = {
+      enable = true;
+      fqdn = "opensearch.internal.example.com";
+      dashboards.enable = true;
+      isSingleNode = true;
+      bindIP = "127.0.0.1";
+    };
+  };
 in
 {
   nixosConfigurations.exampleSelfhost = mkSystem {
@@ -172,5 +192,19 @@ in
     };
 
     garnix.monitoring-client.enable = true;
+  };
+
+  nixosConfigurations.exampleOpenSearchExternalTls = mkSystem {
+    imports = [ opensearchHost ];
+    networking.hostName = "opensearch-tls-upstream";
+
+    garnix.opensearch.nginx.acme.enable = false;
+  };
+
+  nixosConfigurations.exampleOpenSearchExternalIngress = mkSystem {
+    imports = [ opensearchHost ];
+    networking.hostName = "opensearch-ingress";
+
+    garnix.opensearch.nginx.enable = false;
   };
 }
