@@ -35,7 +35,7 @@
       ripgrep
       screen
       sd
-      silver-searcher-ng
+      silver-searcher
       tcpdump
       tmux
       tree
