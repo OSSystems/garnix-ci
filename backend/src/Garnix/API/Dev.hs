@@ -2,6 +2,7 @@ module Garnix.API.Dev where
 
 import Data.Row (Rec, (.==), type (.==))
 import Data.Set qualified
+import Garnix.API.Auth (sessionCookieSettings)
 import Garnix.DB qualified as DB
 import Garnix.Monad
 import Garnix.Prelude
@@ -26,7 +27,7 @@ devAPI = do
   when (not (DevApi `Data.Set.member` testFeatures)) $ do
     throw DevModeOnly
   user <- getTestUser
-  cookieSettings' <- view #cookieSettings
+  cookieSettings' <- sessionCookieSettings
   jwtSettings' <- view #jwtSettings
   mApplyCookies <- liftIO $ acceptLogin cookieSettings' jwtSettings' (WebSession user (GhToken "tok"))
   case mApplyCookies of

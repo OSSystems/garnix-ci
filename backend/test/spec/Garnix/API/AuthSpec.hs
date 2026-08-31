@@ -12,6 +12,7 @@ import Data.String.Interpolate (i)
 import Garnix.AccessToken.Types
 import Garnix.Build (buildFlake)
 import Garnix.DB qualified as DB
+import Garnix.Duration (addTime)
 import Garnix.Monad
 import Garnix.Monad.Async
 import Garnix.Prelude
@@ -55,13 +56,14 @@ spec = inM $ beforeM_ truncateDBM $ aroundM_ suppressLogs $ do
               }
             |]
 
-    it "creates JWTs that expire after one hour" $ do
+    it "creates JWTs that expire after the session lifetime" $ do
       (user, accessToken) <- createApiAccessToken
       withServer $ \server -> do
         res <- assert200 $ server.postWithHeaders "/api/auth/jwt" [("Authorization", cs $ encodeAuthHeader (user ^. githubLogin . to getGhLogin) (getAccessTokenText accessToken))] ""
         now <- liftIO getCurrentTime
+        lifetime <- view #sessionLifetime
         let expiresAt = res ^?! responseBody . key "expiresAt" . _String . to cs . to parseTimestamp
-        expiresAt `shouldSatisfyM` (<= addUTCTime (60 * 60) now)
+        expiresAt `shouldSatisfyM` (<= addTime lifetime now)
         let jwt = res ^?! responseBody . key "token" . _String
         keys <- view #jwtSettings >>= liftIO . validationKeys
         let verify :: UTCTime -> M (Either JWTError ClaimsSet)
@@ -70,7 +72,7 @@ spec = inM $ beforeM_ truncateDBM $ aroundM_ suppressLogs $ do
               verifyClaimsAt (defaultJWTValidationSettings (error "not used")) keys time signed
         claimsSet <- verify now
         claimsSet `shouldSatisfyM` isRight
-        verify (addUTCTime (1 + (60 * 60)) now) `shouldReturnM` Left JWTExpired
+        verify (addUTCTime 1 $ addTime lifetime now) `shouldReturnM` Left JWTExpired
 
     it "returns unauthorized for non-existing users and does not expose why authentication failed to the user" $ do
       (_user, accessToken) <- createApiAccessToken

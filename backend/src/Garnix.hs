@@ -279,6 +279,7 @@ withEnv testFeatures buildLogsDir buildLogsReportingPort action = do
                     cookieIsSecure = if DevApi `elem` testFeatures then NotSecure else Secure
                   },
               jwtSettings = defaultJWTSettings jwtKey,
+              sessionLifetime = defaultSessionLifetime,
               repoSecretsEncryptionKeyPath = repoSecretsKeyPath,
               repoSecretsEncryptionPubKey = repoSecretsPubKey,
               dbConn = dbConnectionPool,

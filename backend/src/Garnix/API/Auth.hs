@@ -4,6 +4,7 @@ import Control.Lens
 import Garnix.AccessToken
 import Garnix.AccessToken.Types
 import Garnix.DB qualified as DB
+import Garnix.Duration
 import Garnix.Monad
 import Garnix.ParseHttpBasicAuth
 import Garnix.Prelude
@@ -14,12 +15,29 @@ import Servant.Auth.Server
   ( Auth,
     AuthResult (Authenticated),
     Cookie,
+    CookieSettings (..),
     JWT,
     acceptLogin,
     clearSession,
   )
 import Servant.Auth.Server.Internal.JWT (makeJWT)
 import Web.Cookie
+
+sessionExpiresAt :: M UTCTime
+sessionExpiresAt = do
+  lifetime <- view #sessionLifetime
+  addTime lifetime <$> liftIO getCurrentTime
+
+sessionCookieSettings :: M CookieSettings
+sessionCookieSettings = do
+  transportSettings <- view #cookieSettings
+  lifetime <- view #sessionLifetime
+  expiresAt <- sessionExpiresAt
+  pure
+    transportSettings
+      { cookieExpires = Just expiresAt,
+        cookieMaxAge = Just $ realToFrac $ toSeconds lifetime
+      }
 
 data UserDto = UserDto
   { _userDtoUsername :: GhLogin,
@@ -81,9 +99,7 @@ getJwt mAuthHeader authResult = do
   when (not isValid) $ do
     throw Unauthorized
   jwtSettings' <- view #jwtSettings
-  expiresAt <-
-    liftIO getCurrentTime
-      <&> addUTCTime 3600
+  expiresAt <- sessionExpiresAt
   jwt <- liftIO $ makeJWT (ApiSession user) jwtSettings' (Just expiresAt)
   jwt <- case jwt of
     Left err -> throw $ OtherError $ "Failed to create JWT: " <> show err
@@ -200,7 +216,7 @@ loginCallback ::
     )
 loginCallback code = do
   (login', _, token) <- callbackHelper githubOauthLogin code
-  cookieSettings' <- view #cookieSettings
+  cookieSettings' <- sessionCookieSettings
   jwtSettings' <- view #jwtSettings
   user <- DB.getUser login' <?> "calling getUser"
   mApplyCookies <-
@@ -242,7 +258,7 @@ signupCallback code = do
             _creatingUserGithubToken = token
           }
     Left e -> throwError e
-  cookieSettings' <- view #cookieSettings
+  cookieSettings' <- sessionCookieSettings
   jwtSettings' <- view #jwtSettings
   mApplyCookies <- liftIO $ case eUser of
     Right user -> acceptLogin cookieSettings' jwtSettings' (WebSession user token)
@@ -301,7 +317,7 @@ finishSignup (Authenticated cUser) addenda = do
       (addenda ^. email)
       subType
       (addenda ^. agreeToEmails)
-  cookieSettings' <- view #cookieSettings
+  cookieSettings' <- sessionCookieSettings
   jwtSettings' <- view #jwtSettings
   mApplyCookies <- liftIO $ acceptLogin cookieSettings' jwtSettings' (WebSession user (cUser ^. githubToken))
   case mApplyCookies of
