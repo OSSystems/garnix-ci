@@ -48,22 +48,22 @@ let
            --tmpfs /etc \
            --ro-bind /etc/hosts /etc/hosts \
            --ro-bind "$HOSTNAMEFILE" /etc/hostname \
-           --ro-bind /etc/nsswitch.conf /etc/nsswitch.conf \
+           --ro-bind-try /etc/nsswitch.conf /etc/nsswitch.conf \
            --symlink "$(readlink -f /etc/localtime)" /etc/localtime `# Some tools require this to be a symlink` \
-           --ro-bind /etc/zoneinfo /etc/zoneinfo \
+           --ro-bind-try /etc/zoneinfo /etc/zoneinfo \
            --ro-bind /etc/ssl /etc/ssl \
-           --ro-bind /etc/static /etc/static \
-           --ro-bind /etc/locale.conf /etc/locale.conf \
-           --ro-bind /etc/nscd.conf /etc/nscd.conf \
-           --ro-bind /etc/man_db.conf /etc/man_db.conf \
-           --ro-bind /etc/host.conf /etc/host.conf \
-           --ro-bind /etc/protocols /etc/protocols \
-           --ro-bind /etc/services /etc/services \
+           --ro-bind-try /etc/static /etc/static \
+           --ro-bind-try /etc/locale.conf /etc/locale.conf \
+           --ro-bind-try /etc/nscd.conf /etc/nscd.conf \
+           --ro-bind-try /etc/man_db.conf /etc/man_db.conf \
+           --ro-bind-try /etc/host.conf /etc/host.conf \
+           --ro-bind-try /etc/protocols /etc/protocols \
+           --ro-bind-try /etc/services /etc/services \
            --ro-bind "$RESOLVCONF" /etc/resolv.conf \
            --bind "$PASSWDFILE" /etc/passwd \
            --bind "$GROUPFILE" /etc/group \
            --dev-bind /dev/console /dev/console \
-           --dev-bind /dev/core /dev/core \
+           --dev-bind-try /dev/core /dev/core \
            --dev-bind /dev/full /dev/full \
            --dev-bind /dev/null /dev/null \
            --dev-bind /dev/ptmx /dev/ptmx \
@@ -73,8 +73,8 @@ let
            --dev-bind /dev/tty /dev/tty \
            --dev-bind /dev/urandom /dev/urandom \
            --dev-bind /dev/zero /dev/zero \
-           --dev-bind /dev/net/tun /dev/net/tun \
-           --dev-bind /dev/kvm /dev/kvm \
+           --dev-bind-try /dev/net/tun /dev/net/tun \
+           --dev-bind-try /dev/kvm /dev/kvm \
            --ro-bind /bin/sh /bin/sh \
            --proc /proc \
            --symlink /proc/self/fd /dev/fd \
