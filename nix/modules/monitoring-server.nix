@@ -31,19 +31,20 @@ let
     {
       name = "nginx";
       hosts = lib.filterAttrs (_: h: h.scrapeNginx) monitoring.monitoredHosts;
-      metrics_path = "/nginx";
+      proxiedPath = "/nginx";
       port = _: exporters.nginx.port;
     }
     {
       name = "nginxlog";
       hosts = lib.filterAttrs (_: h: h.scrapeNginxLog) monitoring.monitoredHosts;
-      metrics_path = "/nginxlog";
+      proxiedPath = "/nginxlog";
       port = _: exporters.nginxlog.port;
     }
     {
       name = "server-metrics";
       hosts = lib.filterAttrs (_: h: h.scrapeGarnixServer) monitoring.monitoredHosts;
-      metrics_path = "/server-metrics";
+      proxiedPath = "/server-metrics";
+      directPath = "/";
       port = _: config.services.garnixServer.metricsPort;
     }
   ];
@@ -56,7 +57,7 @@ let
         (_: h: h.fqdn + lib.optionalString (h.port != null) ":${toString h.port}")
         hosts;
     }];
-  } // basicAuth // lib.optionalAttrs (job ? metrics_path) { inherit (job) metrics_path; };
+  } // basicAuth // lib.optionalAttrs (job ? proxiedPath) { metrics_path = job.proxiedPath; };
 
   directJob = job: hosts: suffix: {
     job_name = job.name + suffix;
@@ -64,7 +65,7 @@ let
     static_configs = [{
       targets = lib.mapAttrsToList (_: h: "${h.fqdn}:${toString (job.port h)}") hosts;
     }];
-  };
+  } // lib.optionalAttrs (job ? directPath) { metrics_path = job.directPath; };
 
   scrapeConfigsFor = job:
     let
