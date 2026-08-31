@@ -175,9 +175,7 @@ spec = do
               $ unindent
                 [i|
                   {
-                    # If you update this, update also places where it matches.
-                    # Search for INNER_NIXPKGS_MATCHES
-                    inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.11-small";
+                    inputs.nixpkgs.url = "#{testNixpkgsUrl}";
                     outputs = { self, nixpkgs }: {
                       packages.x86_64-linux.default =
                         let
