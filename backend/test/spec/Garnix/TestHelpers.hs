@@ -60,6 +60,14 @@ addNixExperimentalFeatures features =
   withModifiedEnvironment
     [("NIX_CONFIG", "experimental-features = " <> unwords features)]
 
+testNixpkgsUrl :: Text
+testNixpkgsUrl = unsafePerformIO $ do
+  tracked <- lookupEnv "TEST_NIXPKGS_REF"
+  pure $ case tracked of
+    Just ref | not (null ref) -> "github:NixOS/nixpkgs/" <> cs ref
+    _ -> "github:NixOS/nixpkgs/nixos-26.05"
+{-# NOINLINE testNixpkgsUrl #-}
+
 defaultEvent :: CheckSuiteEvent
 defaultEvent =
   defaultViaArbitrary

@@ -519,9 +519,7 @@ spec = do
                   [i|
                     {
                       inputs.garnix-incrementalize.url = "github:garnix-io/incrementalize/main";
-                      # If you update this, update also places where it matches.
-                      # Search for INNER_NIXPKGS_MATCHES
-                      inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.11-small";
+                      inputs.nixpkgs.url = "#{testNixpkgsUrl}";
                       outputs = { garnix-incrementalize, nixpkgs, ... } :
                         let pkgs = nixpkgs.legacyPackages.x86_64-linux;
                         in garnix-incrementalize.lib.withCaches {

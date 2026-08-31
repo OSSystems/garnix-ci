@@ -28,6 +28,9 @@ let
     export TPG_PASS=$PGPASSWORD
     export TPG_SOCK=$PGHOST"/.s.PGSQL."$PGPORT
   '';
+  testNixpkgsSetup = ''
+    export TEST_NIXPKGS_REF=${(builtins.fromJSON (builtins.readFile ../flake.lock)).nodes.nixpkgs.original.ref or ""}
+  '';
   garnixRuntimeDependencies = [
     pkgs.util-linux
     pkgs.git
@@ -164,6 +167,7 @@ rec {
     DB_DIR=$(git rev-parse --show-toplevel)/pg-tmp
     ${dbSetup}
     ${secretSetup}
+    ${testNixpkgsSetup}
     export EMPTY_DIR=${../nix/data/emptyDir}
   '';
   devShellInputs = [
@@ -218,6 +222,7 @@ rec {
           trap 'db clear; rm $tempDir -rf' EXIT
 
           export EMPTY_DIR=${../nix/data/emptyDir}
+          ${testNixpkgsSetup}
 
           git config --global user.email "you@example.com"
           git config --global user.name "Your Name"
