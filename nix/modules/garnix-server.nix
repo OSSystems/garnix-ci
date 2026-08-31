@@ -185,6 +185,18 @@ in
       example = "alice";
     };
 
+    sessionLifetimeSeconds = lib.mkOption {
+      type = lib.types.nullOr lib.types.ints.positive;
+      default = null;
+      example = 24 * 60 * 60;
+      description = ''
+        How long a web session cookie and an API JWT stay valid, in seconds.
+        The clock starts at login and never renews, so a logged-in user is
+        signed out this long after signing in, whether idle or active.
+        When null, the server uses its built-in default of 7 days.
+      '';
+    };
+
     port = lib.mkOption {
       type = lib.types.int;
       default = 8321;
@@ -497,7 +509,9 @@ in
           "GARNIX_SECRETS_DIR=${cfg.secrets.dir}"
           "OPENSEARCH_URL=${cfg.opensearch.url}"
           "S3_CACHE_ENABLED=${if cfg.s3Cache.enable then "true" else "false"}"
-        ] ++ lib.optionals (cfg.database.ssl.mode != "disable") [
+        ] ++ lib.optional (cfg.sessionLifetimeSeconds != null)
+          "GARNIX_SESSION_LIFETIME=${toString cfg.sessionLifetimeSeconds}"
+        ++ lib.optionals (cfg.database.ssl.mode != "disable") [
           # postgresql-typed reads TPG_TLS via lookupEnv — presence enables
           # TLS regardless of value. Only emit when ssl is actually on.
           "TPG_TLS=true"
