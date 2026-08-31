@@ -103,6 +103,8 @@ in
               ];
             };
           };
+
+          services.nginx.statusPage = lib.mkIf node.scrapeNginx true;
         }
         (lib.mkIf cfg.nginx.enable {
           security.acme = {
