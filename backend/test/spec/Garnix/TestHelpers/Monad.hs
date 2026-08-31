@@ -274,6 +274,7 @@ withTestEnvironment tempDir action = do
                   githubInterface = ghInterface,
                   cookieSettings = defaultCookieSettings {cookieXsrfSetting = Nothing},
                   jwtSettings = defaultJWTSettings $ fromSecret $ cs jwtKey,
+                  sessionLifetime = defaultSessionLifetime,
                   repoSecretsEncryptionKeyPath = repoSecretsEncryptionKeyPath,
                   repoSecretsEncryptionPubKey = RepoSecretsEncryptionPubKey "age107r0e6nxchkrqdxg42tzdxeauez2ce7cpsajcggjwmpjgrlrnqfqy6tnlf",
                   dbConn = ConnectionPool pgConn,

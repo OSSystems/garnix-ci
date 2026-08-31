@@ -99,6 +99,7 @@ data Env = Env
     userNixConfig :: NixConfig,
     cookieSettings :: CookieSettings,
     jwtSettings :: JWTSettings,
+    sessionLifetime :: Duration,
     dbConn :: DatabaseConnection,
     baseUrl :: Text,
     s3CacheEnabled :: Bool,
@@ -123,6 +124,9 @@ data Env = Env
     compressionBudget :: CompressionBudget
   }
   deriving stock (Generic)
+
+defaultSessionLifetime :: Duration
+defaultSessionLifetime = fromDays @Int 7
 
 data TestFeature
   = DevApi
