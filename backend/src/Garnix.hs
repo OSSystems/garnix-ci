@@ -51,6 +51,7 @@ import Servant.GitHub.Webhook
 import System.Directory
 import System.Environment (getEnv)
 import System.Systemd.Daemon (notifyReady)
+import Text.Read (readMaybe)
 import WithCli (HasArguments, withCli)
 
 run :: IO ()
@@ -95,6 +96,18 @@ envMocks testFeatures = do
         let envMocks = fromMaybe emptyMocks mEnvMocks
         fodCheckMock <- newMock (\_ -> pure ())
         pure $ Just $ envMocks {fodCheckMock = Just fodCheckMock}
+
+sessionLifetimeFromEnv :: IO Duration
+sessionLifetimeFromEnv = lookupEnv "GARNIX_SESSION_LIFETIME" >>= resolve
+  where
+    resolve :: Maybe String -> IO Duration
+    resolve Nothing = pure defaultSessionLifetime
+    resolve (Just raw) = case readMaybe raw of
+      Just seconds | seconds > (0 :: Int) -> pure $ fromSeconds seconds
+      _ ->
+        error
+          $ "GARNIX_SESSION_LIFETIME must be a positive whole number of seconds, got: "
+          <> cs raw
 
 withEnv :: (HasCallStack) => Set TestFeature -> FilePath -> Maybe Warp.Port -> (Env -> IO a) -> IO a
 withEnv testFeatures buildLogsDir buildLogsReportingPort action = do
@@ -214,6 +227,7 @@ withEnv testFeatures buildLogsDir buildLogsReportingPort action = do
         Right a -> a
         Left _ -> error "error reading GitHub App private key"
   mgr <- newTlsManager
+  sessionLifetime <- sessionLifetimeFromEnv
   jwtKey <-
     lookupEnv "JWT_KEY"
       >>= maybe (BSC.readFile (secretFile "garnix-jwt-key")) BSC.readFile
@@ -279,7 +293,7 @@ withEnv testFeatures buildLogsDir buildLogsReportingPort action = do
                     cookieIsSecure = if DevApi `elem` testFeatures then NotSecure else Secure
                   },
               jwtSettings = defaultJWTSettings jwtKey,
-              sessionLifetime = defaultSessionLifetime,
+              sessionLifetime,
               repoSecretsEncryptionKeyPath = repoSecretsKeyPath,
               repoSecretsEncryptionPubKey = repoSecretsPubKey,
               dbConn = dbConnectionPool,

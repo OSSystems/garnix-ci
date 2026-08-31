@@ -13,7 +13,7 @@ import Data.String.Interpolate (i)
 import Garnix.AccessToken.Types
 import Garnix.Build (buildFlake)
 import Garnix.DB qualified as DB
-import Garnix.Duration (addTime)
+import Garnix.Duration (addTime, fromMinutes)
 import Garnix.Monad
 import Garnix.Monad.Async
 import Garnix.Prelude
@@ -216,3 +216,12 @@ spec = inM $ beforeM_ truncateDBM $ aroundM_ suppressLogs $ do
         claimsSet <- verifyAt jwt now
         claimsSet `shouldSatisfyM` isRight
         verifyAt jwt (addUTCTime 1 $ addTime lifetime now) `shouldReturnM` Left JWTExpired
+
+    it "mints session cookies with the lifetime configured in the environment" $ do
+      let configuredLifetime = fromMinutes @Int 5
+      local (#sessionLifetime .~ configuredLifetime) $ withServer $ \server -> do
+        jwt <- loginSessionJwt server
+        now <- liftIO getCurrentTime
+        claimsSet <- verifyAt jwt now
+        claimsSet `shouldSatisfyM` isRight
+        verifyAt jwt (addUTCTime 1 $ addTime configuredLifetime now) `shouldReturnM` Left JWTExpired
