@@ -7,6 +7,7 @@ import Crypto.JOSE as Jose
 import Crypto.JWT (ClaimsSet, JWTError (..), defaultJWTValidationSettings, verifyClaimsAt)
 import Data.Aeson qualified as Aeson
 import Data.Aeson.Lens
+import Data.ByteString qualified
 import Data.ByteString.Base64 qualified as Base64
 import Data.String.Interpolate (i)
 import Garnix.AccessToken.Types
@@ -25,7 +26,9 @@ import Garnix.Types
 import Network.HTTP.Types (forbidden403)
 import Network.Wreq
 import Servant.Auth.Server (validationKeys)
+import Servant.Auth.Server.Internal.JWT (makeJWT)
 import Test.Hspec
+import Web.Cookie (parseSetCookie, setCookieName, setCookieValue)
 
 spec :: Spec
 spec = inM $ beforeM_ truncateDBM $ aroundM_ suppressLogs $ do
@@ -146,3 +149,70 @@ spec = inM $ beforeM_ truncateDBM $ aroundM_ suppressLogs $ do
                 [("Authorization", cs $ "Bearer " <> jwt)]
           (res ^? responseBody . key "finished" . _Bool) `shouldBeM` Just True
           cs (show (res ^?! responseBody . key "logs")) `shouldContainM` "some-build-output"
+
+  describe "web session cookies" $ do
+    let sessionUser :: M User
+        sessionUser =
+          DB.newUser
+            (GhLogin "session-user")
+            (Email "session-user@example.com")
+            FreeSubscription
+            True
+
+    let forgedSessionCookie :: User -> UTCTime -> M Data.ByteString.ByteString
+        forgedSessionCookie user expiresAt = do
+          jwtSettings' <- view #jwtSettings
+          eJwt <- liftIO $ makeJWT (WebSession user (GhToken "tok")) jwtSettings' (Just expiresAt)
+          case eJwt of
+            Left err -> error $ "could not forge a session JWT: " <> show err
+            Right jwt -> pure $ "JWT-Cookie=" <> cs jwt
+
+    let whoAmIWithCookie :: TestServer -> Data.ByteString.ByteString -> M (Maybe Text)
+        whoAmIWithCookie server cookie = do
+          res <- assert200 $ server.getWithHeaders "/api/whoami" [("Cookie", cookie)]
+          pure $ res ^? responseBody . key "username" . _String
+
+    it "accepts a session cookie whose exp is still in the future" $ do
+      user <- sessionUser
+      withServer $ \server -> do
+        now <- liftIO getCurrentTime
+        cookie <- forgedSessionCookie user (addUTCTime 60 now)
+        whoAmIWithCookie server cookie
+          `shouldReturnM` Just (user ^. githubLogin . to getGhLogin)
+        res <- server.getWithHeaders "/api/account/tokens" [("Cookie", cookie)]
+        res `shouldHaveStatusCode` 200
+
+    it "refuses a session cookie whose exp has already passed" $ do
+      user <- sessionUser
+      withServer $ \server -> do
+        now <- liftIO getCurrentTime
+        cookie <- forgedSessionCookie user (addUTCTime (-60) now)
+        whoAmIWithCookie server cookie `shouldReturnM` Nothing
+        res <- server.getWithHeaders "/api/account/tokens" [("Cookie", cookie)]
+        res `shouldHaveStatusCode` 401
+
+    let loginSessionJwt :: TestServer -> M Text
+        loginSessionJwt server = do
+          res <- assert200 $ server.get "/api/dev/log-me-in"
+          let setCookies = res ^.. responseHeaders . traverse . filtered ((== "Set-Cookie") . fst) . _2
+          pure
+            $ maybe (error "no session cookie in the login response") (cs . setCookieValue)
+            $ find ((== "JWT-Cookie") . setCookieName)
+            $ parseSetCookie
+            <$> setCookies
+
+    let verifyAt :: Text -> UTCTime -> M (Either JWTError ClaimsSet)
+        verifyAt jwt time = do
+          keys <- view #jwtSettings >>= liftIO . validationKeys
+          liftIO $ Jose.runJOSE $ do
+            signed <- Jose.decodeCompact (cs jwt)
+            verifyClaimsAt (defaultJWTValidationSettings (error "not used")) keys time signed
+
+    it "mints web session cookies that stop verifying after the session lifetime" $ do
+      withServer $ \server -> do
+        jwt <- loginSessionJwt server
+        now <- liftIO getCurrentTime
+        lifetime <- view #sessionLifetime
+        claimsSet <- verifyAt jwt now
+        claimsSet `shouldSatisfyM` isRight
+        verifyAt jwt (addUTCTime 1 $ addTime lifetime now) `shouldReturnM` Left JWTExpired
