@@ -210,6 +210,11 @@ rec {
         text = ''
           tempDir=$(mktemp -d /tmp/garnix-specs.XXXXXXXX)
           cd "$tempDir"
+
+          XDG_CACHE_HOME=''${GARNIX_SPECS_CACHE_DIR:-/tmp/garnix-specs-cache-$(id -u)}
+          export XDG_CACHE_HOME
+          mkdir -p "$XDG_CACHE_HOME"
+
           export HOME="$tempDir/home"
           mkdir "$HOME"
           DB_DIR="$tempDir/pg-tmp"
