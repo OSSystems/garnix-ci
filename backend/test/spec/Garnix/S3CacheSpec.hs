@@ -33,6 +33,7 @@ import Data.HashTable.IO qualified as HashTables
 import Data.List.Extra (firstJust)
 import Data.Map qualified as Map
 import Data.Maybe (fromJust, mapMaybe)
+import Data.Set qualified as Set
 import Data.String.Interpolate
 import Data.String.Interpolate.Util (unindent)
 import Data.Text qualified as T
@@ -146,6 +147,29 @@ spec = do
                 (fromRight . Amazonka.fromText . (<> ".nar.xz") . Nix.getRelativeStorePath)
                 (evalResult ^. #toUpload)
             )
+
+      it "uploads store paths of private repos of configured owners to the public bucket" $ do
+        (evalResult, storePath) <- localTestBuild simpleFlake
+        local ((#s3CacheEnv . #publicRepoOwners) .~ Set.fromList ["alice"]) $ do
+          upload mempty "Alice" "private-repo" evalResult (RepoIsPublic False)
+        paths <- listBucket "garage-public"
+        sort paths
+          `shouldBeM` sort
+            ( fmap
+                (fromRight . Amazonka.fromText . (<> ".nar.xz") . Nix.getRelativeStorePath)
+                (evalResult ^. #toUpload)
+            )
+        result <- DB.getS3CacheStoreHash (getHash storePath)
+        fmap (^. #public) result `shouldBeM` Just True
+
+      it "uploads store paths of private repos of other owners to the private bucket" $ do
+        (evalResult, storePath) <- localTestBuild simpleFlake
+        local ((#s3CacheEnv . #publicRepoOwners) .~ Set.fromList ["alice"]) $ do
+          upload mempty "bob" "private-repo" evalResult (RepoIsPublic False)
+        paths <- listBucket "garage-public"
+        paths `shouldBeM` []
+        result <- DB.getS3CacheStoreHash (getHash storePath)
+        fmap (^. #public) result `shouldBeM` Just False
 
       it "doesn't re-upload existing store paths" $ do
         (evalResult, _) <- localTestBuild simpleFlake
@@ -743,6 +767,7 @@ withGarageS3 inner =
                   publicBucket = "garage-public",
                   publicBaseUrl = "http://garage-public.web.garage.localhost:3902/",
                   privateBucket = "garage-private",
+                  publicRepoOwners = mempty,
                   cachePrivKeyFile = cs (garageDir </> "cache-priv-key.pem"),
                   cachePrivKeyName = "test-key",
                   expiration = fromSeconds @Int 10,

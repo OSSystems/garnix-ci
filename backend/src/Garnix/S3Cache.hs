@@ -8,6 +8,7 @@ import Control.Retry (RetryPolicyM, fullJitterBackoff, limitRetries, limitRetrie
 import Cradle
 import Data.ByteString.Builder qualified as ByteString
 import Data.Containers.ListUtils (nubOrd)
+import Data.Set qualified as Set
 import Data.Text qualified as T
 import Garnix.API.Cache.Types
 import Garnix.Build.Types (EvaluationResult)
@@ -101,8 +102,9 @@ uploadStorePath repoOwner repoName storePath repoPublicity = do
       narSize <- fromIntegral <$> Amazonka.getFileSize narFilePath
       narHash <- getFileHash narFilePath
       compressedNarFilePath <- compress narFilePath
+      cachePublic <- isPublicForCache repoOwner repoPublicity
       bucket <-
-        if isRepoPublic repoPublicity
+        if cachePublic
           then view $ #s3CacheEnv . #publicBucket
           else view $ #s3CacheEnv . #privateBucket
       body <- Amazonka.toBody <$> Amazonka.hashedFile compressedNarFilePath
@@ -129,7 +131,7 @@ uploadStorePath repoOwner repoName storePath repoPublicity = do
             DB.packageName = getName storePath,
             narHash,
             narSize,
-            public = isRepoPublic repoPublicity,
+            public = cachePublic,
             sig,
             references,
             fileSize,
@@ -137,6 +139,13 @@ uploadStorePath repoOwner repoName storePath repoPublicity = do
           }
       DB.tagCacheUploadForS3Cache repoOwner repoName $ getHash storePath
       incrementEvent #s3CacheUploads
+
+isPublicForCache :: GhRepoOwner -> RepoPublicity -> M Bool
+isPublicForCache repoOwner repoPublicity
+  | isRepoPublic repoPublicity = pure True
+  | otherwise = do
+      publicRepoOwners <- view $ #s3CacheEnv . #publicRepoOwners
+      pure $ Set.member (T.toLower $ getGhLogin $ getGhRepoOwner repoOwner) publicRepoOwners
 
 getFileHash :: FilePath -> M Text
 getFileHash file = do
