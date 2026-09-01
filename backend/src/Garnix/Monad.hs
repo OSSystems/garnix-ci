@@ -153,6 +153,7 @@ data S3CacheEnv = S3CacheEnv
     publicBucket :: Amazonka.BucketName,
     publicBaseUrl :: Text,
     privateBucket :: Amazonka.BucketName,
+    publicRepoOwners :: Set Text,
     cachePrivKeyFile :: FilePath,
     cachePrivKeyName :: Text,
     expiration :: Duration,

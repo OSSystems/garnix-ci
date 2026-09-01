@@ -111,6 +111,7 @@ let
     "S3_CACHE_PUBLIC_BUCKET=${cfg.s3Cache.publicBucket}"
     "S3_CACHE_PUBLIC_BASE_URL=${cfg.s3Cache.publicBaseUrl}"
     "S3_CACHE_PRIVATE_BUCKET=${cfg.s3Cache.privateBucket}"
+    "S3_CACHE_PUBLIC_REPO_OWNERS=${lib.concatStringsSep "," cfg.s3Cache.publicRepoOwners}"
   ];
 
   remoteBuilderSshConfig = lib.concatMapStringsSep "\n"
@@ -307,6 +308,23 @@ in
       privateBucket = lib.mkOption {
         type = lib.types.str;
         default = "";
+      };
+      publicRepoOwners = lib.mkOption {
+        type = lib.types.listOf lib.types.str;
+        default = [ ];
+        description = ''
+          GitHub owner logins (case-insensitive) whose repositories are treated as
+          public for binary cache purposes only.
+
+          Build outputs of the PRIVATE repositories of these owners are stored in
+          the public bucket and served from publicBaseUrl through unauthenticated,
+          non-expiring URLs, with no collaborator check. Only set this when access
+          to the public bucket and to /api/cache is restricted by the network
+          (LAN/VPN), since that becomes the only boundary protecting them.
+
+          Repository publicity is left untouched everywhere else: the web UI, build
+          logs and flake input authorization keep enforcing the real GitHub privacy.
+        '';
       };
     };
 

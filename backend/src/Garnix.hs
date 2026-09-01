@@ -184,6 +184,9 @@ withEnv testFeatures buildLogsDir buildLogsReportingPort action = do
           getEnv "S3_CACHE_PUBLIC_BASE_URL"
             <&> cs . (\url -> if "/" `isSuffixOf` url then url else url <> "/")
         privateBucket <- Amazonka.BucketName . cs <$> getEnv "S3_CACHE_PRIVATE_BUCKET"
+        publicRepoOwners <-
+          lookupEnv "S3_CACHE_PUBLIC_REPO_OWNERS"
+            <&> maybe mempty (Set.fromList . filter (not . T.null) . map (T.toLower . T.strip) . T.splitOn "," . cs)
         cachePrivKeyFile <-
           lookupEnv "CACHE_PRIV_KEY_FILE"
             <&> fromMaybe (secretFile "cache-priv-key")
@@ -201,6 +204,7 @@ withEnv testFeatures buildLogsDir buildLogsReportingPort action = do
               publicBucket,
               publicBaseUrl,
               privateBucket,
+              publicRepoOwners,
               cachePrivKeyFile,
               cachePrivKeyName,
               expiration,
@@ -218,6 +222,7 @@ withEnv testFeatures buildLogsDir buildLogsReportingPort action = do
               publicBucket = Amazonka.BucketName "",
               publicBaseUrl = "",
               privateBucket = Amazonka.BucketName "",
+              publicRepoOwners = mempty,
               cachePrivKeyFile = "",
               cachePrivKeyName = "",
               expiration = fromHours @Int 2,
