@@ -258,12 +258,6 @@ in
               values = [ "count" ];
               query = "SELECT count(*) as count FROM users";
             };
-            individual_plan_total = {
-              labels = [ "individual_plan_total" ];
-              help = "Number of people on the individual plan";
-              values = [ "count" ];
-              query = "SELECT count(*) as count FROM repo_owner_has_product WHERE product = 'individual-v1'";
-            };
             active_repos_per_day = {
               labels = [ "active_repos_per_day" ];
               help = "Number of repos with at least one commit each day";

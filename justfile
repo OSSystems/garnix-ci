@@ -32,7 +32,6 @@ server:
   withSecrets cabal run server -- \
     --enable DevApi \
     --enable OpenSearchMocks \
-    --enable StripeMocks \
     --enable CacheUploadMocks \
     --port 8017 \
     --monitoring-port 8018 \
