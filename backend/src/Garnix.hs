@@ -29,7 +29,7 @@ import Garnix.GithubInterface
 import Garnix.Monad
 import Garnix.Monad.Metrics (registerMetrics, serveMetrics)
 import Garnix.Monad.Pool qualified
-import Garnix.NixConfig (defaultNixConfig)
+import Garnix.NixConfig (defaultNixConfig, githubAccessTokenNixConfig)
 import Garnix.Prelude
 import Garnix.Types
 import Garnix.UserLogs
@@ -109,6 +109,21 @@ sessionLifetimeFromEnv = lookupEnv "GARNIX_SESSION_LIFETIME" >>= resolve
           $ "GARNIX_SESSION_LIFETIME must be a positive whole number of seconds, got: "
           <> cs raw
 
+lookupOptionalSecret :: String -> FilePath -> IO (Maybe Text)
+lookupOptionalSecret envVar path = do
+  fromEnv <- lookupEnv envVar
+  case fromEnv >>= trimmedNonEmpty of
+    Just value -> pure $ Just value
+    Nothing -> do
+      exists <- doesFileExist path
+      if exists
+        then trimmedNonEmpty <$> readFile path
+        else pure Nothing
+  where
+    trimmedNonEmpty raw =
+      let trimmed = T.dropWhileEnd (`elem` ['\n', '\r', ' ', '\t']) (cs raw)
+       in if T.null trimmed then Nothing else Just trimmed
+
 withEnv :: (HasCallStack) => Set TestFeature -> FilePath -> Maybe Warp.Port -> (Env -> IO a) -> IO a
 withEnv testFeatures buildLogsDir buildLogsReportingPort action = do
   buildLogsDir' <- makeAbsolute buildLogsDir
@@ -134,20 +149,12 @@ withEnv testFeatures buildLogsDir buildLogsReportingPort action = do
   ghAppName <-
     lookupEnv "GITHUB_APP_NAME"
       >>= maybe (cs <$> readFile (secretFile "github_app_name")) (pure . cs)
-  adminGhLogin <- do
-    let trim = T.dropWhileEnd (`elem` ['\n', '\r', ' ', '\t'])
-        nonEmpty t = if T.null t then Nothing else Just t
-    mEnv <- lookupEnv "GARNIX_ADMIN_GITHUB_LOGIN"
-    case mEnv >>= (nonEmpty . trim . cs) of
-      Just t -> pure $ Just $ GhLogin t
-      Nothing -> do
-        let path = secretFile "garnix_admin_github_login"
-        exists <- doesFileExist path
-        if exists
-          then do
-            raw <- readFile path
-            pure $ GhLogin <$> nonEmpty (trim (cs raw))
-          else pure Nothing
+  adminGhLogin <-
+    fmap GhLogin
+      <$> lookupOptionalSecret "GARNIX_ADMIN_GITHUB_LOGIN" (secretFile "garnix_admin_github_login")
+  nixConfig <-
+    lookupOptionalSecret "GITHUB_ACCESS_TOKEN" (secretFile "github_access_token")
+      <&> maybe defaultNixConfig (\token -> githubAccessTokenNixConfig (GhToken token) <> defaultNixConfig)
   s3CacheEnabled <-
     lookupEnv "S3_CACHE_ENABLED" <&> \case
       Just v | T.toLower (cs v) == "false" -> False
@@ -284,7 +291,7 @@ withEnv testFeatures buildLogsDir buildLogsReportingPort action = do
               buildLogsReportingPort = buildLogsReportingPort,
               workingDir = curDir,
               nixXdgCacheDir = Nothing,
-              userNixConfig = defaultNixConfig,
+              userNixConfig = nixConfig,
               githubWebhookSecret = ghK,
               githubInterface = realGithubInterface,
               cookieSettings =

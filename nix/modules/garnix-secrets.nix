@@ -50,6 +50,11 @@ let
       required = true;
     }
     {
+      name = "github_access_token";
+      sourcePath = secretsCfg.githubAccessTokenPath;
+      required = false;
+    }
+    {
       name = "opensearch-garnix";
       sourcePath = secretsCfg.opensearchCredentialPath;
       required = true;
@@ -214,6 +219,7 @@ in
     githubClientIdPath = pathOption "Path to the GitHub OAuth client id file";
     githubAppIdPath = pathOption "Path to the GitHub App ID file";
     githubAppPkPath = pathOption "Path to the GitHub App private key (PEM) file";
+    githubAccessTokenPath = pathOption "Path to a GitHub personal access token, used to authenticate the GitHub API calls nix makes while resolving flake inputs. Optional: without it those calls are anonymous and share a 60 requests/hour budget per IP, which builds exhaust. The token needs no scopes; it only has to be valid, which raises the budget to 5000/hour";
     opensearchCredentialPath = pathOption "Path to the OpenSearch basic-auth password file";
     jwtKeyPath = pathOption "Path to the JWT signing key file (generated via Servant.Auth.Server.writeKey)";
     repoSecretsKeyPath = pathOption "Path to the repository secrets age private key";

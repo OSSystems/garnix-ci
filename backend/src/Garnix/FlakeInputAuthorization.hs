@@ -17,7 +17,6 @@ import Cradle
 import Data.Aeson.KeyMap (KeyMap)
 import Data.Aeson.KeyMap qualified as KeyMap
 import Data.Aeson.Types (Parser, Value, withObject, (.:))
-import Data.Map.Strict qualified as Map
 import Data.Text qualified as T
 import Garnix.Monad
 import Garnix.NixConfig
@@ -118,9 +117,6 @@ _extractPrivateReposFromErrors s =
     matches -> Just $ flip map matches $ \case
       [match] -> match
       _ -> error "impossible: regex only has one match group"
-
-githubAccessTokenNixConfig :: GhToken -> NixConfig
-githubAccessTokenNixConfig token = NixConfig $ Map.insert "access-tokens" ("github.com=" <> cs (getGhToken token)) mempty
 
 checkInputsAllowed :: FilePath -> [FlakeInput] -> M [GithubFlakeInput]
 checkInputsAllowed repoDir inputs = do
