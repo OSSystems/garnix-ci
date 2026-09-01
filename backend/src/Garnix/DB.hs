@@ -1349,11 +1349,6 @@ addToWaitlist email = do
         ON CONFLICT DO NOTHING
       |]
 
--- * Installations
-
-getInstallationStatus :: GhRepoOwner -> M InstallationStatus
-getInstallationStatus _ = pure NoActiveInstallation
-
 getIncrementalTarget :: Build -> [CommitHash] -> M [Build]
 getIncrementalTarget build commits =
   pgQueryPrism

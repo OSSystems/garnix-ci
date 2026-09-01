@@ -3,20 +3,18 @@ import { fromSecs } from "@/utils/duration";
 import { mapCollectResult } from "@/utils";
 import { Err, Ok, fetchFromAPI } from ".";
 
+const installationStatusSchema = z.enum([
+  "AppNotInstalled",
+  "AppInstalled",
+  "AppInstalledWithoutMemberAccess",
+]);
+
+export type InstallationStatus = z.infer<typeof installationStatusSchema>;
+
 const orgUsageSchema = z.object({
   ci_time: z.number().transform(fromSecs),
   pr_deployment_time: z.number().transform(fromSecs),
-  installation_status: z.discriminatedUnion("tag", [
-    z.object({ tag: z.literal("NoActiveInstallation") }),
-    z.object({
-      tag: z.literal("InstallationRenewing"),
-      contents: z.coerce.date(),
-    }),
-    z.object({
-      tag: z.literal("InstallationCancelling"),
-      contents: z.coerce.date(),
-    }),
-  ]),
+  installation_status: installationStatusSchema,
 });
 
 export const getAccountUsage = () => {

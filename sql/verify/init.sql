@@ -48,9 +48,6 @@ SELECT created_at, config
 SELECT hostname, last_heartbeat
     FROM heartbeat WHERE FALSE;
 
-SELECT repo_owner
-    FROM installations WHERE FALSE;
-
 SELECT github_login, internal_token
     FROM internal_access_tokens WHERE FALSE;
 
