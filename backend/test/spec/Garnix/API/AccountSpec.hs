@@ -36,14 +36,19 @@ spec :: Spec
 spec = inM $ beforeM_ truncateDBM $ aroundM_ suppressLogsWhenPassing $ do
   describe "AccountAPI" $ do
     let mockGithubInterface :: GhToken -> [GhRepoOwner] -> M a -> M a
-        mockGithubInterface expectedToken orgs =
+        mockGithubInterface expectedToken orgs = mockGithubInterfaceWith expectedToken orgs []
+
+        mockGithubInterfaceWith :: GhToken -> [GhRepoOwner] -> [Text] -> M a -> M a
+        mockGithubInterfaceWith expectedToken orgs visibleRepos =
           locally
             #githubInterface
             ( \x ->
                 x
                   { _githubInterfaceGetInstalledOrgs = \tok -> do
                       liftIO $ tok `shouldBe` expectedToken
-                      pure $ map (`GhUserOrgMembership` Admin) orgs
+                      pure $ map (`GhUserOrgMembership` Admin) orgs,
+                    _githubInterfaceGetInstallations = const $ pure [GH.mkId Proxy 1],
+                    _githubInterfaceGetReposInInstallationAccessibleTo = \_ _ -> pure visibleRepos
                   }
             )
 
@@ -52,7 +57,7 @@ spec = inM $ beforeM_ truncateDBM $ aroundM_ suppressLogsWhenPassing $ do
         mockGithubInterface (GhToken "user-with-no-builds") [] $ do
           testUser <- mkTestUser
           usage <- usageOverview $ pure $ WebSession testUser (GhToken "user-with-no-builds")
-          liftIO $ usage `shouldBe` UsageOverview (fromList [("mock-user", OrgUsage emptyDuration emptyDuration NoActiveInstallation)])
+          liftIO $ usage `shouldBe` UsageOverview (fromList [("mock-user", OrgUsage emptyDuration emptyDuration AppNotInstalled)])
 
       it "reports empty usage when the user has no builds this month" $ do
         monthsAgo <- liftIO getCurrentTime <&> subTime (fromDays @Int 90)
@@ -61,7 +66,7 @@ spec = inM $ beforeM_ truncateDBM $ aroundM_ suppressLogsWhenPassing $ do
           _ <- addTestBuild "owner" monthsAgo (fromSeconds @Int 100)
           _ <- addTestBuild "owner" monthsAgo (fromSeconds @Int 100)
           usage <- usageOverview $ pure $ WebSession testUser (GhToken "user-with-one-org")
-          liftIO $ usage `shouldBe` UsageOverview (fromList [("mock-user", OrgUsage emptyDuration emptyDuration NoActiveInstallation)])
+          liftIO $ usage `shouldBe` UsageOverview (fromList [("mock-user", OrgUsage emptyDuration emptyDuration AppNotInstalled)])
 
       it "reports usage of all build minutes for the user's installation" $ do
         now <- liftIO getCurrentTime
@@ -76,11 +81,34 @@ spec = inM $ beforeM_ truncateDBM $ aroundM_ suppressLogsWhenPassing $ do
             $ usage
             `shouldBe` UsageOverview
               ( fromList
-                  [ (GhRepoOwner $ GhLogin "org-with-no-builds", OrgUsage emptyDuration emptyDuration NoActiveInstallation),
-                    (GhRepoOwner $ GhLogin "mock-user", OrgUsage (fromSeconds @Int 300) emptyDuration NoActiveInstallation),
-                    (GhRepoOwner $ GhLogin "work-org", OrgUsage (fromSeconds @Int 400) emptyDuration NoActiveInstallation)
+                  [ (GhRepoOwner $ GhLogin "org-with-no-builds", OrgUsage emptyDuration emptyDuration AppInstalled),
+                    (GhRepoOwner $ GhLogin "mock-user", OrgUsage (fromSeconds @Int 300) emptyDuration AppNotInstalled),
+                    (GhRepoOwner $ GhLogin "work-org", OrgUsage (fromSeconds @Int 400) emptyDuration AppInstalled)
                   ]
               )
+
+      it "reports orgs whose membership github won't let us read" $ do
+        mockGithubInterfaceWith
+          (GhToken "user-with-an-opaque-org")
+          []
+          ["mock-user/own-repo", "opaque-org/some-repo"]
+          $ do
+            testUser <- mkTestUser
+            usage <- usageOverview $ pure $ WebSession testUser (GhToken "user-with-an-opaque-org")
+            liftIO
+              $ usage
+              `shouldBe` UsageOverview
+                ( fromList
+                    [ (GhRepoOwner $ GhLogin "mock-user", OrgUsage emptyDuration emptyDuration AppInstalled),
+                      (GhRepoOwner $ GhLogin "opaque-org", OrgUsage emptyDuration emptyDuration AppInstalledWithoutMemberAccess)
+                    ]
+                )
+
+    describe "installation status" $ do
+      it "serializes as a bare tag" $ do
+        toJSON AppNotInstalled `shouldBeM` [aesonQQ| "AppNotInstalled" |]
+        toJSON AppInstalled `shouldBeM` [aesonQQ| "AppInstalled" |]
+        toJSON AppInstalledWithoutMemberAccess `shouldBeM` [aesonQQ| "AppInstalledWithoutMemberAccess" |]
 
     describe "/api/account/tokens" $ do
       it "return 401 status for GET when logged out" $ suppressLogs $ withServer $ \server -> do

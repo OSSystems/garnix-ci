@@ -1313,9 +1313,9 @@ instance FromJSON AuthJwtPayload where
     pure $ maybe (ApiSession user) (WebSession user) token
 
 data InstallationStatus
-  = NoActiveInstallation
-  | InstallationRenewing UTCTime
-  | InstallationCancelling UTCTime
+  = AppNotInstalled
+  | AppInstalled
+  | AppInstalledWithoutMemberAccess
   deriving stock (Eq, Show, Generic)
 
 instance ToJSON InstallationStatus where

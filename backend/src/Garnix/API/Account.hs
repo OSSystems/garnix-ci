@@ -4,6 +4,8 @@ import Control.Concurrent.Async.Lifted
 import Control.Lens
 import Data.Map.Strict qualified as Map
 import Data.Maybe
+import Data.Set qualified as Set
+import Data.Text qualified as T
 import Garnix.AccessToken
 import Garnix.AccessToken.Types
 import Garnix.DB qualified as DB
@@ -55,17 +57,40 @@ instance ToJSON OrgUsage where
   toEncoding = ourToEncoding
   toJSON = ourToJSON
 
-getOrgsUserIsAdminIn :: User -> GhToken -> M [GhRepoOwner]
-getOrgsUserIsAdminIn user token =
-  (GhRepoOwner (user ^. githubLogin) :)
-    . map organizationName
-    . filter (\membership -> role membership == Admin)
-    <$> getInstalledOrgs token
+getOwnersWithVisibleInstallation :: GhToken -> M (Set.Set GhRepoOwner)
+getOwnersWithVisibleInstallation token = do
+  installationIds <- getInstallations token
+  repos <- forConcurrently installationIds $ \installationId ->
+    getReposInInstallationAccessibleTo installationId token
+  pure $ Set.fromList $ mapMaybe ownerOf $ mconcat repos
+  where
+    ownerOf fullName = case T.splitOn "/" fullName of
+      [owner, _] -> Just $ GhRepoOwner $ GhLogin owner
+      _ -> Nothing
 
-getUsageForOrg :: Map.Map GhRepoOwner Duration -> GhRepoOwner -> M OrgUsage
-getUsageForOrg usage org = do
+getViewableOwners :: User -> GhToken -> M (Map.Map GhRepoOwner InstallationStatus)
+getViewableOwners user token = do
+  (memberships, installedOwners) <-
+    concurrently
+      (getInstalledOrgs token)
+      (getOwnersWithVisibleInstallation token)
+  let self = GhRepoOwner (user ^. githubLogin)
+      adminOrgs = organizationName <$> filter (\membership -> role membership == Admin) memberships
+      readableOrgs = Set.fromList $ organizationName <$> memberships
+      opaqueOrgs = Set.delete self $ installedOwners `Set.difference` readableOrgs
+      selfStatus =
+        if self `Set.member` installedOwners
+          then AppInstalled
+          else AppNotInstalled
+  pure
+    $ Map.fromList
+    $ (self, selfStatus)
+    : [(org, AppInstalled) | org <- adminOrgs]
+      <> [(org, AppInstalledWithoutMemberAccess) | org <- Set.toList opaqueOrgs]
+
+getUsageForOrg :: Map.Map GhRepoOwner Duration -> GhRepoOwner -> InstallationStatus -> M OrgUsage
+getUsageForOrg usage org installationStatus = do
   prDeploymentTime <- DB.getPrDeployDurationForOwner org
-  installationStatus <- DB.getInstallationStatus org
   pure
     OrgUsage
       { _orgUsageCiTime = fromMaybe emptyDuration $ Map.lookup org usage,
@@ -75,28 +100,17 @@ getUsageForOrg usage org = do
 
 usageOverview :: AuthResult AuthJwtPayload -> M UsageOverview
 usageOverview (Authenticated (WebSession user ghToken)) = do
-  orgs <- getOrgsUserIsAdminIn user ghToken
-  usage <- DB.getCurrentMonthUsages (GhRepoOwner (user ^. githubLogin) : orgs)
-  map <- mkMapM orgs $ getUsageForOrg usage
-  pure $ UsageOverview map
+  owners <- getViewableOwners user ghToken
+  usage <- DB.getCurrentMonthUsages (Map.keys owners)
+  UsageOverview <$> Map.traverseWithKey (getUsageForOrg usage) owners
 usageOverview _ = throw Unauthorized
-
-mkMapM :: (Monad m, Ord key) => [key] -> (key -> m value) -> m (Map.Map key value)
-mkMapM keys f =
-  Map.fromList
-    <$> forM
-      keys
-      ( \key -> do
-          value <- f key
-          pure (key, value)
-      )
 
 orgUsage :: AuthResult AuthJwtPayload -> GhRepoOwner -> M OrgUsage
 orgUsage (Authenticated (WebSession user ghToken)) org = do
-  orgsUserIsAdminIn <- getOrgsUserIsAdminIn user ghToken
-  when (org `notElem` orgsUserIsAdminIn) $ throw NotFound
+  owners <- getViewableOwners user ghToken
+  installationStatus <- maybe (throw NotFound) pure $ Map.lookup org owners
   usage <- DB.getCurrentMonthUsages [org]
-  getUsageForOrg usage org
+  getUsageForOrg usage org installationStatus
 orgUsage _ _ = throw Unauthorized
 
 data GetTokensResponseBody = GetTokensResponseBody

@@ -180,7 +180,6 @@ truncateDBMNoInsert = do
           users,
           builds,
           commits,
-          installations,
           heartbeat,
           access_tokens,
           cache_store_hashes,
