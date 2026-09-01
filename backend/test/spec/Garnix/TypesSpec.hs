@@ -14,21 +14,18 @@ import Test.Hspec
 spec :: Spec
 spec = describe "Types" $ do
   describe "AuthJwtPayload" $ do
-    it "correctly serializes to the old User type for backwards compatability" $ do
-      now <- getCurrentTime
-      let jwtPayload =
-            WebSession
-              ( User
-                  { _userId = UserId 123,
-                    _userGithubLogin = "some-user",
-                    _userEmail = "foo@example.org",
-                    _userSubscriptionType = FreeSubscription,
-                    _userCreatedAt = now
-                  }
-              )
-              (GhToken "tok")
+    let testUser now =
+          User
+            { _userId = UserId 123,
+              _userGithubLogin = "some-user",
+              _userEmail = "foo@example.org",
+              _userSubscriptionType = FreeSubscription,
+              _userCreatedAt = now
+            }
 
-      toJSON jwtPayload
+    it "serializes a web session" $ do
+      now <- getCurrentTime
+      toJSON (WebSession (testUser now))
         `shouldBe` [aesonQQ|
                      {
                        "id": 123,
@@ -36,11 +33,16 @@ spec = describe "Types" $ do
                        "email": "foo@example.org",
                        "subscription_type": "free",
                        "created_at": #{now},
-                       "github_token": "tok"
+                       "session_kind": "web"
                      }
                    |]
 
-    it "correctly deserializes the old User type for backwards compatability" $ do
+    it "roundtrips both session kinds" $ do
+      now <- getCurrentTime
+      forM_ [WebSession (testUser now), ApiSession (testUser now)] $ \payload ->
+        eitherDecode' (encode payload) `shouldBe` Right payload
+
+    it "refuses sessions minted before the github token moved to the database" $ do
       now <- getCurrentTime
       let json =
             [i|
@@ -53,19 +55,7 @@ spec = describe "Types" $ do
                 "github_token": "tok"
               }
             |]
-      eitherDecode' (cs json)
-        `shouldBe` Right
-          ( WebSession
-              ( User
-                  { _userId = UserId 123,
-                    _userGithubLogin = "some-user",
-                    _userEmail = "foo@example.org",
-                    _userSubscriptionType = FreeSubscription,
-                    _userCreatedAt = now
-                  }
-              )
-              (GhToken "tok")
-          )
+      (eitherDecode' (cs json) :: Either String AuthJwtPayload) `shouldSatisfy` isLeft
 
   describe "asPackageType" $ do
     it "roundtrips correctly"

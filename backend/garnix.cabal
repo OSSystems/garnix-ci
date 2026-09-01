@@ -73,6 +73,7 @@ library
       Garnix.GetAttributes
       Garnix.GithubInterface
       Garnix.GithubInterface.Types
+      Garnix.GithubUserToken
       Garnix.Incremental
       Garnix.Limits
       Garnix.Log
@@ -724,6 +725,7 @@ test-suite spec
       Garnix.FlakeInputAuthorizationSpec
       Garnix.GetAttributesSpec
       Garnix.GithubInterfaceSpec
+      Garnix.GithubUserTokenSpec
       Garnix.IncrementalSpec
       Garnix.Modules.SchemaSpec
       Garnix.ModulesSpec
@@ -809,6 +811,7 @@ test-suite spec
       Garnix.GetAttributes
       Garnix.GithubInterface
       Garnix.GithubInterface.Types
+      Garnix.GithubUserToken
       Garnix.Incremental
       Garnix.Limits
       Garnix.Log

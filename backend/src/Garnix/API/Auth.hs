@@ -5,6 +5,7 @@ import Garnix.AccessToken
 import Garnix.AccessToken.Types
 import Garnix.DB qualified as DB
 import Garnix.Duration
+import Garnix.GithubUserToken
 import Garnix.Monad
 import Garnix.ParseHttpBasicAuth
 import Garnix.Prelude
@@ -151,7 +152,7 @@ data SignupAPI route = SignupAPI
              ),
     _signupAPIFinishSignup ::
       route
-        :- Auth '[Cookie] (CreatingUser GhToken)
+        :- Auth '[Cookie] (CreatingUser (GhUserCredentials Text))
         :> ReqBody '[JSON] CreateUser
         :> Post
              '[JSON]
@@ -215,12 +216,13 @@ loginCallback ::
         GhLogin
     )
 loginCallback code = do
-  (login', _, token) <- callbackHelper githubOauthLogin code
+  (login', _, credentials) <- callbackHelper githubOauthLogin code
   cookieSettings' <- sessionCookieSettings
   jwtSettings' <- view #jwtSettings
   user <- DB.getUser login' <?> "calling getUser"
+  storeCredentialsFor (user ^. id) credentials <?> "storing the github credentials"
   mApplyCookies <-
-    liftIO (acceptLogin cookieSettings' jwtSettings' (WebSession user token))
+    liftIO (acceptLogin cookieSettings' jwtSettings' (WebSession user))
       <?> "calling acceptLogin"
   case mApplyCookies of
     Nothing -> throw Unauthorized
@@ -238,7 +240,7 @@ signupCallback ::
         (CreatingUser ())
     )
 signupCallback code = do
-  (login', email', token) <- callbackHelper githubOauthSignup code
+  (login', email', credentials) <- callbackHelper githubOauthSignup code
   eUser <- try $ DB.getUser login' <?> "calling getUser"
   creatingUser <- case eUser of
     Right _ ->
@@ -247,7 +249,7 @@ signupCallback code = do
           { _creatingUserExists = True,
             _creatingUserGithubLogin = login',
             _creatingUserEmail = email',
-            _creatingUserGithubToken = token
+            _creatingUserGithubToken = credentials
           }
     Left ErrorWithContext {err = NoSuchUser {}} ->
       pure
@@ -255,40 +257,38 @@ signupCallback code = do
           { _creatingUserExists = False,
             _creatingUserGithubLogin = login',
             _creatingUserEmail = email',
-            _creatingUserGithubToken = token
+            _creatingUserGithubToken = credentials
           }
     Left e -> throwError e
   cookieSettings' <- sessionCookieSettings
   jwtSettings' <- view #jwtSettings
-  mApplyCookies <- liftIO $ case eUser of
-    Right user -> acceptLogin cookieSettings' jwtSettings' (WebSession user token)
-    _ -> acceptLogin cookieSettings' jwtSettings' creatingUser
+  mApplyCookies <- case eUser of
+    Right user -> do
+      storeCredentialsFor (user ^. id) credentials
+      liftIO $ acceptLogin cookieSettings' jwtSettings' (WebSession user)
+    _ -> liftIO $ acceptLogin cookieSettings' jwtSettings' creatingUser
   case mApplyCookies of
     Nothing -> throw Unauthorized
     Just applyCookies -> return $ applyCookies (void creatingUser)
 
-callbackHelper :: M OA.OAuth2 -> Maybe OAuthCode -> M (GhLogin, Email, GhToken)
+callbackHelper :: M OA.OAuth2 -> Maybe OAuthCode -> M (GhLogin, Email, GhUserCredentials Text)
 callbackHelper _ Nothing = throw $ OtherError "'code' param missing"
-callbackHelper githubOauth (Just (OAuthCode code)) = do
-  oaState <- OA.newOAuthState <?> "Creating new oauth state"
+callbackHelper githubOauth (Just code) = do
   ghOauth <- githubOauth
-  mToken <-
-    liftIO (OA.getAuthorized ghOauth oaState (Just code) Nothing)
-      <?> "calling OA.getAuthorized"
-  case mToken of
-    Nothing -> throw GithubDidntGiveUsAToken
-    Just (token, _) -> do
-      let auth = GH.OAuth $ cs token
-      eGhUser <- liftIO (GH.github auth GH.userInfoCurrentR) <?> "calling userInfoCurrentR"
-      case eGhUser of
-        Left e -> throw $ OtherError $ show e
-        Right ghUser -> do
-          e <- getEmail auth ghUser <?> "calling getEmail"
-          pure
-            ( GhLogin . GH.untagName $ GH.userLogin ghUser,
-              e,
-              GhToken $ cs token
-            )
+  credentials <-
+    exchangeOauthCode (OA.oauthCallback ghOauth) code
+      <?> "exchanging the oauth code"
+  let auth = GH.OAuth $ cs $ credentials ^. accessToken
+  eGhUser <- liftIO (GH.github auth GH.userInfoCurrentR) <?> "calling userInfoCurrentR"
+  case eGhUser of
+    Left e -> throw $ OtherError $ show e
+    Right ghUser -> do
+      e <- getEmail auth ghUser <?> "calling getEmail"
+      pure
+        ( GhLogin . GH.untagName $ GH.userLogin ghUser,
+          e,
+          credentials
+        )
   where
     getEmail auth ghUser = case GH.userEmail ghUser of
       Just e -> pure $ Email e
@@ -301,7 +301,7 @@ callbackHelper githubOauth (Just (OAuthCode code)) = do
           _ -> throw $ OtherError "No email address"
 
 finishSignup ::
-  AuthResult (CreatingUser GhToken) ->
+  AuthResult (CreatingUser (GhUserCredentials Text)) ->
   CreateUser ->
   M (Headers '[Header "Set-Cookie" SetCookie, Header "Set-Cookie" SetCookie] GhLogin)
 finishSignup (Authenticated cUser) addenda = do
@@ -317,9 +317,10 @@ finishSignup (Authenticated cUser) addenda = do
       (addenda ^. email)
       subType
       (addenda ^. agreeToEmails)
+  storeCredentialsFor (user ^. id) (cUser ^. githubToken)
   cookieSettings' <- sessionCookieSettings
   jwtSettings' <- view #jwtSettings
-  mApplyCookies <- liftIO $ acceptLogin cookieSettings' jwtSettings' (WebSession user (cUser ^. githubToken))
+  mApplyCookies <- liftIO $ acceptLogin cookieSettings' jwtSettings' (WebSession user)
   case mApplyCookies of
     Nothing -> throw Unauthorized
     Just applyCookies -> return $ applyCookies $ user ^. githubLogin
