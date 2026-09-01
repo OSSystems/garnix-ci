@@ -49,14 +49,14 @@ import Data.Text.IO (hPutStr, hPutStrLn)
 import Data.Yaml (Value (..), decodeEither')
 import Database.PostgreSQL.Typed (PGDatabase (..), pgConnect, pgDisconnect)
 import Database.PostgreSQL.Typed.TH (getTPGDatabase)
-import Garnix (envMocks)
+import Garnix (envMocks, lookupOptionalSecret)
 import Garnix.Async qualified
 import Garnix.DB.FeatureFlags.Types (getFeatureFlagConfig)
 import Garnix.Duration
 import Garnix.Monad
 import Garnix.Monad.Metrics (registerMetrics)
 import Garnix.Monad.Pool qualified
-import Garnix.NixConfig (defaultNixConfig)
+import Garnix.NixConfig (defaultNixConfig, githubAccessTokenNixConfig)
 import Garnix.Prelude
 import Garnix.TestHelpers.GithubInterface.Deprecated qualified as Deprecated
 import Garnix.Types hiding (pending)
@@ -255,6 +255,10 @@ withTestEnvironment tempDir action = do
       featureFlagConfig <- getFeatureFlagConfig
       fodCheckPool <- Garnix.Monad.Pool.newPool 40 metrics #fodCheckQueueWaitTime #fodCheckQueueLen
       compressionBudget <- newCompressionBudget
+      nixConfig <- do
+        secretsDir <- fromMaybe "/run/secrets" <$> lookupEnv "GARNIX_SECRETS_DIR"
+        lookupOptionalSecret "GITHUB_ACCESS_TOKEN" (secretsDir <> "/github_access_token")
+          <&> maybe defaultNixConfig (\token -> githubAccessTokenNixConfig (GhToken token) <> defaultNixConfig)
       withDefaultLogger $ \defaultLogger -> do
         ghInterface <- Deprecated.testGithubInterface tempDir buildRef
         let env =
@@ -269,7 +273,7 @@ withTestEnvironment tempDir action = do
                   buildLogsReportingPort = Nothing,
                   workingDir = tempDir,
                   nixXdgCacheDir = Nothing,
-                  userNixConfig = defaultNixConfig,
+                  userNixConfig = nixConfig,
                   githubWebhookSecret = "github-webhook-secret",
                   githubInterface = ghInterface,
                   cookieSettings = defaultCookieSettings {cookieXsrfSetting = Nothing},
