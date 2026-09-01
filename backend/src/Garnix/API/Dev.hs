@@ -4,6 +4,7 @@ import Data.Row (Rec, (.==), type (.==))
 import Data.Set qualified
 import Garnix.API.Auth (sessionCookieSettings)
 import Garnix.DB qualified as DB
+import Garnix.GithubUserToken
 import Garnix.Monad
 import Garnix.Prelude
 import Garnix.Types
@@ -29,7 +30,15 @@ devAPI = do
   user <- getTestUser
   cookieSettings' <- sessionCookieSettings
   jwtSettings' <- view #jwtSettings
-  mApplyCookies <- liftIO $ acceptLogin cookieSettings' jwtSettings' (WebSession user (GhToken "tok"))
+  storeCredentialsFor
+    (user ^. id)
+    GhUserCredentials
+      { _ghUserCredentialsAccessToken = "tok",
+        _ghUserCredentialsAccessTokenExpiresAt = Nothing,
+        _ghUserCredentialsRefreshToken = Nothing,
+        _ghUserCredentialsRefreshTokenExpiresAt = Nothing
+      }
+  mApplyCookies <- liftIO $ acceptLogin cookieSettings' jwtSettings' (WebSession user)
   case mApplyCookies of
     Nothing -> throw Unauthorized
     Just applyCookies -> pure $ applyCookies (#success .== True)

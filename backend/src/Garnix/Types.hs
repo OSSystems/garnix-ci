@@ -1310,7 +1310,7 @@ instance ToJSON User where
 
 instance FromJSON User where parseJSON = ourParseJSON
 
-data AuthJwtPayload = WebSession User GhToken | ApiSession User
+data AuthJwtPayload = WebSession User | ApiSession User
   deriving stock (Eq, Show, Generic)
   deriving anyclass (ToJWT, FromJWT)
 
@@ -1319,36 +1319,42 @@ instance {-# OVERLAPS #-} HasField' "user" AuthJwtPayload User where
   field' =
     lens
       ( \case
-          WebSession user _ -> user
+          WebSession user -> user
           ApiSession user -> user
       )
       ( \payload user -> case payload of
-          WebSession _user tok -> WebSession user tok
+          WebSession _user -> WebSession user
           ApiSession _user -> ApiSession user
       )
 
+sessionKindWeb :: Text
+sessionKindWeb = "web"
+
+sessionKindApi :: Text
+sessionKindApi = "api"
+
 instance ToJSON AuthJwtPayload where
-  toJSON (WebSession user ghToken) =
+  toJSON payload =
     JSON.Object
       $ ("id" Aeson..= _userId user)
       <> ("github_login" Aeson..= _userGithubLogin user)
       <> ("email" Aeson..= _userEmail user)
       <> ("subscription_type" Aeson..= _userSubscriptionType user)
       <> ("created_at" Aeson..= _userCreatedAt user)
-      <> ("github_token" Aeson..= ghToken)
-  toJSON (ApiSession user) =
-    JSON.Object
-      $ ("id" Aeson..= _userId user)
-      <> ("github_login" Aeson..= _userGithubLogin user)
-      <> ("email" Aeson..= _userEmail user)
-      <> ("subscription_type" Aeson..= _userSubscriptionType user)
-      <> ("created_at" Aeson..= _userCreatedAt user)
+      <> ("session_kind" Aeson..= kind)
+    where
+      (user, kind) = case payload of
+        WebSession user -> (user, sessionKindWeb)
+        ApiSession user -> (user, sessionKindApi)
 
 instance FromJSON AuthJwtPayload where
   parseJSON = withObject "AuthJwtPayload" $ \obj -> do
     user <- parseJSON (Aeson.Object obj)
-    token <- obj Aeson..:? "github_token"
-    pure $ maybe (ApiSession user) (WebSession user) token
+    kind <- obj Aeson..: "session_kind"
+    if
+      | kind == sessionKindWeb -> pure $ WebSession user
+      | kind == sessionKindApi -> pure $ ApiSession user
+      | otherwise -> fail $ "unknown session kind: " <> cs kind
 
 data InstallationStatus
   = AppNotInstalled

@@ -962,6 +962,94 @@ insertAccessTokenForUser userId name scopes tokenHash = do
           VALUES (${name}, ${tokenHash}, ${userId}, ${cache}, ${api})
       |]
 
+getGithubUserCredentials :: UserId -> M (Maybe (GhUserCredentials EncryptedText))
+getGithubUserCredentials userId = do
+  res <-
+    pgQuery
+      [pgSQL|
+    SELECT
+      access_token,
+      access_token_expires_at,
+      refresh_token,
+      refresh_token_expires_at
+    FROM github_user_credentials
+    WHERE user_id = ${userId}
+  |]
+  singleCredentialsRow "getGithubUserCredentials" res
+
+lockGithubUserCredentials :: UserId -> M (Maybe (GhUserCredentials EncryptedText))
+lockGithubUserCredentials userId = do
+  res <-
+    pgQuery
+      [pgSQL|
+    SELECT
+      access_token,
+      access_token_expires_at,
+      refresh_token,
+      refresh_token_expires_at
+    FROM github_user_credentials
+    WHERE user_id = ${userId}
+    FOR UPDATE
+  |]
+  singleCredentialsRow "lockGithubUserCredentials" res
+
+singleCredentialsRow ::
+  Text ->
+  [(EncryptedText, Maybe UTCTime, Maybe EncryptedText, Maybe UTCTime)] ->
+  M (Maybe (GhUserCredentials EncryptedText))
+singleCredentialsRow caller = \case
+  [] -> pure Nothing
+  [(accessToken', accessTokenExpiresAt', refreshToken', refreshTokenExpiresAt')] ->
+    pure
+      $ Just
+      $ GhUserCredentials
+        { _ghUserCredentialsAccessToken = accessToken',
+          _ghUserCredentialsAccessTokenExpiresAt = accessTokenExpiresAt',
+          _ghUserCredentialsRefreshToken = refreshToken',
+          _ghUserCredentialsRefreshTokenExpiresAt = refreshTokenExpiresAt'
+        }
+  _ -> throw $ OtherError $ "Got more than 1 row from " <> caller
+
+upsertGithubUserCredentials :: UserId -> GhUserCredentials EncryptedText -> M ()
+upsertGithubUserCredentials userId credentials = do
+  let accessToken' = credentials ^. accessToken
+      accessTokenExpiresAt' = credentials ^. accessTokenExpiresAt
+      refreshToken' = credentials ^. refreshToken
+      refreshTokenExpiresAt' = credentials ^. refreshTokenExpiresAt
+  void
+    $ pgExec
+      [pgSQL|
+    INSERT INTO github_user_credentials
+      ( user_id,
+        access_token,
+        access_token_expires_at,
+        refresh_token,
+        refresh_token_expires_at
+      )
+    VALUES
+      ( ${userId},
+        ${accessToken'},
+        ${accessTokenExpiresAt'},
+        ${refreshToken'},
+        ${refreshTokenExpiresAt'}
+      )
+    ON CONFLICT (user_id) DO UPDATE SET
+      access_token = EXCLUDED.access_token,
+      access_token_expires_at = EXCLUDED.access_token_expires_at,
+      refresh_token = EXCLUDED.refresh_token,
+      refresh_token_expires_at = EXCLUDED.refresh_token_expires_at,
+      updated_at = now()
+  |]
+
+deleteGithubUserCredentials :: UserId -> M ()
+deleteGithubUserCredentials userId = do
+  void
+    $ pgExec
+      [pgSQL|
+    DELETE FROM github_user_credentials
+    WHERE user_id = ${userId}
+  |]
+
 deleteAccessTokenForUser :: UserId -> Int64 -> M ()
 deleteAccessTokenForUser userId tokenId = do
   void

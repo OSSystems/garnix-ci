@@ -162,7 +162,7 @@ spec = inM $ beforeM_ truncateDBM $ aroundM_ suppressLogs $ do
     let forgedSessionCookie :: User -> UTCTime -> M Data.ByteString.ByteString
         forgedSessionCookie user expiresAt = do
           jwtSettings' <- view #jwtSettings
-          eJwt <- liftIO $ makeJWT (WebSession user (GhToken "tok")) jwtSettings' (Just expiresAt)
+          eJwt <- liftIO $ makeJWT (WebSession user) jwtSettings' (Just expiresAt)
           case eJwt of
             Left err -> error $ "could not forge a session JWT: " <> show err
             Right jwt -> pure $ "JWT-Cookie=" <> cs jwt

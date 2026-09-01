@@ -182,6 +182,7 @@ truncateDBMNoInsert = do
           commits,
           heartbeat,
           access_tokens,
+          github_user_credentials,
           cache_store_hashes,
           cache_store_hash_tags,
           repo_config,

@@ -18,8 +18,10 @@ import Garnix.API.Account
   )
 import Garnix.AccessToken
 import Garnix.AccessToken.Types
+import Garnix.DB qualified as DB
 import Garnix.Duration
 import Garnix.GithubInterface.Types
+import Garnix.GithubUserToken
 import Garnix.Monad
 import Garnix.Prelude
 import Garnix.TestHelpers
@@ -55,28 +57,28 @@ spec = inM $ beforeM_ truncateDBM $ aroundM_ suppressLogsWhenPassing $ do
     describe "ci minutes" $ do
       it "reports empty usage when the user has no installations" $ do
         mockGithubInterface (GhToken "user-with-no-builds") [] $ do
-          testUser <- mkTestUser
-          usage <- usageOverview $ pure $ WebSession testUser (GhToken "user-with-no-builds")
+          testUser <- mkTestUser (GhToken "user-with-no-builds")
+          usage <- usageOverview $ pure $ WebSession testUser
           liftIO $ usage `shouldBe` UsageOverview (fromList [("mock-user", OrgUsage emptyDuration emptyDuration AppNotInstalled)])
 
       it "reports empty usage when the user has no builds this month" $ do
         monthsAgo <- liftIO getCurrentTime <&> subTime (fromDays @Int 90)
         mockGithubInterface (GhToken "user-with-one-org") [] $ do
-          testUser <- mkTestUser
+          testUser <- mkTestUser (GhToken "user-with-one-org")
           _ <- addTestBuild "owner" monthsAgo (fromSeconds @Int 100)
           _ <- addTestBuild "owner" monthsAgo (fromSeconds @Int 100)
-          usage <- usageOverview $ pure $ WebSession testUser (GhToken "user-with-one-org")
+          usage <- usageOverview $ pure $ WebSession testUser
           liftIO $ usage `shouldBe` UsageOverview (fromList [("mock-user", OrgUsage emptyDuration emptyDuration AppNotInstalled)])
 
       it "reports usage of all build minutes for the user's installation" $ do
         now <- liftIO getCurrentTime
         mockGithubInterface (GhToken "user-with-many-orgs") ["work-org", "org-with-no-builds"] $ do
-          testUser <- mkTestUser
+          testUser <- mkTestUser (GhToken "user-with-many-orgs")
           _ <- addTestBuild "mock-user" now (fromSeconds @Int 100)
           _ <- addTestBuild "mock-user" now (fromSeconds @Int 200)
           _ <- addTestBuild "work-org" now (fromSeconds @Int 400)
           _ <- addTestBuild "unrelated-org" now (fromSeconds @Int 100)
-          usage <- usageOverview $ pure $ WebSession testUser (GhToken "user-with-many-orgs")
+          usage <- usageOverview $ pure $ WebSession testUser
           liftIO
             $ usage
             `shouldBe` UsageOverview
@@ -93,8 +95,8 @@ spec = inM $ beforeM_ truncateDBM $ aroundM_ suppressLogsWhenPassing $ do
           []
           ["mock-user/own-repo", "opaque-org/some-repo"]
           $ do
-            testUser <- mkTestUser
-            usage <- usageOverview $ pure $ WebSession testUser (GhToken "user-with-an-opaque-org")
+            testUser <- mkTestUser (GhToken "user-with-an-opaque-org")
+            usage <- usageOverview $ pure $ WebSession testUser
             liftIO
               $ usage
               `shouldBe` UsageOverview
@@ -220,18 +222,26 @@ spec = inM $ beforeM_ truncateDBM $ aroundM_ suppressLogsWhenPassing $ do
               )
       it "lists garnix-enabled repos the user has access to" $ suppressLogs $ do
         mockGithubInterface $ do
-          testUser <- mkTestUser
-          enabledReposOf (Authenticated $ WebSession testUser (GhToken "user-with-no-builds"))
+          testUser <- mkTestUser (GhToken "user-with-no-builds")
+          enabledReposOf (Authenticated $ WebSession testUser)
             `shouldReturnM` EnabledRepos ["org1/repo1", "org2/repo2"]
 
-mkTestUser :: M User
-mkTestUser = do
-  now <- liftIO getCurrentTime
-  pure
-    $ User
-      { _userId = UserId 1,
-        _userGithubLogin = GhLogin "mock-user",
-        _userEmail = Email "mock-user@example.com",
-        _userSubscriptionType = FreeSubscription,
-        _userCreatedAt = now
-      }
+mkTestUser :: GhToken -> M User
+mkTestUser token = do
+  user <-
+    DB.newUser
+      (GhLogin "mock-user")
+      (Email "mock-user@example.com")
+      FreeSubscription
+      True
+  storeCredentialsFor (user ^. id) (nonExpiringCredentials token)
+  pure user
+
+nonExpiringCredentials :: GhToken -> GhUserCredentials Text
+nonExpiringCredentials (GhToken token) =
+  GhUserCredentials
+    { _ghUserCredentialsAccessToken = token,
+      _ghUserCredentialsAccessTokenExpiresAt = Nothing,
+      _ghUserCredentialsRefreshToken = Nothing,
+      _ghUserCredentialsRefreshTokenExpiresAt = Nothing
+    }

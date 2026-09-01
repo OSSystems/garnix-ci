@@ -11,6 +11,7 @@ import Garnix.AccessToken.Types
 import Garnix.DB qualified as DB
 import Garnix.Duration
 import Garnix.GithubInterface.Types
+import Garnix.GithubUserToken
 import Garnix.Monad
 import Garnix.Prelude
 import Garnix.Types hiding (Admin, installationId)
@@ -99,15 +100,15 @@ getUsageForOrg usage org installationStatus = do
       }
 
 usageOverview :: AuthResult AuthJwtPayload -> M UsageOverview
-usageOverview (Authenticated (WebSession user ghToken)) = do
-  owners <- getViewableOwners user ghToken
+usageOverview (Authenticated (WebSession user)) = do
+  owners <- withGithubUserToken user $ getViewableOwners user
   usage <- DB.getCurrentMonthUsages (Map.keys owners)
   UsageOverview <$> Map.traverseWithKey (getUsageForOrg usage) owners
 usageOverview _ = throw Unauthorized
 
 orgUsage :: AuthResult AuthJwtPayload -> GhRepoOwner -> M OrgUsage
-orgUsage (Authenticated (WebSession user ghToken)) org = do
-  owners <- getViewableOwners user ghToken
+orgUsage (Authenticated (WebSession user)) org = do
+  owners <- withGithubUserToken user $ getViewableOwners user
   installationStatus <- maybe (throw NotFound) pure $ Map.lookup org owners
   usage <- DB.getCurrentMonthUsages [org]
   getUsageForOrg usage org installationStatus
@@ -147,7 +148,7 @@ fallbackAccessTokenScopes :: AccessTokenScopes
 fallbackAccessTokenScopes = AccessTokenScopes {api = False, cache = True}
 
 createAccessToken :: AuthResult AuthJwtPayload -> CreateTokenRequestBody -> M CreateTokenResponseBody
-createAccessToken (Authenticated (WebSession user _)) (CreateTokenRequestBody name (fromMaybe fallbackAccessTokenScopes -> scopes)) = do
+createAccessToken (Authenticated (WebSession user)) (CreateTokenRequestBody name (fromMaybe fallbackAccessTokenScopes -> scopes)) = do
   when (scopes == AccessTokenScopes {api = False, cache = False}) $ do
     throw $ BadRequest "no scopes enabled"
   accessToken <- generateToken (user ^. id) name scopes
@@ -162,7 +163,7 @@ revokeAccessToken (Authenticated ((^. #user) -> user)) tokenId = do
 revokeAccessToken _ _ = throw Unauthorized
 
 enabledReposOf :: AuthResult AuthJwtPayload -> M EnabledRepos
-enabledReposOf (Authenticated (WebSession _ ghToken)) = do
+enabledReposOf (Authenticated (WebSession user)) = withGithubUserToken user $ \ghToken -> do
   installationIds <- getInstallations ghToken
   repos <- forConcurrently installationIds $ \id ->
     getReposInInstallationAccessibleTo id ghToken
