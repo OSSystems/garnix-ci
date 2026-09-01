@@ -238,6 +238,8 @@ mkFakeGithubInterface = do
             case repo of
               Nothing -> throw NotFound
               Just _ ->
-                pure $ PullRequestResult $ cs o <> "/" <> cs r <> "/pulls/1"
+                pure $ PullRequestResult $ cs o <> "/" <> cs r <> "/pulls/1",
+          _githubInterfaceExchangeOauthCode = \_ _ -> throw $ OtherError "exchangeOauthCode is not faked",
+          _githubInterfaceRefreshUserCredentials = \_ -> throw $ OtherError "refreshUserCredentials is not faked"
         }
     )

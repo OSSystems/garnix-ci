@@ -48,5 +48,7 @@ testGithubInterface tmp buildRef = do
         _githubInterfaceGetRepoPublicity = \_ _ _ -> return $ RepoIsPublic True,
         _githubInterfaceGetInstalledOrgs = \_ -> pure [],
         _githubInterfaceGetReposInInstallationAccessibleTo = \_ _ -> pure [],
-        _githubInterfaceOpenGithubPullRequest = \_ _ _ -> pure $ PullRequestResult ""
+        _githubInterfaceOpenGithubPullRequest = \_ _ _ -> pure $ PullRequestResult "",
+        _githubInterfaceExchangeOauthCode = \_ _ -> throw $ OtherError "exchangeOauthCode is not faked",
+        _githubInterfaceRefreshUserCredentials = \_ -> throw $ OtherError "refreshUserCredentials is not faked"
       }
