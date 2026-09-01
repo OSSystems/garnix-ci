@@ -11,14 +11,14 @@ where
 import Cradle
 import Data.Map.Strict qualified as Map
 import Garnix.Prelude
-import Garnix.Types (GhToken (..), NetRcFile (..), NixConfig (..))
+import Garnix.Types (GhToken (..), NetRcFile (..), NixConfig (..), accessTokensSetting)
 
 defaultNixConfig :: NixConfig
 defaultNixConfig =
   NixConfig $ Map.insert "experimental-features" (unwords ["nix-command", "flakes", "pipe-operators"]) mempty
 
 githubAccessTokenNixConfig :: GhToken -> NixConfig
-githubAccessTokenNixConfig token = NixConfig $ Map.insert "access-tokens" ("github.com=" <> cs (getGhToken token)) mempty
+githubAccessTokenNixConfig token = NixConfig $ Map.insert accessTokensSetting ("github.com=" <> cs (getGhToken token)) mempty
 
 fromNetRcFile :: NetRcFile -> NixConfig
 fromNetRcFile file = NixConfig $ Map.insert "netrc-file" (getNetRcFile file) mempty

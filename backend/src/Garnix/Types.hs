@@ -779,7 +779,17 @@ newtype NetRcFile = NetRcFile {getNetRcFile :: FilePath}
   deriving stock (Show)
 
 newtype NixConfig = NixConfig {getNixConfig :: StrictMap.Map String String}
-  deriving stock (Show)
+
+accessTokensSetting :: String
+accessTokensSetting = "access-tokens"
+
+instance Show NixConfig where
+  show (NixConfig config) =
+    "NixConfig {getNixConfig = " <> Prelude.show (StrictMap.mapWithKey redact config) <> "}"
+    where
+      redact key value
+        | key == accessTokensSetting = "<redacted>"
+        | otherwise = value
 
 instance Semigroup NixConfig where
   NixConfig left <> NixConfig right = NixConfig $ left <> right
