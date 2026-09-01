@@ -899,6 +899,28 @@ obfuscateGithubToken :: Text -> Text
 obfuscateGithubToken =
   [RE.regex|gh[pousr]_\w{15,255}|] . RE.match .~ "XXXXXXXXXXXXXXXX"
 
+newtype EncryptedText = EncryptedText {getEncryptedText :: StrictByteString}
+  deriving stock (Eq, Show, Generic)
+  deriving newtype
+    ( PGColumn "bytea",
+      PGParameter "bytea"
+    )
+
+data GhUserCredentials secret = GhUserCredentials
+  { _ghUserCredentialsAccessToken :: secret,
+    _ghUserCredentialsAccessTokenExpiresAt :: Maybe UTCTime,
+    _ghUserCredentialsRefreshToken :: Maybe secret,
+    _ghUserCredentialsRefreshTokenExpiresAt :: Maybe UTCTime
+  }
+  deriving stock (Eq, Show, Generic, Functor, Foldable, Traversable)
+
+instance (ToJSON secret) => ToJSON (GhUserCredentials secret) where
+  toEncoding = ourToEncoding
+  toJSON = ourToJSON
+
+instance (FromJSON secret) => FromJSON (GhUserCredentials secret) where
+  parseJSON = ourParseJSON
+
 data CommitSummary = CommitSummary
   { _commitSummaryRepoOwner :: GhRepoOwner,
     _commitSummaryRepoName :: GhRepoName,
@@ -985,6 +1007,8 @@ data Error
   | UserAlreadyExists GhLogin
   | DbError {statement :: Text, message :: Text}
   | GithubDidntGiveUsAToken
+  | GithubUserTokenRejected
+  | GithubSessionExpired
   | RedirectFound {location :: Text}
   | BadRequest {message :: Text}
   | Unauthorized
@@ -1053,6 +1077,8 @@ instance Pretty Error where
         <+> pretty (getGhLogin user)
         <+> "already exists"
     GithubDidntGiveUsAToken -> "Github didn't give us a user token"
+    GithubUserTokenRejected -> "Github rejected the user's access token"
+    GithubSessionExpired -> "Your github session has expired. Please log in again."
     DecodeError {..} ->
       "Error decoding ("
         <> pretty message
@@ -1172,6 +1198,8 @@ toErrorDetails e = case err e of
   e'@IsDeniedAccess -> errorDetails 403 $ cs $ Aeson.encode e'
   e'@UserAlreadyExists {} -> errorDetails 409 $ cs $ Aeson.encode e'
   e'@GithubDidntGiveUsAToken {} -> errorDetails 500 $ cs $ Aeson.encode e'
+  GithubUserTokenRejected -> errorDetails 401 "Github rejected the user's access token"
+  GithubSessionExpired -> errorDetails 401 "Your github session has expired. Please log in again."
   e'@InvalidEmail -> errorDetails 400 $ cs $ Aeson.encode e'
   e'@InvalidAccessToken -> errorDetails 401 $ cs $ Aeson.encode e'
   e'@RunProcessError {} ->
@@ -1564,6 +1592,7 @@ makeFields ''RepoInfo
 makeFields ''PackageInfo
 makeFields ''RepoConfig
 makeFields ''CommitSummary
+makeFields ''GhUserCredentials
 makeFields ''BuildUpdate
 makeFields ''Commit
 makeFields ''Run

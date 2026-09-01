@@ -325,7 +325,9 @@ data GithubInterface = GithubInterface
     _githubInterfaceGetRepoPublicity :: (HasCallStack) => InstallationAuth -> GhRepoOwner -> GhRepoName -> M RepoPublicity,
     _githubInterfaceGetInstalledOrgs :: (HasCallStack) => GhToken -> M [GhUserOrgMembership],
     _githubInterfaceGetReposInInstallationAccessibleTo :: (HasCallStack) => GH.Id GHA.Installation -> GhToken -> M [Text],
-    _githubInterfaceOpenGithubPullRequest :: (HasCallStack) => GhRepoOwner -> GhRepoName -> PullRequest -> M PullRequestResult
+    _githubInterfaceOpenGithubPullRequest :: (HasCallStack) => GhRepoOwner -> GhRepoName -> PullRequest -> M PullRequestResult,
+    _githubInterfaceExchangeOauthCode :: (HasCallStack) => Text -> OAuthCode -> M (GhUserCredentials Text),
+    _githubInterfaceRefreshUserCredentials :: (HasCallStack) => Text -> M (GhUserCredentials Text)
   }
 
 data RunReportStatus
@@ -436,6 +438,16 @@ openGithubPullRequest :: (HasCallStack) => GhRepoOwner -> GhRepoName -> PullRequ
 openGithubPullRequest owner name pr = do
   gh <- view #githubInterface
   _githubInterfaceOpenGithubPullRequest gh owner name pr
+
+exchangeOauthCode :: (HasCallStack) => Text -> OAuthCode -> M (GhUserCredentials Text)
+exchangeOauthCode callbackUrl code = do
+  gh <- view #githubInterface
+  _githubInterfaceExchangeOauthCode gh callbackUrl code
+
+refreshUserCredentials :: (HasCallStack) => Text -> M (GhUserCredentials Text)
+refreshUserCredentials token = do
+  gh <- view #githubInterface
+  _githubInterfaceRefreshUserCredentials gh token
 
 withWreqOptions :: (Wreq.Options -> IO a) -> M a
 withWreqOptions action = do

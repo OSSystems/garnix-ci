@@ -160,7 +160,9 @@ realGithubInterface =
           >>= \r -> pure $ RepoIsPublic $ not $ GH.repoPrivate r,
       _githubInterfaceGetInstalledOrgs = getInstalledOrgs,
       _githubInterfaceGetReposInInstallationAccessibleTo = getReposInInstallationAccessibleTo,
-      _githubInterfaceOpenGithubPullRequest = openGithubPullRequestInternal
+      _githubInterfaceOpenGithubPullRequest = openGithubPullRequestInternal,
+      _githubInterfaceExchangeOauthCode = exchangeOauthCodeInternal,
+      _githubInterfaceRefreshUserCredentials = refreshUserCredentialsInternal
     }
 
 getInstallations :: GhToken -> M [GH.Id GHA.Installation]
@@ -176,6 +178,7 @@ getInstallations (GhToken userToken) = do
   case result of
     Left githubError
       | isTimeout githubError -> throw GithubRequestTimeout
+      | isUnauthorized githubError -> throw GithubUserTokenRejected
       | otherwise -> do
           log Error
             $ "getInstallations failed. Error was:"
@@ -259,6 +262,7 @@ getReposInInstallationAccessibleTo installationId (GhToken userToken) = do
   case result of
     Left githubError
       | isTimeout githubError -> throw GithubRequestTimeout
+      | isUnauthorized githubError -> throw GithubUserTokenRejected
       | otherwise -> do
           log Error
             $ "getReposInInstallationAccessibleTo failed for installation "
@@ -313,6 +317,9 @@ getInstalledOrgs (GhToken tok) = do
     <> ")"
     <> " response: "
     <> cs (response ^. Wreq.responseBody)
+
+  when (response ^. Wreq.responseStatus . Wreq.statusCode == 401)
+    $ throw GithubUserTokenRejected
 
   when (response ^. Wreq.responseStatus . Wreq.statusCode >= 400)
     $ throw
@@ -393,6 +400,74 @@ handleGithubRequestErrors method owner name = \case
     log Error $ method <> " failed for '" <> show owner <> "/" <> show name <> "'. Error: " <> show err
     throw $ OtherError $ show err
   Right res -> pure res
+
+githubOauthTokenEndpoint :: String
+githubOauthTokenEndpoint = "https://github.com/login/oauth/access_token"
+
+exchangeOauthCodeInternal :: Text -> OAuthCode -> M (GhUserCredentials Text)
+exchangeOauthCodeInternal callbackUrl (OAuthCode code) = do
+  clientId <- view #githubClientId
+  clientSecret <- view #githubClientSecret
+  postToTokenEndpoint
+    "exchangeOauthCode"
+    [ "client_id" Wreq.:= clientId,
+      "client_secret" Wreq.:= clientSecret,
+      "code" Wreq.:= code,
+      "redirect_uri" Wreq.:= callbackUrl
+    ]
+
+refreshUserCredentialsInternal :: Text -> M (GhUserCredentials Text)
+refreshUserCredentialsInternal token = do
+  clientId <- view #githubClientId
+  clientSecret <- view #githubClientSecret
+  postToTokenEndpoint
+    "refreshUserCredentials"
+    [ "client_id" Wreq.:= clientId,
+      "client_secret" Wreq.:= clientSecret,
+      "grant_type" Wreq.:= ("refresh_token" :: Text),
+      "refresh_token" Wreq.:= token
+    ]
+
+postToTokenEndpoint :: Text -> [Wreq.FormParam] -> M (GhUserCredentials Text)
+postToTokenEndpoint method params = do
+  response <-
+    withWreqOptions $ \options ->
+      Wreq.postWith
+        ( options
+            & Wreq.header "Accept"
+            .~ ["application/json"]
+            & Wreq.checkResponse
+            ?~ \_ _ -> pure ()
+        )
+        githubOauthTokenEndpoint
+        params
+  now <- liftIO getCurrentTime
+  let status = response ^. Wreq.responseStatus . Wreq.statusCode
+      body = response ^. Wreq.responseBody
+      expiresAtIn k = body ^? key k . _Integer . to (\s -> addUTCTime (fromInteger s) now)
+  when (status >= 400) $ do
+    log Error $ method <> ": github answered with status " <> show status
+    throw GithubDidntGiveUsAToken
+  forM_ (body ^? key "error" . _String) $ \failure -> do
+    log Notice $ method <> ": github refused to hand out a token: " <> failure
+    throw GithubDidntGiveUsAToken
+  case body ^? key "access_token" . _String of
+    Nothing -> do
+      log Error $ method <> ": no access_token in github's answer"
+      throw GithubDidntGiveUsAToken
+    Just accessToken' ->
+      pure
+        $ GhUserCredentials
+          { _ghUserCredentialsAccessToken = accessToken',
+            _ghUserCredentialsAccessTokenExpiresAt = expiresAtIn "expires_in",
+            _ghUserCredentialsRefreshToken = body ^? key "refresh_token" . _String,
+            _ghUserCredentialsRefreshTokenExpiresAt = expiresAtIn "refresh_token_expires_in"
+          }
+
+isUnauthorized :: GH.Error -> Bool
+isUnauthorized (GH.HTTPError (HttpExceptionRequest _ (StatusCodeException r _))) =
+  statusCode (responseStatus r) == 401
+isUnauthorized _ = False
 
 isTimeout :: GH.Error -> Bool
 isTimeout (GH.HTTPError (HttpExceptionRequest _ ResponseTimeout)) = True
