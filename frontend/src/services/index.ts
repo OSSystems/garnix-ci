@@ -17,6 +17,12 @@ export type APIError = {
 
 export type APIResult<T> = Result<T, APIError>;
 
+let unauthorizedListener: (() => void) | null = null;
+
+export const onUnauthorized = (listener: (() => void) | null): void => {
+  unauthorizedListener = listener;
+};
+
 export const fetchFromAPI = async <Input, Output>(
   schema: z.Schema<Output, ZodTypeDef, Input>,
   method: "GET" | "POST" | "DELETE" | "PUT",
@@ -43,6 +49,7 @@ export const fetchFromAPI = async <Input, Output>(
   const rawBody = await response.text();
   const body = safeParseJson(rawBody);
   if (!response.ok) {
+    if (response.status === 401) unauthorizedListener?.();
     return Err({
       path,
       reason: "not-ok",

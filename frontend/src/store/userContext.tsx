@@ -15,7 +15,7 @@ import {
   getSignupLink,
   logout as logoutService,
 } from "@/services/auth";
-import { Err, Ok } from "@/services";
+import { Err, Ok, onUnauthorized } from "@/services";
 
 export type User = {
   name: string;
@@ -55,6 +55,12 @@ export const UserProvider = ({ children }: PropsWithChildren) => {
     setUserState({ state: "logged-out" });
     router.replace("/");
   }, [router]);
+  useEffect(() => {
+    onUnauthorized(() => {
+      void logoutService().finally(() => setUserState({ state: "logged-out" }));
+    });
+    return () => onUnauthorized(null);
+  }, []);
   useEffect(() => {
     void (async () => {
       const curUser = await getCurrentUser();
