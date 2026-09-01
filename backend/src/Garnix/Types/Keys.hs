@@ -8,6 +8,8 @@ module Garnix.Types.Keys
     ExportKeysOpts (..),
     RepoSecretsEncryptionKeyPath (..),
     RepoSecretsEncryptionPubKey (..),
+    ageEncrypt,
+    ageDecrypt,
     unsafeDecryptPrivateKey,
     exportKeys,
   )
@@ -44,27 +46,35 @@ newtype RepoSecretsEncryptionKeyPath = RepoSecretsEncryptionKeyPath FilePath
 
 newtype RepoSecretsEncryptionPubKey = RepoSecretsEncryptionPubKey Text
 
-makePrivateKey :: Text -> RepoSecretsEncryptionPubKey -> IO (Either Text PrivateKey)
-makePrivateKey unencrypted (RepoSecretsEncryptionPubKey i) = do
+ageEncrypt :: RepoSecretsEncryptionPubKey -> Text -> IO (Either Text SBS.ByteString)
+ageEncrypt (RepoSecretsEncryptionPubKey i) unencrypted = do
   result <-
     Shake.cmd
       ("age" :: String)
       ["--recipient" :: String, cs i]
       (Shake.Stdin $ cs unencrypted)
   case result of
-    (Shake.Exit ExitSuccess, Shake.Stdout (stdout :: SBS.ByteString)) -> pure . Right . PrivateKey $ stdout
-    _ -> pure $ Left "Encrypting keys failed"
+    (Shake.Exit ExitSuccess, Shake.Stdout (stdout :: SBS.ByteString)) -> pure $ Right stdout
+    _ -> pure $ Left "Encrypting failed"
 
-unsafeDecryptPrivateKey :: PrivateKey -> RepoSecretsEncryptionKeyPath -> IO (Either Text Text)
-unsafeDecryptPrivateKey (PrivateKey key) (RepoSecretsEncryptionKeyPath i) = do
+ageDecrypt :: RepoSecretsEncryptionKeyPath -> SBS.ByteString -> IO (Either Text Text)
+ageDecrypt (RepoSecretsEncryptionKeyPath i) encrypted = do
   result <-
     Shake.cmd
       ("age" :: String)
       ["--decrypt" :: String, "-i", i]
-      (Shake.StdinBS $ SBS.fromStrict key)
+      (Shake.StdinBS $ SBS.fromStrict encrypted)
   case result of
     (Shake.Exit ExitSuccess, Shake.Stdout (stdout :: String)) -> pure . Right $ cs stdout
-    _ -> pure $ Left "Decrypting keys failed"
+    _ -> pure $ Left "Decrypting failed"
+
+makePrivateKey :: Text -> RepoSecretsEncryptionPubKey -> IO (Either Text PrivateKey)
+makePrivateKey unencrypted pubKey =
+  bimap (const "Encrypting keys failed") PrivateKey <$> ageEncrypt pubKey unencrypted
+
+unsafeDecryptPrivateKey :: PrivateKey -> RepoSecretsEncryptionKeyPath -> IO (Either Text Text)
+unsafeDecryptPrivateKey (PrivateKey key) keyPath =
+  first (const "Decrypting keys failed") <$> ageDecrypt keyPath key
 
 data ExportKeysOpts = ExportKeysOpts
   { privateKey :: PrivateKey,
