@@ -56,6 +56,7 @@ import Garnix.S3Cache (compress, parallelisableBlocks, upload)
 import Garnix.TestHelpers
 import Garnix.TestHelpers.GithubInterface qualified as GH
 import Garnix.TestHelpers.Monad
+import Garnix.TestHelpers.NixStore (garbageCollectStorePath)
 import Garnix.TestHelpers.Reporter
 import Garnix.TestHelpers.WithServer
 import Garnix.Types
@@ -429,7 +430,7 @@ spec = do
       it "allows downloading public uploaded nar files from the new cache" $ withServer $ \server -> do
         (evalResult, storePath) <- localTestBuild simpleFlake
         upload mempty "owner" "repo" evalResult (RepoIsPublic True)
-        runSubProcess_ $ cmd "nix-store" & addArgs ["--delete", cs storePath, cs (evalResult ^. #derivation) :: Text]
+        liftIO $ garbageCollectStorePath (cs storePath)
         response <- assert200 $ server.get ("/api/cache/" <> cs (getHash storePath) <> ".narinfo")
         log Informational $ cs $ response ^. responseBody
         testCachePubKey <- liftIO $ getEnv "TEST_CACHE_PUB_KEY"
@@ -453,7 +454,7 @@ spec = do
               $ (#publicity .~ RepoIsPublic False)
             (evalResult, storePath) <- localTestBuild simpleFlake
             upload mempty (GhRepoOwner $ user ^. githubLogin) "repo" evalResult (RepoIsPublic False)
-            runSubProcess_ $ cmd "nix-store" & addArgs ["--delete", cs storePath, cs (evalResult ^. #derivation) :: Text]
+            liftIO $ garbageCollectStorePath (cs storePath)
             narInfoResponse <- server.get ("/api/cache/" <> cs (getHash storePath) <> ".narinfo")
             narInfoResponse ^. responseStatus `shouldBeM` notFound404
 
@@ -463,7 +464,7 @@ spec = do
                 $ (#publicity .~ RepoIsPublic False)
               (evalResult, storePath) <- localTestBuild simpleFlake
               upload mempty (GhRepoOwner $ user ^. githubLogin) "repo" evalResult (RepoIsPublic False)
-              runSubProcess_ $ cmd "nix-store" & addArgs ["--delete", cs storePath, cs (evalResult ^. #derivation) :: Text]
+              liftIO $ garbageCollectStorePath (cs storePath)
               pure storePath
 
         let createAccessToken server scopes = do
@@ -527,7 +528,7 @@ spec = do
                 $ (#publicity .~ RepoIsPublic False)
               (evalResult, storePath) <- localTestBuild simpleFlake
               upload mempty (GhRepoOwner $ user ^. githubLogin) "repo" evalResult (RepoIsPublic False)
-              runSubProcess_ $ cmd "nix-store" & addArgs ["--delete", cs storePath, cs (evalResult ^. #derivation) :: Text]
+              liftIO $ garbageCollectStorePath (cs storePath)
               let plainTextToken = "hunter2"
               hashPassword plainTextToken >>= DB.insertAccessTokenForUser (user ^. id) "test token" (AccessTokenScopes {api = False, cache = True})
               narInfoResponse <-
