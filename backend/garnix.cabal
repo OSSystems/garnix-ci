@@ -67,6 +67,7 @@ library
       Garnix.DB
       Garnix.DB.FeatureFlags
       Garnix.DB.FeatureFlags.Types
+      Garnix.DB.Hosting
       Garnix.DB.ModuleValues
       Garnix.Duration
       Garnix.ExpiringCache
@@ -814,6 +815,7 @@ test-suite spec
       Garnix.DB
       Garnix.DB.FeatureFlags
       Garnix.DB.FeatureFlags.Types
+      Garnix.DB.Hosting
       Garnix.DB.ModuleValues
       Garnix.Duration
       Garnix.ExpiringCache
