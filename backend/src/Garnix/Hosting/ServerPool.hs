@@ -10,6 +10,7 @@ module Garnix.Hosting.ServerPool
   )
 where
 
+import Control.Exception.Safe qualified as Safe
 import Garnix.DB.Hosting qualified as DB
 import Garnix.Hosting.Types
 import Garnix.Monad
@@ -50,14 +51,21 @@ warmPool tier = do
   provider <- provisionerProvider
   poolId <- DB.createPoolServer provider tier
   server <-
-    provisionServer poolId tier `onException'` DB.deletePoolServer poolId
+    provisionServer poolId tier `cleaningUpOnFailure` DB.deletePoolServer poolId
   DB.markPoolServerReady server
   pure poolId
-  where
-    onException' :: M a -> M () -> M a
-    onException' action cleanup = action `catchAny` \problem -> do
-      cleanup
-      throwM problem
+
+-- | Run @cleanup@ if @action@ fails, then re-raise.
+--
+-- Both channels are caught. 'M' carries a refusal through 'MonadError', which
+-- an exception handler alone never sees, and a driver can still raise a
+-- genuine IO exception.
+cleaningUpOnFailure :: M a -> M () -> M a
+cleaningUpOnFailure action cleanup =
+  Safe.try (try action) >>= \case
+    Right (Right value) -> pure value
+    Right (Left problem) -> cleanup >> rethrow problem
+    Left (problem :: SomeException) -> cleanup >> throwM problem
 
 -- | Get a server for a deployment: claim a warm instance if there is one,
 -- otherwise create one within budget.
@@ -98,8 +106,8 @@ releaseServer serverId = do
   case server of
     Nothing -> throw $ OtherError "releaseServer: no such server"
     Just info -> do
-      result <- case _serverInfoInstanceId info of
-        Nothing -> pure (Right ())
-        Just instanceId -> (Right <$> deleteServer instanceId) `catchAny` (pure . Left)
+      let teardown = case _serverInfoInstanceId info of
+            Nothing -> pure ()
+            Just instanceId -> deleteServer instanceId
+      teardown `cleaningUpOnFailure` DB.endServer serverId
       DB.endServer serverId
-      either throwM pure result
