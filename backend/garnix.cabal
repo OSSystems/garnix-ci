@@ -724,6 +724,7 @@ test-suite spec
       Garnix.API.DevSpec
       Garnix.API.GhWebhooksSpec
       Garnix.API.HealthSpec
+      Garnix.API.HostsSpec
       Garnix.API.KeysSpec
       Garnix.API.ModulesSpec
       Garnix.API.RunsSpec
@@ -738,6 +739,7 @@ test-suite spec
       Garnix.DB.HostingSpec
       Garnix.DBSpec
       Garnix.Hosting.BudgetSpec
+      Garnix.Hosting.DeploySpec
       Garnix.Hosting.ServerPoolSpec
       Garnix.Hosting.TypesSpec
       Garnix.ExpiringCacheSpec
