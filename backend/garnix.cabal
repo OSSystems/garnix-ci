@@ -75,6 +75,8 @@ library
       Garnix.GithubInterface
       Garnix.GithubInterface.Types
       Garnix.GithubUserToken
+      Garnix.Hosting.Budget
+      Garnix.Hosting.Types
       Garnix.Incremental
       Garnix.Limits
       Garnix.Log
@@ -815,6 +817,8 @@ test-suite spec
       Garnix.GithubInterface
       Garnix.GithubInterface.Types
       Garnix.GithubUserToken
+      Garnix.Hosting.Budget
+      Garnix.Hosting.Types
       Garnix.Incremental
       Garnix.Limits
       Garnix.Log
