@@ -1574,11 +1574,29 @@ getRecentHeartbeats =
     |]
 
 getPrDeployDurationForOwner :: GhRepoOwner -> M Duration
-getPrDeployDurationForOwner _ = pure emptyDuration
-
-getCurrentMonthUsage :: GhRepoOwner -> M Duration
-getCurrentMonthUsage owner = do
-  fromMaybe emptyDuration . Map.lookup owner <$> getCurrentMonthUsages [owner]
+getPrDeployDurationForOwner owner = do
+  res <-
+    pgQuery
+      [pgSQL|
+        SELECT
+          SUM(date_part('EPOCH',
+            ( COALESCE(servers.ended_at, NOW()) -
+              GREATEST(servers.ready_at, date_trunc('month', NOW(), 'UTC'))
+            )
+          )) as _server_seconds
+        FROM servers
+        INNER JOIN builds
+        ON servers.configuration_build_id = builds.id
+        WHERE builds.repo_user = ${owner}
+        AND servers.pull_request IS NOT NULL
+        AND servers.ready_at IS NOT NULL
+        AND (servers.ended_at IS NULL OR
+             servers.ended_at >= date_trunc('month', NOW(), 'UTC'));
+      |]
+  case res of
+    [Just serverSeconds] -> pure $ fromSeconds @Double serverSeconds
+    [Nothing] -> pure emptyDuration
+    _ -> throw $ OtherError "Impossible: more than one result"
 
 getCurrentMonthUsages ::
   [GhRepoOwner] ->
