@@ -29,6 +29,7 @@ import Garnix.DB.FeatureFlags (withRecachedFeatureFlags)
 import Garnix.DB.FeatureFlags.Types (getFeatureFlagConfig)
 import Garnix.Duration
 import Garnix.GithubInterface
+import Garnix.LocalProvisioner (localProvisionerInterface)
 import Garnix.Monad
 import Garnix.Monad.Metrics (registerMetrics, serveMetrics)
 import Garnix.Monad.Pool qualified
@@ -393,8 +394,9 @@ withEnv testFeatures buildLogsDir buildLogsReportingPort action = do
   featureFlagConfig <- getFeatureFlagConfig
   fodCheckPool <- Garnix.Monad.Pool.newPool 20 metrics #fodCheckQueueWaitTime #fodCheckQueueLen
   compressionBudget <- newCompressionBudget
-  let provisionerSocket = Nothing
-      provisioner = unconfiguredProvisioner
+  provisionerSocket <- lookupEnv "GARNIX_PROVISIONER_SOCKET"
+  let provisioner =
+        maybe unconfiguredProvisioner localProvisionerInterface provisionerSocket
   withDefaultLogger $ \defaultLogger -> do
     let env =
           Env
