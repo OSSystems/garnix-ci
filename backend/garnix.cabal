@@ -43,6 +43,7 @@ library
       Garnix.API.Dev
       Garnix.API.GhWebhooks
       Garnix.API.Health
+      Garnix.API.Hosts
       Garnix.API.Keys
       Garnix.API.Modules
       Garnix.API.Runs
@@ -78,6 +79,7 @@ library
       Garnix.GithubUserToken
       Garnix.Hosting.Budget
       Garnix.Hosting.Deploy
+      Garnix.Hosting.Helpers
       Garnix.Hosting.ServerPool
       Garnix.Hosting.Types
       Garnix.Incremental
@@ -798,6 +800,7 @@ test-suite spec
       Garnix.API.Dev
       Garnix.API.GhWebhooks
       Garnix.API.Health
+      Garnix.API.Hosts
       Garnix.API.Keys
       Garnix.API.Modules
       Garnix.API.Runs
@@ -833,6 +836,7 @@ test-suite spec
       Garnix.GithubUserToken
       Garnix.Hosting.Budget
       Garnix.Hosting.Deploy
+      Garnix.Hosting.Helpers
       Garnix.Hosting.ServerPool
       Garnix.Hosting.Types
       Garnix.Incremental
