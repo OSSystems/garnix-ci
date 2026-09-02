@@ -189,6 +189,23 @@ in
       example = "alice";
     };
 
+    provisionerSocket = lib.mkOption {
+      type = lib.types.nullOr lib.types.str;
+      default = null;
+      example = "/run/garnix-provisioner/provisioner.sock";
+      description = ''
+        Unix socket of the garnix microVM provisioner daemon
+        (garnix.local-provisioner.socketPath from the
+        garnix-provisioner NixOS module).
+
+        Hosting is off while this is null: any hosting request fails
+        immediately saying no provisioner is configured, rather than failing
+        later with a confusing symptom. Set it to turn hosting on, and put
+        the server's user in the daemon's backendGroup so it can reach the
+        socket.
+      '';
+    };
+
     sessionLifetimeSeconds = lib.mkOption {
       type = lib.types.nullOr lib.types.ints.positive;
       default = null;
@@ -603,6 +620,8 @@ in
           "GARNIX_DEFAULT_EVAL_MEMORY_GB=${toString cfg.evalMemory.defaultGigabytes}"
         ++ lib.optional (cfg.evalMemory.perRepository != { })
           "GARNIX_REPO_EVAL_MEMORY=${lib.concatStringsSep "," (lib.mapAttrsToList (slug: gigabytes: "${slug}=${toString gigabytes}") cfg.evalMemory.perRepository)}"
+        ++ lib.optional (cfg.provisionerSocket != null)
+          "GARNIX_PROVISIONER_SOCKET=${cfg.provisionerSocket}"
         ++ lib.optionals (cfg.database.ssl.mode != "disable") [
           # postgresql-typed reads TPG_TLS via lookupEnv — presence enables
           # TLS regardless of value. Only emit when ssl is actually on.

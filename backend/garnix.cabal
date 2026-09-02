@@ -78,6 +78,7 @@ library
       Garnix.Hosting.Budget
       Garnix.Hosting.Types
       Garnix.Incremental
+      Garnix.LocalProvisioner
       Garnix.Limits
       Garnix.Log
       Garnix.Modules
@@ -210,6 +211,7 @@ library
     , lifted-base
     , monad-control
     , mtl
+    , network
     , network-uri
     , nix-derivation
     , oauth2-simple
@@ -355,6 +357,7 @@ executable convert-hashids
     , lifted-base
     , monad-control
     , mtl
+    , network
     , network-uri
     , nix-derivation
     , oauth2-simple
@@ -501,6 +504,7 @@ executable generate-yaml-config-docs
     , lifted-base
     , monad-control
     , mtl
+    , network
     , network-uri
     , nix-derivation
     , oauth2-simple
@@ -646,6 +650,7 @@ executable server
     , lifted-base
     , monad-control
     , mtl
+    , network
     , network-uri
     , nix-derivation
     , oauth2-simple
@@ -820,6 +825,7 @@ test-suite spec
       Garnix.Hosting.Budget
       Garnix.Hosting.Types
       Garnix.Incremental
+      Garnix.LocalProvisioner
       Garnix.Limits
       Garnix.Log
       Garnix.Modules
@@ -962,6 +968,7 @@ test-suite spec
     , mockery
     , monad-control
     , mtl
+    , network
     , neat-interpolation
     , network-uri
     , nix-derivation
