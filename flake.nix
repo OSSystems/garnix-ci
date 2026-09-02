@@ -126,6 +126,7 @@
           frontend-age-wasm = import ./frontend/age-wasm subDirInputs;
           examples = import ./examples subDirInputs;
           provisioner = import ./provisioner subDirInputs;
+          hosting-gateway = import ./hosting-gateway subDirInputs;
         in
         {
           apps = lib.mapAttrs
@@ -142,9 +143,12 @@
             namespace "backend" backend.checks //
             namespace "frontend" frontend.checks //
             namespace "frontend" (namespace "ageWasm" frontend-age-wasm.checks) //
-            namespace "provisioner" provisioner.checks;
+            namespace "provisioner" provisioner.checks //
+            namespace "hostingGateway" hosting-gateway.checks;
 
           packages =
+            lib.mapAttrs' (name: value: { name = "hosting-gateway/${name}"; inherit value; })
+              hosting-gateway.packages //
             namespace "backend" backend.packages //
             namespace "frontend" frontend.packages //
             namespace "frontend" (namespace "ageWasm" frontend-age-wasm.packages);
@@ -160,7 +164,8 @@
               (pkgs.callPackage ./nix/packages/withSecrets.nix { })
             ]
             ++ backend.devShellInputs
-            ++ frontend.devShellInputs;
+            ++ frontend.devShellInputs
+            ++ hosting-gateway.devShellInputs;
           };
         }
       )
@@ -173,6 +178,7 @@
           garnix.local-provisioner.guestProfile =
             nixpkgs.lib.mkDefault "${flakeInputs.garnix-guest-lib}/guest-profile.nix";
         };
+        garnix-hosting-gateway = ./hosting-gateway/nixos-module.nix;
         garnix-guest = flakeInputs.garnix-guest-lib.nixosModules.garnix-guest;
       };
       nixosConfigurations =
