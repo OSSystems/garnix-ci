@@ -733,7 +733,9 @@ test-suite spec
       Garnix.DB.FeatureFlagsSpec
       Garnix.DB.HostingSpec
       Garnix.DBSpec
+      Garnix.Hosting.BudgetSpec
       Garnix.Hosting.ServerPoolSpec
+      Garnix.Hosting.TypesSpec
       Garnix.ExpiringCacheSpec
       Garnix.FlakeInputAuthorizationSpec
       Garnix.GetAttributesSpec
