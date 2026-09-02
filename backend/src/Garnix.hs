@@ -406,6 +406,8 @@ withEnv testFeatures buildLogsDir buildLogsReportingPort action = do
   hostingSshKeys <-
     maybe [] (map cs . filter (not . T.null) . T.splitOn ":" . cs)
       <$> lookupEnv "GARNIX_HOSTING_SSH_KEYS"
+  guestSubnetPrefix <-
+    cs . fromMaybe "10.111.0." <$> lookupEnv "GARNIX_GUEST_SUBNET_PREFIX"
   hostingBudget <- do
     vcpuSpec <- (>>= parseBudget) . fmap cs <$> lookupEnv "GARNIX_HOSTING_VCPU_BUDGET"
     memorySpec <- (>>= parseBudget) . fmap cs <$> lookupEnv "GARNIX_HOSTING_MEMORY_BUDGET"
@@ -471,7 +473,8 @@ withEnv testFeatures buildLogsDir buildLogsReportingPort action = do
               statsReportUrl,
               deployMutex,
               hostingBudget,
-              hostingSshKeys
+              hostingSshKeys,
+              guestSubnetPrefix
             }
     action env
 
