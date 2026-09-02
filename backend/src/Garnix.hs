@@ -29,8 +29,12 @@ import Garnix.DB.FeatureFlags (withRecachedFeatureFlags)
 import Garnix.DB.FeatureFlags.Types (getFeatureFlagConfig)
 import Garnix.Duration
 import Garnix.GithubInterface
+import Garnix.Hosting.Budget (hostTotalMiB, hostVcpus, parseBudget, resolveBudget)
+import Garnix.Hosting.Deploy (cleanupUnreadyServers, stopUnusedServers)
+import Garnix.Hosting.Types (HostingBudget (..))
 import Garnix.LocalProvisioner (localProvisionerInterface)
 import Garnix.Monad
+import Garnix.Monad.KeyedMutex (newKeyedMutex)
 import Garnix.Monad.Metrics (registerMetrics, serveMetrics)
 import Garnix.Monad.Pool qualified
 import Garnix.NixConfig (defaultNixConfig, githubAccessTokenNixConfig)
@@ -58,10 +62,6 @@ import System.Environment (getEnv)
 import System.Systemd.Daemon (notifyReady)
 import Text.Read (readMaybe)
 import WithCli (HasArguments, withCli)
-import Garnix.Monad.KeyedMutex (newKeyedMutex)
-import Garnix.Hosting.Types (HostingBudget (..))
-import Garnix.Hosting.Budget (hostTotalMiB, hostVcpus, parseBudget, resolveBudget)
-import Garnix.Hosting.Deploy (cleanupUnreadyServers, stopUnusedServers)
 
 run :: IO ()
 run = withCli runWith
@@ -410,8 +410,8 @@ withEnv testFeatures buildLogsDir buildLogsReportingPort action = do
   guestSubnetPrefix <-
     cs . fromMaybe "10.111.0." <$> lookupEnv "GARNIX_GUEST_SUBNET_PREFIX"
   hostingBudget <- do
-    vcpuSpec <- (>>= parseBudget) . fmap cs <$> lookupEnv "GARNIX_HOSTING_VCPU_BUDGET"
-    memorySpec <- (>>= parseBudget) . fmap cs <$> lookupEnv "GARNIX_HOSTING_MEMORY_BUDGET"
+    vcpuSpec <- (>>= parseBudget . cs) <$> lookupEnv "GARNIX_HOSTING_VCPU_BUDGET"
+    memorySpec <- (>>= parseBudget . cs) <$> lookupEnv "GARNIX_HOSTING_MEMORY_BUDGET"
     HostingBudget
       <$> (flip resolveBudget vcpuSpec <$> hostVcpus)
       <*> (flip resolveBudget memorySpec . fromMaybe 0 <$> hostTotalMiB)

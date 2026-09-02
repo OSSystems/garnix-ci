@@ -36,16 +36,16 @@ import Garnix.BuildLogs.Types (LogLine)
 import Garnix.DB.FeatureFlags.Types (FeatureFlagConfig)
 import Garnix.Duration
 import Garnix.GithubInterface.Types
+import Garnix.Hosting.Types
 import Garnix.Log
 import Garnix.Monad.ForkT
+import Garnix.Monad.KeyedMutex (KeyedMutex)
 import Garnix.Monad.Memoization (MemoTable)
 import Garnix.Monad.Metrics (Metrics, incrementEvent)
-import Garnix.Monad.KeyedMutex (KeyedMutex)
 import Garnix.Monad.Pool (Pool)
 import Garnix.Nix.Types (StoreHash)
 import Garnix.Nix.Types qualified as Nix
 import Garnix.Prelude
-import Garnix.Hosting.Types
 import Garnix.Types hiding (ghRunId, statusCode)
 import GitHub qualified as GH
 import GitHub.App.Auth (InstallationAuth)
@@ -568,7 +568,6 @@ unconfiguredProvisioner =
       throw
         $ OtherError
           "no hosting provisioner is configured on this server (set GARNIX_PROVISIONER_SOCKET)"
-
 
 provisionerProvider :: M Provider
 provisionerProvider = _provisionerProvider <$> view #provisioner

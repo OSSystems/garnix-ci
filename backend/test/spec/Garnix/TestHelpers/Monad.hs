@@ -53,7 +53,9 @@ import Garnix (envMocks, lookupOptionalSecret)
 import Garnix.Async qualified
 import Garnix.DB.FeatureFlags.Types (getFeatureFlagConfig)
 import Garnix.Duration
+import Garnix.Hosting.Types (HostingBudget (..))
 import Garnix.Monad
+import Garnix.Monad.KeyedMutex (newKeyedMutex)
 import Garnix.Monad.Metrics (registerMetrics)
 import Garnix.Monad.Pool qualified
 import Garnix.NixConfig (defaultNixConfig, githubAccessTokenNixConfig)
@@ -73,8 +75,6 @@ import Test.Hspec
 import Test.Hspec.Core.Spec qualified as Hspec
 import Test.Hspec.Golden (Golden)
 import Prelude qualified (Show (..))
-import Garnix.Monad.KeyedMutex (newKeyedMutex)
-import Garnix.Hosting.Types (HostingBudget (..))
 
 cleanDbConn :: Env -> IO ()
 cleanDbConn env =
