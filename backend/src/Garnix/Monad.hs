@@ -44,6 +44,7 @@ import Garnix.Monad.Pool (Pool)
 import Garnix.Nix.Types (StoreHash)
 import Garnix.Nix.Types qualified as Nix
 import Garnix.Prelude
+import Garnix.Hosting.Types
 import Garnix.Types hiding (ghRunId, statusCode)
 import GitHub qualified as GH
 import GitHub.App.Auth (InstallationAuth)
@@ -124,7 +125,11 @@ data Env = Env
     githubLogDebounceDuration :: Duration,
     featureFlagConfig :: FeatureFlagConfig,
     fodCheckPool :: Garnix.Monad.Pool.Pool (),
-    compressionBudget :: CompressionBudget
+    compressionBudget :: CompressionBudget,
+    -- | How hosted servers get created and torn down.
+    provisioner :: Provisioner,
+    -- | Unix socket of the local microVM provisioner daemon, when configured.
+    provisionerSocket :: Maybe FilePath
   }
   deriving stock (Generic)
 
@@ -378,6 +383,19 @@ data GithubInterface = GithubInterface
     _githubInterfaceCommentOnPullRequest :: (HasCallStack) => RepoInfo -> GhPullRequestId -> Text -> M ()
   }
 
+-- * Provisioner
+
+-- | The seam between hosting and whatever actually creates servers.
+data Provisioner = Provisioner
+  { -- | Which provider rows created through this interface belong to.
+    _provisionerProvider :: Provider,
+    _provisionerProvisionServer :: PreprovisionedServerId -> ServerTier -> M PreprovisionedServer,
+    -- | Attach deployment metadata to an instance, where the provider supports it.
+    _provisionerUpdateMetadata :: RepoInfo -> DeploymentType -> Build -> InstanceId -> M (),
+    _provisionerDeleteServer :: InstanceId -> M (),
+    _provisionerGetServerStatus :: InstanceId -> M Text
+  }
+
 data RunReportStatus
   = RunReportStatusInProgress
   | RunReportStatusSuccess
@@ -512,6 +530,49 @@ withWreqOptions action = do
   manager <- view #manager
   let options = Wreq.defaults & Wreq.manager .~ Right manager
   liftIO $ action options
+
+-- * Provisioner accessors
+
+-- | The interface on a host with no provisioner configured; every action refuses.
+unconfiguredProvisioner :: Provisioner
+unconfiguredProvisioner =
+  Provisioner
+    { _provisionerProvider = MicroVM,
+      _provisionerProvisionServer = \_ _ -> refuse,
+      _provisionerUpdateMetadata = \_ _ _ _ -> refuse,
+      _provisionerDeleteServer = const refuse,
+      _provisionerGetServerStatus = const refuse
+    }
+  where
+    refuse :: M a
+    refuse =
+      throw
+        $ OtherError
+          "no hosting provisioner is configured on this server (set GARNIX_PROVISIONER_SOCKET)"
+
+
+provisionerProvider :: M Provider
+provisionerProvider = _provisionerProvider <$> view #provisioner
+
+provisionServer :: PreprovisionedServerId -> ServerTier -> M PreprovisionedServer
+provisionServer poolId tier = do
+  iface <- view #provisioner
+  _provisionerProvisionServer iface poolId tier
+
+updateServerMetadata :: RepoInfo -> DeploymentType -> Build -> InstanceId -> M ()
+updateServerMetadata repoInfo deploymentType build instanceId = do
+  iface <- view #provisioner
+  _provisionerUpdateMetadata iface repoInfo deploymentType build instanceId
+
+deleteServer :: InstanceId -> M ()
+deleteServer instanceId = do
+  iface <- view #provisioner
+  _provisionerDeleteServer iface instanceId
+
+getServerStatus :: InstanceId -> M Text
+getServerStatus instanceId = do
+  iface <- view #provisioner
+  _provisionerGetServerStatus iface instanceId
 
 getNixXdgCacheDir :: M String
 getNixXdgCacheDir =
