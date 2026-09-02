@@ -356,9 +356,22 @@ stopUnusedServers :: M ()
 stopUnusedServers = do
   domain <- view #hostingDomain
   PrHostList candidates <- DBHosting.getShutdownCandidates
-  heartbeats <- DB.getRecentHeartbeats
-  let idle host = (hostToDomainName host <> "." <> domain) `notElem` heartbeats
-  traverse_ (stopServer . _hostServerId) (filter idle candidates)
+  unless (null candidates) $ do
+    heartbeats <- DB.getRecentHeartbeats
+    -- No heartbeats at all means nobody is reporting — a gateway that is down
+    -- or not configured — not that every server is idle. Tearing down live
+    -- deploys because the reporter is broken is far worse than leaving an
+    -- idle one running until it comes back.
+    if null heartbeats
+      then
+        log Warning
+          $ "stopUnusedServers: "
+          <> show (length candidates)
+          <> " server(s) are old enough to reap, but no heartbeats have been"
+          <> " reported at all. Leaving them alone; is the gateway running?"
+      else do
+        let idle host = (hostToDomainName host <> "." <> domain) `notElem` heartbeats
+        traverse_ (stopServer . _hostServerId) (filter idle candidates)
 
 -- * Bringing one server up
 
