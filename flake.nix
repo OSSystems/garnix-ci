@@ -10,6 +10,13 @@
 
   inputs.flake-utils.url = "github:numtide/flake-utils";
 
+  inputs.garnix-guest-lib = {
+    url = "github:OSSystems/garnix-guest-lib";
+    inputs = {
+      nixpkgs.follows = "nixpkgs";
+    };
+  };
+
   inputs.treetop = {
     url = "github:soenkehahn/treetop";
     inputs = {
@@ -118,6 +125,7 @@
           frontend = import ./frontend subDirInputs;
           frontend-age-wasm = import ./frontend/age-wasm subDirInputs;
           examples = import ./examples subDirInputs;
+          provisioner = import ./provisioner subDirInputs;
         in
         {
           apps = lib.mapAttrs
@@ -133,7 +141,8 @@
           checks =
             namespace "backend" backend.checks //
             namespace "frontend" frontend.checks //
-            namespace "frontend" (namespace "ageWasm" frontend-age-wasm.checks);
+            namespace "frontend" (namespace "ageWasm" frontend-age-wasm.checks) //
+            namespace "provisioner" provisioner.checks;
 
           packages =
             namespace "backend" backend.packages //
@@ -159,6 +168,12 @@
       nixosModules = {
         garnix = ./nix/modules/garnix-server.nix;
         default = ./nix/modules/garnix-server.nix;
+        garnix-provisioner = {
+          imports = [ ./nix/modules/microvm-provisioner.nix ];
+          garnix.local-provisioner.guestProfile =
+            nixpkgs.lib.mkDefault "${flakeInputs.garnix-guest-lib}/guest-profile.nix";
+        };
+        garnix-guest = flakeInputs.garnix-guest-lib.nixosModules.garnix-guest;
       };
       nixosConfigurations =
         (import ./examples/example-multi-server-deployment.nix {
