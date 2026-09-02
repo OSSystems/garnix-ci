@@ -12,6 +12,7 @@ import Garnix.API.ConfigSchema (garnixConfigJsonSchema)
 import Garnix.API.Dev (DevAPI, devAPI)
 import Garnix.API.GhWebhooks
 import Garnix.API.Health
+import Garnix.API.Hosts (HostsAPI, hostsAPI)
 import Garnix.API.Keys
 import Garnix.API.Modules
 import Garnix.API.Runs (RunAPI, runAPI)
@@ -51,7 +52,11 @@ data WholeAPI r = WholeAPI
     waitlist :: r :- "api" :> "waitlist" :> ReqBody '[JSON] Email :> Post '[JSON] (),
     cache :: r :- "api" :> "cache" :> ToServantApi CacheAPI,
     garnixConfigSchema :: r :- "api" :> "garnix-config-schema.json" :> Get '[JSON] JSONSchema,
-    health :: r :- "api" :> "health" :> ToServantApi HealthAPI
+    health :: r :- "api" :> "health" :> ToServantApi HealthAPI,
+    -- | Not behind @Auth@ at this level: most of these are consumed by the
+    -- gateway and by deployed guests, which have no session. The two that do
+    -- need a user carry their own @Auth@ (see "Garnix.API.Hosts").
+    hosts :: r :- "api" :> "hosts" :> ToServantApi HostsAPI
   }
   deriving stock (Generic)
 
@@ -95,7 +100,8 @@ wholeAPI =
       waitlist = waitlistAPI,
       cache = toServant cacheAPI,
       garnixConfigSchema = pure garnixConfigJsonSchema,
-      health = toServant healthAPI
+      health = toServant healthAPI,
+      hosts = toServant hostsAPI
     }
 
 getConfig :: M FrontendConfig

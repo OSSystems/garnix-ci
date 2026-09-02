@@ -145,7 +145,10 @@ data Env = Env
     -- | Absolute caps on what all guests together may hold.
     hostingBudget :: HostingBudget,
     -- | Private keys authorized on every guest, used for deploy ssh.
-    hostingSshKeys :: [FilePath]
+    hostingSshKeys :: [FilePath],
+    -- | Dotted prefix of the bridge subnet guests live on, e.g. @"10.111.0."@.
+    -- A guest's unauthenticated stats push has to come from an address on it.
+    guestSubnetPrefix :: Text
   }
   deriving stock (Generic)
 
