@@ -20,6 +20,7 @@ import Data.Aeson.Types (Parser, parseEither)
 import Data.ByteString (ByteString)
 import Data.ByteString.Lazy qualified as BSL
 import Data.Containers.ListUtils (nubOrd)
+import Data.Map.Strict (Map)
 import Data.Set qualified as Set
 import Data.Text qualified as T
 import Data.Text.Format.Numbers (PrettyCfg (PrettyCfg), prettyF)
@@ -97,6 +98,7 @@ data Env = Env
     workingDir :: FilePath,
     nixXdgCacheDir :: Maybe FilePath,
     userNixConfig :: NixConfig,
+    evalMemoryConfig :: EvalMemoryConfig,
     cookieSettings :: CookieSettings,
     jwtSettings :: JWTSettings,
     sessionLifetime :: Duration,
@@ -147,6 +149,12 @@ parseTestFeature feature = case readMaybe feature of
       <> cs feature
       <> ". Possible values: "
       <> T.intercalate ", " (map show [minBound .. maxBound :: TestFeature])
+
+data EvalMemoryConfig = EvalMemoryConfig
+  { defaultEvalMemory :: Memory,
+    perRepositoryEvalMemory :: Map (GhRepoOwner, GhRepoName) Memory
+  }
+  deriving (Generic)
 
 data S3CacheEnv = S3CacheEnv
   { amazonkaEnv :: Amazonka.Env,
