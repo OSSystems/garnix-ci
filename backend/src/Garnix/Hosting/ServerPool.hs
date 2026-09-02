@@ -116,7 +116,9 @@ sshArgsFor server = case serverAddressText (_serverInfoAddress server) of
   Nothing ->
     throw
       $ ProvisioningError
-      $ "server " <> showPretty (_serverInfoId server) <> " has no address to ssh to"
+      $ "server "
+      <> showPretty (_serverInfoId server)
+      <> " has no address to ssh to"
   Just address -> sshArgsForAddress address
 
 sshArgsForAddress :: Text -> M (Text, [Text])

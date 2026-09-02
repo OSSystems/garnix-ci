@@ -39,13 +39,13 @@ import Garnix.Monad
 import Garnix.Prelude
 import Garnix.Types
   ( Branch (..),
-    HasGhRepoName (ghRepoName),
-    HasGhRepoOwner (ghRepoOwner),
     BuildId,
     Error (..),
     GhPullRequestId,
     GhRepoName,
     GhRepoOwner,
+    HasGhRepoName (ghRepoName),
+    HasGhRepoOwner (ghRepoOwner),
     PackageName (..),
     RepoInfo,
   )
@@ -385,11 +385,11 @@ exposedToJSON result httpPorts =
     [ "ssh_port" Aeson..= _exposeResultSshPort result,
       "tcp"
         Aeson..= [ Aeson.object ["guest" Aeson..= guest, "host" Aeson..= hostPort]
-                 | (guest, hostPort) <- _exposeResultTcpPorts result
+                   | (guest, hostPort) <- _exposeResultTcpPorts result
                  ],
       "http"
         Aeson..= [ Aeson.object ["name" Aeson..= name, "port" Aeson..= port]
-                 | (name, port) <- httpPorts
+                   | (name, port) <- httpPorts
                  ]
     ]
 

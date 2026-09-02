@@ -15,11 +15,11 @@ import Garnix.Build.Package (doBuild)
 import Garnix.Build.Reporting
 import Garnix.DB qualified as DB
 import Garnix.GetAttributes
+import Garnix.Hosting.Deploy (rolloutNewServerVersion)
+import Garnix.Hosting.Types (DeploymentType (..), ServerInfo (..))
 import Garnix.Limits qualified as Limits
 import Garnix.Modules qualified as Modules
 import Garnix.Monad
-import Garnix.Hosting.Deploy (rolloutNewServerVersion)
-import Garnix.Hosting.Types (DeploymentType (..), ServerInfo (..))
 import Garnix.Monad.Async (joinAll, joinAll_, resolve, spawn)
 import Garnix.Prelude
 import Garnix.Types as Types

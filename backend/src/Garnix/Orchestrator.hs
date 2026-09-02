@@ -12,9 +12,9 @@ import Garnix.Async (Promise)
 import Garnix.Build (buildFlake, rerunBuild)
 import Garnix.Build.Checkout qualified as Build.Checkout
 import Garnix.Build.Helpers (withInternalCacheToken)
+import Garnix.DB qualified as DB
 import Garnix.Hosting.Deploy (rolloutNewServerVersion)
 import Garnix.Hosting.Types (DeploymentType (..))
-import Garnix.DB qualified as DB
 import Garnix.Monad
 import Garnix.Monad.Async (emptyPromise, resolve, spawn)
 import Garnix.Prelude
