@@ -79,6 +79,9 @@ class FakeIptables:
             if check:
                 raise subprocess.CalledProcessError(1, cmd, output="injected failure")
             return SimpleNamespace(stdout="injected failure", returncode=1)
+        if op == "-C":
+            present = (["-A", chain] + args) in self.rules[key]
+            return SimpleNamespace(stdout="", returncode=0 if present else 1)
         if op == "-D":
             target = ["-A", chain] + args
             try:
@@ -1328,6 +1331,91 @@ class ExposeTests(unittest.TestCase):
             self.assertTrue(os.path.exists(path))
         self.assertEqual(firewall.rules[("nat", "PREROUTING")], old_nat)
         self.assertEqual(firewall.rules[(None, "FORWARD")], old_forward)
+
+class ReconcileTests(unittest.TestCase):
+    def dnat(self, host, ip, guest):
+        return [
+            "-A", "PREROUTING", "-i", "eth0", "-p", "tcp", "--dport", str(host),
+            "-j", "DNAT", "--to-destination", f"{ip}:{guest}",
+        ]
+
+    def forward(self, ip, guest):
+        return ["-A", "FORWARD", "-p", "tcp", "-d", ip, "--dport", str(guest), "-j", "ACCEPT"]
+
+    def reconcile(self, exposed_dir, firewall=None):
+        firewall = firewall or FakeIptables()
+        with patched_pd(EXPOSED_DIR=exposed_dir, UPLINK="eth0", run=firewall.run):
+            restored = required_callable("reconcile_exposures")()
+        return restored, firewall
+
+    def test_replays_every_recorded_rule_into_empty_tables(self):
+        with tempfile.TemporaryDirectory() as d:
+            write_state(d, "garnix-7", {
+                "ip": "10.111.0.17",
+                "rules": [{"host": 22001, "guest": 22}, {"host": 32001, "guest": 8080}],
+            })
+            restored, fw = self.reconcile(d)
+        self.assertEqual(restored, 1)
+        self.assertEqual(
+            fw.rules[("nat", "PREROUTING")],
+            [self.dnat(22001, "10.111.0.17", 22), self.dnat(32001, "10.111.0.17", 8080)],
+        )
+        self.assertEqual(
+            fw.rules[(None, "FORWARD")],
+            [self.forward("10.111.0.17", 22), self.forward("10.111.0.17", 8080)],
+        )
+
+    def test_adds_nothing_when_the_rules_are_already_live(self):
+        with tempfile.TemporaryDirectory() as d:
+            write_state(d, "garnix-7", {"ip": "10.111.0.17", "rules": [{"host": 22001, "guest": 22}]})
+            fw = FakeIptables(
+                nat=[self.dnat(22001, "10.111.0.17", 22)],
+                forward=[self.forward("10.111.0.17", 22)],
+            )
+            restored, fw = self.reconcile(d, fw)
+        self.assertEqual(restored, 1)
+        self.assertEqual([c[0][0:1] for c in fw.calls if "-A" in c[0]], [])
+
+    def test_restores_only_the_half_that_is_missing(self):
+        with tempfile.TemporaryDirectory() as d:
+            write_state(d, "garnix-7", {"ip": "10.111.0.17", "rules": [{"host": 22001, "guest": 22}]})
+            fw = FakeIptables(nat=[self.dnat(22001, "10.111.0.17", 22)])
+            restored, fw = self.reconcile(d, fw)
+        self.assertEqual(restored, 1)
+        self.assertEqual(fw.rules[("nat", "PREROUTING")], [self.dnat(22001, "10.111.0.17", 22)])
+        self.assertEqual(fw.rules[(None, "FORWARD")], [self.forward("10.111.0.17", 22)])
+
+    def test_a_broken_guest_does_not_stop_the_others(self):
+        with tempfile.TemporaryDirectory() as d:
+            with open(os.path.join(d, "garnix-broken.json"), "w") as f:
+                f.write("{not json")
+            write_state(d, "garnix-9", {"ip": "10.111.0.19", "rules": [{"host": 22002, "guest": 22}]})
+            restored, fw = self.reconcile(d)
+        self.assertEqual(restored, 1)
+        self.assertEqual(fw.rules[("nat", "PREROUTING")], [self.dnat(22002, "10.111.0.19", 22)])
+
+    def test_a_firewall_failure_does_not_stop_the_others(self):
+        with tempfile.TemporaryDirectory() as d:
+            write_state(d, "garnix-1", {"ip": "10.111.0.11", "rules": [{"host": 22001, "guest": 22}]})
+            write_state(d, "garnix-9", {"ip": "10.111.0.19", "rules": [{"host": 22002, "guest": 22}]})
+            fw = FakeIptables(fail_when=lambda cmd: "10.111.0.11:22" in cmd)
+            restored, fw = self.reconcile(d, fw)
+        self.assertEqual(restored, 1)
+        self.assertEqual(fw.rules[("nat", "PREROUTING")], [self.dnat(22002, "10.111.0.19", 22)])
+
+    def test_a_missing_registry_is_not_an_error(self):
+        with tempfile.TemporaryDirectory() as d:
+            restored, fw = self.reconcile(os.path.join(d, "absent"))
+        self.assertEqual(restored, 0)
+        self.assertEqual(fw.calls, [])
+
+    def test_ignores_entries_that_are_not_registry_files(self):
+        with tempfile.TemporaryDirectory() as d:
+            with open(os.path.join(d, ".garnix-7.abc.tmp"), "w") as f:
+                f.write("{}")
+            restored, fw = self.reconcile(d)
+        self.assertEqual(restored, 0)
+        self.assertEqual(fw.calls, [])
 
 if __name__ == "__main__":
     unittest.main()
