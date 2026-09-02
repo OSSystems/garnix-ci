@@ -393,6 +393,8 @@ withEnv testFeatures buildLogsDir buildLogsReportingPort action = do
   featureFlagConfig <- getFeatureFlagConfig
   fodCheckPool <- Garnix.Monad.Pool.newPool 20 metrics #fodCheckQueueWaitTime #fodCheckQueueLen
   compressionBudget <- newCompressionBudget
+  let provisionerSocket = Nothing
+      provisioner = unconfiguredProvisioner
   withDefaultLogger $ \defaultLogger -> do
     let env =
           Env
@@ -445,7 +447,9 @@ withEnv testFeatures buildLogsDir buildLogsReportingPort action = do
               hostname = hostname,
               githubLogDebounceDuration = fromSeconds @Int 15,
               featureFlagConfig,
-              fodCheckPool
+              fodCheckPool,
+              provisioner,
+              provisionerSocket
             }
     action env
 
