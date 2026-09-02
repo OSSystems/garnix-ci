@@ -191,7 +191,9 @@ truncateDBMNoInsert = do
           module_user_repo,
           module_values,
           feature_flags,
-          verified_fods
+          verified_fods,
+          servers,
+          server_pool
       |]
 
 truncateDBM :: M ()
