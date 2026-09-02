@@ -74,7 +74,7 @@ getPoolServers = do
   rows <-
     DB.pgQuery
       [pgSQL|
-    SELECT id, provider, instance_id, ipv4::text, ipv6::text,
+    SELECT id, provider, instance_id, host(ipv4), host(ipv6),
            server_tier, created_at, ready_at
     FROM server_pool
     ORDER BY id
@@ -139,7 +139,7 @@ getLiveServers = do
   rows <-
     DB.pgQuery
       [pgSQL|
-    SELECT id, provider, instance_id, ipv4::text, ipv6::text, created_at,
+    SELECT id, provider, instance_id, host(ipv4), host(ipv6), created_at,
            ended_at, configuration_build_id, pull_request, ready_at,
            server_tier, is_primary
     FROM servers
@@ -153,7 +153,7 @@ getServer serverId = do
   rows <-
     DB.pgQuery
       [pgSQL|
-    SELECT id, provider, instance_id, ipv4::text, ipv6::text, created_at,
+    SELECT id, provider, instance_id, host(ipv4), host(ipv6), created_at,
            ended_at, configuration_build_id, pull_request, ready_at,
            server_tier, is_primary
     FROM servers

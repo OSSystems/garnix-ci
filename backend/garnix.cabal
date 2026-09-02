@@ -731,6 +731,7 @@ test-suite spec
       Garnix.Build.PrCommentSpec
       Garnix.BuildSpec
       Garnix.DB.FeatureFlagsSpec
+      Garnix.DB.HostingSpec
       Garnix.DBSpec
       Garnix.ExpiringCacheSpec
       Garnix.FlakeInputAuthorizationSpec
