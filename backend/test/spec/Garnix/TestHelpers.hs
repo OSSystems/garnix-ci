@@ -193,7 +193,8 @@ truncateDBMNoInsert = do
           feature_flags,
           verified_fods,
           servers,
-          server_pool
+          server_pool,
+          server_stats
       |]
 
 truncateDBM :: M ()
