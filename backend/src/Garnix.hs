@@ -13,6 +13,7 @@ import Data.ByteString.Char8 qualified
 import Data.ByteString.Char8 qualified as BSC
 import Data.Functor ((<&>))
 import Data.HashTable.IO qualified as HashTables
+import Data.Map.Strict qualified as Map
 import Data.Pool qualified as Pool
 import Data.Set qualified as Set
 import Data.Text qualified as T
@@ -108,6 +109,37 @@ sessionLifetimeFromEnv = lookupEnv "GARNIX_SESSION_LIFETIME" >>= resolve
         error
           $ "GARNIX_SESSION_LIFETIME must be a positive whole number of seconds, got: "
           <> cs raw
+
+evalMemoryConfigFromEnv :: IO EvalMemoryConfig
+evalMemoryConfigFromEnv = do
+  defaultEvalMemory <-
+    lookupEnv "GARNIX_DEFAULT_EVAL_MEMORY_GB"
+      <&> maybe
+        (defaultRepoConfig ^. maxEvalMemory)
+        (fromGigabytes . parseGigabytes "GARNIX_DEFAULT_EVAL_MEMORY_GB" . cs)
+  perRepositoryEvalMemory <-
+    lookupEnv "GARNIX_REPO_EVAL_MEMORY"
+      <&> maybe mempty (Map.fromList . map parseEntry . filter (not . T.null) . map T.strip . T.splitOn "," . cs)
+  pure EvalMemoryConfig {defaultEvalMemory, perRepositoryEvalMemory}
+  where
+    parseGigabytes :: Text -> Text -> Int64
+    parseGigabytes var raw = case readMaybe (cs raw) of
+      Just gigabytes | gigabytes > 0 -> gigabytes
+      _ -> error $ var <> " must be a positive whole number of gigabytes, got: " <> raw
+
+    parseEntry :: Text -> ((GhRepoOwner, GhRepoName), Memory)
+    parseEntry entry = case map T.strip (T.splitOn "=" entry) of
+      [slug, gigabytes]
+        | [owner, name] <- T.splitOn "/" slug,
+          not (T.null owner),
+          not (T.null name) ->
+            ( (GhRepoOwner (GhLogin owner), GhRepoName name),
+              fromGigabytes (parseGigabytes "GARNIX_REPO_EVAL_MEMORY" gigabytes)
+            )
+      _ ->
+        error
+          $ "GARNIX_REPO_EVAL_MEMORY entries must be owner/name=<gigabytes>, got: "
+          <> entry
 
 lookupOptionalSecret :: String -> FilePath -> IO (Maybe Text)
 lookupOptionalSecret envVar path = do
@@ -240,6 +272,7 @@ withEnv testFeatures buildLogsDir buildLogsReportingPort action = do
         Left _ -> error "error reading GitHub App private key"
   mgr <- newTlsManager
   sessionLifetime <- sessionLifetimeFromEnv
+  evalMemoryConfig <- evalMemoryConfigFromEnv
   jwtKey <-
     lookupEnv "JWT_KEY"
       >>= maybe (BSC.readFile (secretFile "garnix-jwt-key")) BSC.readFile
@@ -297,6 +330,7 @@ withEnv testFeatures buildLogsDir buildLogsReportingPort action = do
               workingDir = curDir,
               nixXdgCacheDir = Nothing,
               userNixConfig = nixConfig,
+              evalMemoryConfig = evalMemoryConfig,
               githubWebhookSecret = ghK,
               githubInterface = realGithubInterface,
               cookieSettings =

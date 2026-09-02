@@ -274,6 +274,11 @@ withTestEnvironment tempDir action = do
                   workingDir = tempDir,
                   nixXdgCacheDir = Nothing,
                   userNixConfig = nixConfig,
+                  evalMemoryConfig =
+                    EvalMemoryConfig
+                      { defaultEvalMemory = defaultRepoConfig ^. maxEvalMemory,
+                        perRepositoryEvalMemory = mempty
+                      },
                   githubWebhookSecret = "github-webhook-secret",
                   githubInterface = ghInterface,
                   cookieSettings = defaultCookieSettings {cookieXsrfSetting = Nothing},

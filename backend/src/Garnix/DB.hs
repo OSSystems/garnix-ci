@@ -87,8 +87,9 @@ newUser ghLogin email' sub agreeToEmails' = do
 
 getRepoConfig :: GhRepoOwner -> GhRepoName -> M RepoConfig
 getRepoConfig repoOwner repoName = do
+  configuredEvalMemory <- getConfiguredEvalMemory repoOwner repoName
   repoConfig <-
-    map (\(skipInputChecks, evalMemory) -> RepoConfig skipInputChecks (fromMaybe (defaultRepoConfig ^. maxEvalMemory) evalMemory))
+    map (\(skipInputChecks, evalMemory) -> RepoConfig skipInputChecks (fromMaybe configuredEvalMemory evalMemory))
       <$> pgQuery
         [pgSQL|
           SELECT
@@ -99,9 +100,16 @@ getRepoConfig repoOwner repoName = do
             AND repo_name = ${repoName}
         |]
   case repoConfig of
-    [] -> pure defaultRepoConfig
+    [] -> pure $ defaultRepoConfig & maxEvalMemory .~ configuredEvalMemory
     [res] -> pure res
     _ -> throw $ OtherError "impossible: multiple entries for repo config"
+
+getConfiguredEvalMemory :: GhRepoOwner -> GhRepoName -> M Memory
+getConfiguredEvalMemory repoOwner repoName = do
+  config <- view #evalMemoryConfig
+  pure
+    $ fromMaybe (config ^. #defaultEvalMemory)
+    $ Map.lookup (repoOwner, repoName) (config ^. #perRepositoryEvalMemory)
 
 getBuild :: BuildId -> M Build
 getBuild buildId = do

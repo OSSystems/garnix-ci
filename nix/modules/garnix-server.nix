@@ -198,6 +198,33 @@ in
       '';
     };
 
+    evalMemory = {
+      defaultGigabytes = lib.mkOption {
+        type = lib.types.nullOr lib.types.ints.positive;
+        default = null;
+        example = 16;
+        description = ''
+          Address space ceiling for every flake evaluation, in gigabytes.
+          Evaluations run under `prlimit --as`, so exceeding it surfaces as an
+          allocation or thread-creation failure rather than as a clear limit
+          error. When null, the server uses its built-in default of 8.
+        '';
+      };
+
+      perRepository = lib.mkOption {
+        type = lib.types.attrsOf lib.types.ints.positive;
+        default = { };
+        example = {
+          "some-org/some-repo" = 32;
+        };
+        description = ''
+          Per-repository overrides of evalMemory.defaultGigabytes, keyed by
+          `owner/name`. A max_eval_memory set on the repository's repo_config
+          row still takes precedence over both.
+        '';
+      };
+    };
+
     port = lib.mkOption {
       type = lib.types.int;
       default = 8321;
@@ -529,6 +556,10 @@ in
           "S3_CACHE_ENABLED=${if cfg.s3Cache.enable then "true" else "false"}"
         ] ++ lib.optional (cfg.sessionLifetimeSeconds != null)
           "GARNIX_SESSION_LIFETIME=${toString cfg.sessionLifetimeSeconds}"
+        ++ lib.optional (cfg.evalMemory.defaultGigabytes != null)
+          "GARNIX_DEFAULT_EVAL_MEMORY_GB=${toString cfg.evalMemory.defaultGigabytes}"
+        ++ lib.optional (cfg.evalMemory.perRepository != { })
+          "GARNIX_REPO_EVAL_MEMORY=${lib.concatStringsSep "," (lib.mapAttrsToList (slug: gigabytes: "${slug}=${toString gigabytes}") cfg.evalMemory.perRepository)}"
         ++ lib.optionals (cfg.database.ssl.mode != "disable") [
           # postgresql-typed reads TPG_TLS via lookupEnv — presence enables
           # TLS regardless of value. Only emit when ssl is actually on.
