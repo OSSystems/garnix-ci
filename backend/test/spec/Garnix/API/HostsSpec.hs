@@ -1,9 +1,9 @@
 module Garnix.API.HostsSpec (spec) where
 
-import Data.Aeson qualified as Aeson
 import Control.Lens (asIndex, ifolded, toListOf)
-import Data.Aeson.Lens (key, values, _Object, _String)
+import Data.Aeson qualified as Aeson
 import Data.Aeson.Key qualified as Aeson.Key
+import Data.Aeson.Lens (key, values, _Object, _String)
 import Data.Word (Word8)
 import Garnix.API.Hosts
 import Garnix.Hosting.Types
@@ -70,12 +70,12 @@ spec = do
     it "points the heartbeat middleware at this backend" $ do
       renderTraefik [webHost]
         ^? key "http"
-          . key "middlewares"
-          . key "heartbeatmiddleware"
-          . key "plugin"
-          . key "heartbeatmiddleware"
-          . key "reportEndpoint"
-          . _String
+        . key "middlewares"
+        . key "heartbeatmiddleware"
+        . key "plugin"
+        . key "heartbeatmiddleware"
+        . key "reportEndpoint"
+        . _String
         `shouldBe` Just "https://garnix.example/api/hosts/heartbeat"
 
     it "drops a server with no address rather than routing nowhere" $ do
@@ -144,13 +144,13 @@ serviceUrl config name = do
     config ^? key "http" . key "routers" . key (Aeson.Key.fromText name) . key "service" . _String
   config
     ^? key "http"
-      . key "services"
-      . key (Aeson.Key.fromText service)
-      . key "loadBalancer"
-      . key "servers"
-      . values
-      . key "url"
-      . _String
+    . key "services"
+    . key (Aeson.Key.fromText service)
+    . key "loadBalancer"
+    . key "servers"
+    . values
+    . key "url"
+    . _String
 
 -- HashId does not export its constructor (it should only come from the DB),
 -- so a test id is built through the Iso.

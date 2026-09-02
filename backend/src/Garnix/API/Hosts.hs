@@ -25,11 +25,11 @@ import Data.Map (Map)
 import Data.Map qualified as Map
 import Data.Maybe (listToMaybe, mapMaybe)
 import Data.Text qualified as T
-import Garnix.GithubInterface.Types (organizationName)
 import Garnix.DB qualified as DB
 import Garnix.DB.Hosting qualified as DBHosting
 import Garnix.Duration
 import Garnix.ExpiringCache
+import Garnix.GithubInterface.Types (organizationName)
 import Garnix.GithubUserToken
 import Garnix.Hosting.Deploy (stopServer)
 import Garnix.Hosting.Helpers
@@ -53,10 +53,10 @@ data HostsAPI route = HostsAPI
     _hostsAPIPostStats ::
       route
         :- "stats"
-          :> RemoteHost
-          :> Header "X-Forwarded-For" Text
-          :> ReqBody '[JSON] HostStatsReport
-          :> Post '[JSON] NoContent,
+        :> RemoteHost
+        :> Header "X-Forwarded-For" Text
+        :> ReqBody '[JSON] HostStatsReport
+        :> Post '[JSON] NoContent,
     _hostsAPIGetIPsForDns :: route :- "dns" :> Get '[JSON] DnsHosts,
     _hostsAPIGetDomainsForOnDemandResolver ::
       route :- "on-demand-resolver" :> Get '[JSON] OnDemandResolverDomainNames,
@@ -69,8 +69,8 @@ data HostsAPI route = HostsAPI
     _hostsAPIDeleteHost ::
       route
         :- Auth '[JWT, Cookie] AuthJwtPayload
-          :> Capture "serverId" ServerId
-          :> Delete '[JSON] ()
+        :> Capture "serverId" ServerId
+        :> Delete '[JSON] ()
   }
   deriving stock (Generic)
 

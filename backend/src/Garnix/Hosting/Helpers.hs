@@ -111,50 +111,50 @@ getRunningAndRecentServersForOwners owners = do
         ipv4,
         logs
         ) = do
-      deploymentType <- case (pullRequest, branch) of
-        (Just prId, _) -> Just (GhPrDeployment prId)
-        (Nothing, Just branch') -> Just (BranchDeployment branch')
-        (Nothing, Nothing) -> Nothing
-      -- A server that ended without ever being ready never came up at all; it
-      -- is a failed claim, not a server the user had.
-      status <- case (readyAt, endedAt) of
-        (Nothing, Nothing) -> Just Booting
-        (Just _, Nothing) -> Just Online
-        (Just _, Just _) -> Just Ended
-        (Nothing, Just _) -> Nothing
-      let url =
-            "https://"
-              <> getPackageName (PackageName package)
-              <> "."
-              <> fromDeploymentType
-                getBranch
-                (("pull-" <>) . show . getGhPullRequestId)
-                deploymentType
-              <> "."
-              <> getGhRepoName repo
-              <> "."
-              <> getGhLogin (getGhRepoOwner owner)
-              <> "."
-              <> domain
-      pure
-        RunningServer
-          { _runningServerId = serverId,
-            _runningServerType = deploymentType,
-            _runningServerStatus = status,
-            _runningServerRepoOwner = owner,
-            _runningServerRepoName = repo,
-            _runningServerPackageName = PackageName package,
-            _runningServerCreatedAt = Just createdAt,
-            _runningServerReadyAt = readyAt,
-            _runningServerConfigurationBuildId = buildId,
-            _runningServerCommit = commit,
-            _runningServerIpv4 = ipv4,
-            _runningServerDeployLogs = logs,
-            _runningServerUrl = url,
-            _runningServerExposed = lookupById serverId exposures,
-            _runningServerDomains = mfilter (not . null) (lookupById serverId domainsByServer),
-            _runningServerSshUsers = mfilter (not . null) (lookupById serverId sshUsersByServer)
-          }
+        deploymentType <- case (pullRequest, branch) of
+          (Just prId, _) -> Just (GhPrDeployment prId)
+          (Nothing, Just branch') -> Just (BranchDeployment branch')
+          (Nothing, Nothing) -> Nothing
+        -- A server that ended without ever being ready never came up at all; it
+        -- is a failed claim, not a server the user had.
+        status <- case (readyAt, endedAt) of
+          (Nothing, Nothing) -> Just Booting
+          (Just _, Nothing) -> Just Online
+          (Just _, Just _) -> Just Ended
+          (Nothing, Just _) -> Nothing
+        let url =
+              "https://"
+                <> getPackageName (PackageName package)
+                <> "."
+                <> fromDeploymentType
+                  getBranch
+                  (("pull-" <>) . show . getGhPullRequestId)
+                  deploymentType
+                <> "."
+                <> getGhRepoName repo
+                <> "."
+                <> getGhLogin (getGhRepoOwner owner)
+                <> "."
+                <> domain
+        pure
+          RunningServer
+            { _runningServerId = serverId,
+              _runningServerType = deploymentType,
+              _runningServerStatus = status,
+              _runningServerRepoOwner = owner,
+              _runningServerRepoName = repo,
+              _runningServerPackageName = PackageName package,
+              _runningServerCreatedAt = Just createdAt,
+              _runningServerReadyAt = readyAt,
+              _runningServerConfigurationBuildId = buildId,
+              _runningServerCommit = commit,
+              _runningServerIpv4 = ipv4,
+              _runningServerDeployLogs = logs,
+              _runningServerUrl = url,
+              _runningServerExposed = lookupById serverId exposures,
+              _runningServerDomains = mfilter (not . null) (lookupById serverId domainsByServer),
+              _runningServerSshUsers = mfilter (not . null) (lookupById serverId sshUsersByServer)
+            }
 
     -- ServerId has no Ord instance, so these arrive as assoc lists; key them
     -- by the underlying hash id to look one up.

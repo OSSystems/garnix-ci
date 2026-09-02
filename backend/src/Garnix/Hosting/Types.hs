@@ -289,7 +289,6 @@ fromDeploymentType onBranch onPr = \case
 ghPrDeployment :: DeploymentType -> Maybe GhPullRequestId
 ghPrDeployment = fromDeploymentType (const Nothing) Just
 
-
 -- * The deploy spec
 
 -- | How a declared port is reached from outside. @http@ ports are routed by
@@ -322,9 +321,12 @@ data ServerPort = ServerPort
 instance FromJSON ServerPort where
   parseJSON = Aeson.withObject "ServerPort" $ \object ->
     ServerPort
-      <$> object .: "name"
-      <*> object .: "port"
-      <*> object .: "type"
+      <$> object
+      .: "name"
+      <*> object
+      .: "port"
+      <*> object
+      .: "type"
 
 -- | The decoded @config.garnix.server.deploySpec@ of one built
 -- @nixosConfiguration@: the knobs of a server that is already being deployed.
@@ -488,10 +490,14 @@ data HostStatsReport = HostStatsReport
 instance FromJSON HostStatsReport where
   parseJSON = Aeson.withObject "HostStatsReport" $ \object ->
     HostStatsReport
-      <$> object .: "provisioner_id"
-      <*> object .: "cpu_pct"
-      <*> object .: "mem_used_kb"
-      <*> object .: "mem_total_kb"
+      <$> object
+      .: "provisioner_id"
+      <*> object
+      .: "cpu_pct"
+      <*> object
+      .: "mem_used_kb"
+      <*> object
+      .: "mem_total_kb"
 
 instance ToJSON HostStatsReport where
   toJSON report =
