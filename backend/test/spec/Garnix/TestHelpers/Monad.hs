@@ -312,7 +312,9 @@ withTestEnvironment tempDir action = do
                   hostname = "garnix-server-test",
                   githubLogDebounceDuration = fromSeconds 0,
                   featureFlagConfig,
-                  fodCheckPool
+                  fodCheckPool,
+                  provisioner = unconfiguredProvisioner,
+                  provisionerSocket = Nothing
                 }
         action env
   where
