@@ -3,7 +3,7 @@ module Garnix where
 import Amazonka qualified
 import Amazonka.Auth qualified as Amazonka
 import Amazonka.S3 qualified as Amazonka
-import Control.Concurrent (getNumCapabilities, newMVar)
+import Control.Concurrent (forkIO, getNumCapabilities, newMVar)
 import Control.Concurrent.STM (newTVarIO)
 import Control.Exception qualified
 import Control.Exception.Safe qualified as Safe
@@ -61,6 +61,7 @@ import WithCli (HasArguments, withCli)
 import Garnix.Monad.KeyedMutex (newKeyedMutex)
 import Garnix.Hosting.Types (HostingBudget (..))
 import Garnix.Hosting.Budget (hostTotalMiB, hostVcpus, parseBudget, resolveBudget)
+import Garnix.Hosting.Deploy (cleanupUnreadyServers, stopUnusedServers)
 
 run :: IO ()
 run = withCli runWith
@@ -500,6 +501,29 @@ runWith opts = do
       runM env runCacheMaintenance >>= \case
         Right () -> pure ()
         Left err -> hPutStrLn stderr $ "could not start s3 cache maintenance: " <> show err
+
+      -- A guest claimed out of the pool by a process that then died is a
+      -- transaction remnant: we cannot know how far its deploy got, so it is
+      -- destroyed rather than adopted. A later rollout claims a clean one.
+      runM env cleanupUnreadyServers >>= \case
+        Right cleaned
+          | cleaned > 0 ->
+              hPutStrLn stderr
+                $ "Removed "
+                <> show cleaned
+                <> " unready claimed guest(s) left behind by a previous process"
+        Right _ -> pure ()
+        Left problem ->
+          hPutStrLn stderr $ "Failed to clean up unready claimed guests: " <> show problem
+
+      -- PR deploys are reaped on idleness rather than by a deploy plan: an
+      -- open PR nobody pushes to again would otherwise keep its guest forever.
+      void
+        $ forkIO
+        $ void
+        $ runM env
+        $ forever (reapUnusedServers *> threadDelay (fromMinutes @Int 5))
+
       let settings =
             Warp.defaultSettings
               & Warp.setPort (port opts)
@@ -509,6 +533,12 @@ runWith opts = do
                     void notifyReady
                 )
       Warp.runSettings settings $ Garnix.toApplication env
+  where
+    -- One bad sweep must not take the loop down with it.
+    reapUnusedServers :: M ()
+    reapUnusedServers =
+      stopUnusedServers
+        `catchError` \problem -> log Error $ "stopUnusedServers: " <> show problem
 
 type ContextList =
   '[ JWTSettings,

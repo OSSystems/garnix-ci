@@ -18,6 +18,8 @@ import Garnix.GetAttributes
 import Garnix.Limits qualified as Limits
 import Garnix.Modules qualified as Modules
 import Garnix.Monad
+import Garnix.Hosting.Deploy (rolloutNewServerVersion)
+import Garnix.Hosting.Types (DeploymentType (..), ServerInfo (..))
 import Garnix.Monad.Async (joinAll, joinAll_, resolve, spawn)
 import Garnix.Prelude
 import Garnix.Types as Types
@@ -79,7 +81,29 @@ runBuildFlake reporter buildKind commitInfo withCheckout = do
               when allBuildsSucceeded $ do
                 Modules.publish reporter config commitInfo
 
-              if allBuildsSucceeded
+              deployments <- case (commitInfo ^. prFromFork, commitInfo ^. branch) of
+                (Nothing, Just branch') ->
+                  if allBuildsSucceeded
+                    then rolloutNewServerVersion reporter commitInfo (BranchDeployment branch')
+                    else pure []
+                (Just _, Nothing) -> do
+                  -- A fork PR's code would run on a guest holding this repo's
+                  -- deploy key, so it never gets one.
+                  log Notice "PR is from a fork; not deploying servers"
+                  pure []
+                _ -> do
+                  log Critical "Commit has neither, or both, of a branch and a fork; not deploying servers"
+                  pure []
+
+              let allDeploymentsSucceeded =
+                    all
+                      ( \server ->
+                          isJust (_serverInfoReadyAt server)
+                            && isNothing (_serverInfoEndedAt server)
+                      )
+                      deployments
+
+              if allBuildsSucceeded && allDeploymentsSucceeded
                 then MetaCheck.updateSuccess commitInfo metaCheckRun
                 else MetaCheck.updateFail policy commitInfo metaCheckRun Nothing
 
