@@ -77,6 +77,7 @@ library
       Garnix.GithubInterface.Types
       Garnix.GithubUserToken
       Garnix.Hosting.Budget
+      Garnix.Hosting.ServerPool
       Garnix.Hosting.Types
       Garnix.Incremental
       Garnix.LocalProvisioner
@@ -825,6 +826,7 @@ test-suite spec
       Garnix.GithubInterface.Types
       Garnix.GithubUserToken
       Garnix.Hosting.Budget
+      Garnix.Hosting.ServerPool
       Garnix.Hosting.Types
       Garnix.Incremental
       Garnix.LocalProvisioner
