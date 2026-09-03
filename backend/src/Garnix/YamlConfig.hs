@@ -32,6 +32,7 @@ module Garnix.YamlConfig
     secondPart,
     thirdPart,
     fodChecks,
+    commentOnFailure,
     flakeDir,
     safeGetAbsoluteFlakeDir,
   )
@@ -284,12 +285,13 @@ data GarnixConfig = GarnixConfig
     _garnixConfigActions :: [Action],
     _garnixConfigModuleSection :: ModuleSection,
     _garnixConfigFodChecks :: Bool,
+    _garnixConfigCommentOnFailure :: Bool,
     _garnixConfigFlakeDir :: FlakeDir
   }
   deriving stock (Eq, Show, Generic)
 
 instance Default GarnixConfig where
-  def = GarnixConfig [def] def [] def False (FlakeDir ".")
+  def = GarnixConfig [def] def [] def False False (FlakeDir ".")
 
 instance FromJSON GarnixConfig where
   parseJSON = parseJSONViaCodec
@@ -348,6 +350,15 @@ instance HasCodec GarnixConfig where
                   False
                   "Whether FOD checks are enabled for the repo. See https://garnix.io/docs/fod-checks for more information."
                   .= _garnixConfigFodChecks
+              )
+          <*> ( optionalFieldWithDefault
+                  "commentOnFailure"
+                  False
+                  ( "Whether to post a comment on the pull request when the garnix "
+                      <> "checks for a commit fail. Requires the garnix app to have "
+                      <> "write access to pull requests."
+                  )
+                  .= _garnixConfigCommentOnFailure
               )
           <*> ( optionalFieldWithDefault
                   "flakeDir"

@@ -263,3 +263,17 @@ spec = do
                 |]
         let actual = (^. fodChecks) <$> decodeConfig config
         actual `shouldBe` Right True
+
+    describe "commentOnFailure section" $ do
+      it "defaults to not commenting" $ do
+        let actual = (^. commentOnFailure) <$> decodeConfig "{}"
+        actual `shouldBe` Right False
+
+      it "allows enabling comments on failure" $ do
+        let config =
+              cs
+                [i|
+                  commentOnFailure: true
+                |]
+        let actual = (^. commentOnFailure) <$> decodeConfig config
+        actual `shouldBe` Right True
