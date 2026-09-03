@@ -535,6 +535,22 @@ setMetaCheck owner name commit (CheckStatusUpdate {_checkStatusUpdateFrom = from
               AND meta_check = ${from}
           |]
 
+-- | Atomically claim the right to post the pull request failure comment for
+-- this commit. Returns True exactly once per commit, even across re-runs -
+-- unlike 'setMetaCheck', whose 'pending' state 'newCommit' resets on every run.
+claimFailureComment :: GhRepoOwner -> GhRepoName -> CommitHash -> M Bool
+claimFailureComment owner name commit =
+  (== 1)
+    <$> pgExec
+      [pgSQL|
+        UPDATE commits
+          SET failure_commented = true
+        WHERE repo_user = ${owner}
+          AND repo_name = ${name}
+          AND git_commit = ${commit}
+          AND NOT failure_commented
+      |]
+
 getBuildsAndRunsByCommit :: GhRepoOwner -> GhRepoName -> CommitHash -> M FullCommitState
 getBuildsAndRunsByCommit repoOwner repoName commitHash = do
   mCommit <- getCommit repoOwner repoName commitHash
