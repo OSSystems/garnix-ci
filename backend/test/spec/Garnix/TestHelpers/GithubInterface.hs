@@ -6,6 +6,7 @@ module Garnix.TestHelpers.GithubInterface
     addOrgMembers,
     lookupRepo,
     getReports,
+    getPrComments,
     getAllReportLogs,
     getFinalLogs,
     withLocalRepo,
@@ -70,6 +71,9 @@ lookupRepo ghState = lookupRepoImpl ghState.repoCollection
 
 getReports :: GithubFakeState -> M [[(RepoInfo, GhRunReport)]]
 getReports ghState = getReportsImpl ghState.reportCollection
+
+getPrComments :: GithubFakeState -> M [(RepoInfo, GhPullRequestId, Text)]
+getPrComments ghState = getCommentsImpl ghState.commentCollection
 
 getAllReportLogs :: GithubFakeState -> M [Text]
 getAllReportLogs ghState = fmap (getRawLogs . (^. logs) . snd) . join <$> getReports ghState

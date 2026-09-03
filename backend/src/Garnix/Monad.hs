@@ -373,7 +373,9 @@ data GithubInterface = GithubInterface
     _githubInterfaceGetReposInInstallationAccessibleTo :: (HasCallStack) => GH.Id GHA.Installation -> GhToken -> M [Text],
     _githubInterfaceOpenGithubPullRequest :: (HasCallStack) => GhRepoOwner -> GhRepoName -> PullRequest -> M PullRequestResult,
     _githubInterfaceExchangeOauthCode :: (HasCallStack) => Text -> OAuthCode -> M (GhUserCredentials Text),
-    _githubInterfaceRefreshUserCredentials :: (HasCallStack) => Text -> M (GhUserCredentials Text)
+    _githubInterfaceRefreshUserCredentials :: (HasCallStack) => Text -> M (GhUserCredentials Text),
+    _githubInterfaceGetPullRequestsForCommit :: (HasCallStack) => RepoInfo -> CommitHash -> M [GhPullRequestId],
+    _githubInterfaceCommentOnPullRequest :: (HasCallStack) => RepoInfo -> GhPullRequestId -> Text -> M ()
   }
 
 data RunReportStatus
@@ -494,6 +496,16 @@ refreshUserCredentials :: (HasCallStack) => Text -> M (GhUserCredentials Text)
 refreshUserCredentials token = do
   gh <- view #githubInterface
   _githubInterfaceRefreshUserCredentials gh token
+
+getPullRequestsForCommit :: (HasCallStack) => RepoInfo -> CommitHash -> M [GhPullRequestId]
+getPullRequestsForCommit repoInfo commit' = do
+  gh <- view #githubInterface
+  _githubInterfaceGetPullRequestsForCommit gh repoInfo commit'
+
+commentOnPullRequest :: (HasCallStack) => RepoInfo -> GhPullRequestId -> Text -> M ()
+commentOnPullRequest repoInfo prId body = do
+  gh <- view #githubInterface
+  _githubInterfaceCommentOnPullRequest gh repoInfo prId body
 
 withWreqOptions :: (Wreq.Options -> IO a) -> M a
 withWreqOptions action = do
