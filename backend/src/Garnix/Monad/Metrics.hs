@@ -5,7 +5,7 @@ import Garnix.Prelude
 import Network.Wai.Handler.Warp (Port, run)
 import System.Metrics.Prometheus.Concurrent.Registry
 import System.Metrics.Prometheus.Http.Scrape qualified as Prom
-import System.Metrics.Prometheus.Metric.Counter (Counter, inc)
+import System.Metrics.Prometheus.Metric.Counter (Counter, add, inc)
 import System.Metrics.Prometheus.Metric.Gauge (Gauge)
 import System.Metrics.Prometheus.Metric.Histogram (Histogram, observe)
 import System.Metrics.Prometheus.MetricId (fromList)
@@ -33,6 +33,7 @@ data Metrics = Metrics
     s3CacheFallbacksToOldCache :: Counter,
     s3CacheUploads :: Counter,
     s3CacheNarfilesServed :: Counter,
+    s3CacheUploadsSkippedDeleting :: Counter,
     fodCheckTime :: Histogram,
     fodCheckBatchSize :: Histogram,
     fodCheckQueueLen :: Gauge,
@@ -60,6 +61,11 @@ incrementEvent :: (MonadIO m, MonadReader e m, HasField' "metrics" e Metrics) =>
 incrementEvent l = do
   h <- view (#metrics . l)
   void . liftIO $ fork $ inc h
+
+addEvent :: (MonadIO m, MonadReader e m, HasField' "metrics" e Metrics) => Lens' Metrics Counter -> Int -> m ()
+addEvent l n = do
+  h <- view (#metrics . l)
+  void . liftIO $ fork $ add n h
 
 registerMetrics :: IO Metrics
 registerMetrics = do
@@ -166,6 +172,11 @@ registerMetrics = do
   s3CacheNarfilesServed <-
     registerCounter
       "garnix_s3_cache_narfile_served"
+      mempty
+      registry
+  s3CacheUploadsSkippedDeleting <-
+    registerCounter
+      "garnix_s3_cache_uploads_skipped_deleting"
       mempty
       registry
   fodCheckTime <-

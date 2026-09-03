@@ -794,6 +794,20 @@ finalizeS3CacheUpload s3CacheStoreHash = do
   void
     $ pgExec
       [pgSQL|
+        DELETE FROM cache_store_hash_references WHERE hash = ${hash}
+      |]
+  void
+    $ pgExec
+      [pgSQL|
+        INSERT INTO cache_store_hash_references (hash, reference_hash)
+        SELECT ${hash}::text, split_part(ref, '-', 1)
+          FROM unnest(string_to_array(${references}::text, ' ')) AS ref
+         WHERE ref <> ''
+        ON CONFLICT DO NOTHING
+      |]
+  void
+    $ pgExec
+      [pgSQL|
         UPDATE cache_store_hashes
         SET
           accessed_at = NOW(),
@@ -837,6 +851,7 @@ getS3CacheStoreHash hash = do
         FROM cache_store_hashes
         WHERE hash = ${hash}
           AND uploaded_at IS NOT NULL
+          AND deleting_since IS NULL
       |]
       <&> catMaybes
         . fmap
@@ -898,15 +913,33 @@ claimS3CachedStorePaths (sort -> storePaths) = do
         ON CONFLICT (hash) DO UPDATE SET
           accessed_at = NOW(),
           package_name = EXCLUDED.package_name
-        WHERE cache_store_hashes.package_name IS NULL
-           OR (cache_store_hashes.uploaded_at IS NULL AND
-               cache_store_hashes.created_at < now() - interval '10 hours')
+        WHERE cache_store_hashes.deleting_since IS NULL
+          AND (cache_store_hashes.package_name IS NULL
+               OR (cache_store_hashes.uploaded_at IS NULL AND
+                   cache_store_hashes.created_at < now() - interval '10 hours'))
         RETURNING
           hash, package_name;
       |]
   forM filtered $ \case
     (Just hash, Just packageName) -> pure $ StorePath hash packageName
     _ -> throw $ OtherError "impossible: hashes and packageNames have the same length"
+
+-- * S3 cache retention
+
+countDeletingStoreHashes :: [StoreHash] -> M Int64
+countDeletingStoreHashes [] = pure 0
+countDeletingStoreHashes (sort -> hashes) = do
+  result <-
+    pgQuery
+      [pgSQL|
+        SELECT count(*)
+        FROM cache_store_hashes
+        WHERE hash = ANY(${hashes}::text[])
+          AND deleting_since IS NOT NULL
+      |]
+  pure $ case result of
+    [Just count] -> count
+    _ -> 0
 
 -- * /api/account/tokens
 
