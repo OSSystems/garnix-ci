@@ -171,9 +171,33 @@ data S3CacheEnv = S3CacheEnv
     accessBuffer :: TVar (HashSet StoreHash),
     accessFlushEvery :: Duration,
     accessFlushMax :: Int,
-    accessBumpMinAge :: Duration
+    accessBumpMinAge :: Duration,
+    gc :: GcConfig
   }
   deriving (Generic)
+
+data GcConfig = GcConfig
+  { gcEnabled :: Bool,
+    gcInterval :: Duration,
+    retentionPeriod :: Duration,
+    warmupPeriod :: Duration,
+    batchSize :: Int,
+    deleteConcurrency :: Int,
+    dryRun :: Bool
+  }
+  deriving (Generic, Show)
+
+defaultGcConfig :: GcConfig
+defaultGcConfig =
+  GcConfig
+    { gcEnabled = False,
+      gcInterval = fromHours @Int 6,
+      retentionPeriod = fromDays @Int 90,
+      warmupPeriod = fromDays @Int 7,
+      batchSize = 500,
+      deleteConcurrency = 20,
+      dryRun = False
+    }
 
 defaultAccessFlushEvery :: Duration
 defaultAccessFlushEvery = fromSeconds @Int 30

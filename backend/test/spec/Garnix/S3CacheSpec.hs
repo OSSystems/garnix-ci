@@ -779,7 +779,8 @@ withGarageS3 inner =
                   accessBuffer,
                   accessFlushEvery = defaultAccessFlushEvery,
                   accessFlushMax = defaultAccessFlushMax,
-                  accessBumpMinAge = defaultAccessBumpMinAge
+                  accessBumpMinAge = defaultAccessBumpMinAge,
+                  gc = defaultGcConfig
                 }
           )
   where
