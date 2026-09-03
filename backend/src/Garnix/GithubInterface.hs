@@ -162,7 +162,9 @@ realGithubInterface =
       _githubInterfaceGetReposInInstallationAccessibleTo = getReposInInstallationAccessibleTo,
       _githubInterfaceOpenGithubPullRequest = openGithubPullRequestInternal,
       _githubInterfaceExchangeOauthCode = exchangeOauthCodeInternal,
-      _githubInterfaceRefreshUserCredentials = refreshUserCredentialsInternal
+      _githubInterfaceRefreshUserCredentials = refreshUserCredentialsInternal,
+      _githubInterfaceGetPullRequestsForCommit = getPullRequestsForCommitGH,
+      _githubInterfaceCommentOnPullRequest = commentOnPullRequestGH
     }
 
 getInstallations :: GhToken -> M [GH.Id GHA.Installation]
@@ -358,6 +360,27 @@ updateBuildReportGH runId report (RepoInfo iAuth _ owner@(GhRepoOwner (GhLogin r
     executeAppRequest @Aeson.Value iAuth
       $ GH.Command GH.Patch ["repos", repoUser, repoName, "check-runs", show runId] (Aeson.encode run)
   handleGithubRequestErrors "updateBuildReportGH" owner repo res $> ()
+
+-- | The pull requests a commit is the head of. Only needs @pull_requests: read@.
+getPullRequestsForCommitGH :: (HasCallStack) => RepoInfo -> CommitHash -> M [GhPullRequestId]
+getPullRequestsForCommitGH (RepoInfo iAuth _ owner@(GhRepoOwner (GhLogin repoUser)) repo@(GhRepoName repoName)) (CommitHash commit') = do
+  res <-
+    executeAppRequest @Aeson.Value iAuth
+      $ GH.query ["repos", repoUser, repoName, "commits", commit', "pulls"] []
+  v <- handleGithubRequestErrors "getPullRequestsForCommitGH" owner repo res
+  pure $ v ^.. _Array . each . key "number" . _Integral . to GhPullRequestId
+
+-- | Comment on a pull request. Unlike check runs, this does trigger a Github
+-- notification. Needs @pull_requests: write@.
+commentOnPullRequestGH :: (HasCallStack) => RepoInfo -> GhPullRequestId -> Text -> M ()
+commentOnPullRequestGH (RepoInfo iAuth _ owner@(GhRepoOwner (GhLogin repoUser)) repo@(GhRepoName repoName)) (GhPullRequestId prId) body = do
+  res <-
+    executeAppRequest @Aeson.Value iAuth
+      $ GH.Command
+        GH.Post
+        ["repos", repoUser, repoName, "issues", show prId, "comments"]
+        (Aeson.encode $ Aeson.object ["body" Aeson..= body])
+  handleGithubRequestErrors "commentOnPullRequestGH" owner repo res $> ()
 
 fromRunReport :: GhRunReport -> M GhRun
 fromRunReport (GhRunReport name commit url status' title summary logs') = do

@@ -107,6 +107,20 @@ getReportsImpl :: ReportCollection -> M [[(RepoInfo, GhRunReport)]]
 getReportsImpl ReportCollection {..} =
   liftIO $ Data.Map.elems <$> readTVarIO reports
 
+-- | Comments the fake github interface was asked to post on pull requests,
+-- oldest first.
+newtype CommentCollection = CommentCollection (TVar [(RepoInfo, GhPullRequestId, Text)])
+
+newCommentCollection :: M CommentCollection
+newCommentCollection = liftIO $ CommentCollection <$> newTVarIO []
+
+appendComment :: CommentCollection -> RepoInfo -> GhPullRequestId -> Text -> M ()
+appendComment (CommentCollection cc) repoInfo prId body =
+  liftIO $ atomically $ modifyTVar cc (<> [(repoInfo, prId, body)])
+
+getCommentsImpl :: CommentCollection -> M [(RepoInfo, GhPullRequestId, Text)]
+getCommentsImpl (CommentCollection cc) = liftIO $ readTVarIO cc
+
 newtype OrgMembersCollection = OrgMembersCollection (TVar [GhUserOrgMembership])
 
 newOrgMembersCollection :: M OrgMembersCollection
@@ -126,7 +140,8 @@ getOrgMembers (OrgMembersCollection oc) = liftIO $ readTVarIO oc
 data GithubFakeState = GithubFakeState
   { repoCollection :: RepoCollection,
     reportCollection :: ReportCollection,
-    orgMembersCollection :: OrgMembersCollection
+    orgMembersCollection :: OrgMembersCollection,
+    commentCollection :: CommentCollection
   }
 
 mkFakeGithubInterface :: M (GithubFakeState, GithubInterface)
@@ -134,12 +149,14 @@ mkFakeGithubInterface = do
   repoCollection <- newRepoCollection
   reportCollection <- newReportCollection
   orgMembersCollection <- newOrgMembersCollection
+  commentCollection <- newCommentCollection
   let notImplemented methodName = error $ methodName <> " not implemented in mkFakeGithubInterface"
   pure
     ( GithubFakeState
         { repoCollection = repoCollection,
           reportCollection = reportCollection,
-          orgMembersCollection = orgMembersCollection
+          orgMembersCollection = orgMembersCollection,
+          commentCollection = commentCollection
         },
       GithubInterface
         { _githubInterfaceGetAccessToken = \_ -> pure $ notImplemented "_githubInterfaceGetAccessToken",
@@ -240,6 +257,14 @@ mkFakeGithubInterface = do
               Just _ ->
                 pure $ PullRequestResult $ cs o <> "/" <> cs r <> "/pulls/1",
           _githubInterfaceExchangeOauthCode = \_ _ -> throw $ OtherError "exchangeOauthCode is not faked",
-          _githubInterfaceRefreshUserCredentials = \_ -> throw $ OtherError "refreshUserCredentials is not faked"
+          _githubInterfaceRefreshUserCredentials = \_ -> throw $ OtherError "refreshUserCredentials is not faked",
+          -- A repo set up with 'pullRequestBranch' pretends to have exactly one
+          -- open pull request, number 1, containing every commit.
+          _githubInterfaceGetPullRequestsForCommit = \ri _commit -> do
+            repo <- lookupRepoImpl repoCollection (ri ^. ghRepoOwner) (ri ^. ghRepoName)
+            pure $ case repo >>= \r -> r ^. #pullRequestBranch of
+              Nothing -> []
+              Just _ -> [GhPullRequestId 1],
+          _githubInterfaceCommentOnPullRequest = appendComment commentCollection
         }
     )
