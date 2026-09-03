@@ -4,9 +4,11 @@ import Control.Concurrent.Async.Lifted (replicateConcurrently)
 import Control.Exception qualified as E
 import Control.Monad.Trans.Control (liftBaseDiscard)
 import Data.Set qualified as Set
+import Data.Text qualified as T
 import Database.PostgreSQL.Typed
 import Database.PostgreSQL.Typed qualified as PSQL
 import Garnix.DB qualified as DB
+import Garnix.Duration (fromDays, fromHours, fromSeconds)
 import Garnix.Monad (M, throw)
 import Garnix.Nix.Types (DrvPath (..), StoreHash (..), StorePath (..))
 import Garnix.Prelude
@@ -139,6 +141,137 @@ spec = do
       liftIO $ claimed `shouldBe` storePaths
 
       getCacheEntries `shouldReturnM` [("foo", Just "bar", Nothing)]
+
+  context "s3 cache retention" $ inM $ beforeM_ truncateDBM $ do
+    let storeHashes = fmap DB.gcObjectHash
+        uploaded :: Text -> [Text] -> Double -> M ()
+        uploaded name references ageInDays = do
+          void
+            $ DB.pgExec
+              [pgSQL|
+            INSERT INTO cache_store_hashes (hash) VALUES (${name}) ON CONFLICT DO NOTHING
+              |]
+          DB.finalizeS3CacheUpload
+            DB.S3CacheStoreHash
+              { DB.hash = StoreHash name,
+                DB.packageName = "pkg",
+                DB.narHash = "narHash",
+                DB.narSize = 1,
+                DB.public = True,
+                DB.sig = "sig",
+                DB.references = T.unwords (fmap (<> "-pkg") references),
+                DB.fileSize = 10,
+                DB.fileHash = "fileHash"
+              }
+          void
+            $ DB.pgExec
+              [pgSQL|
+            UPDATE cache_store_hashes
+            SET accessed_at = now() - (${ageInDays}::double precision * interval '1 day')
+            WHERE hash = ${name}
+              |]
+        cutoffInDays :: Double -> M UTCTime
+        cutoffInDays days = do
+          result <-
+            DB.pgQuery
+              [pgSQL|
+            SELECT now() - (${days}::double precision * interval '1 day')
+              |]
+          case result of
+            [Just cutoff] -> pure cutoff
+            _ -> throw $ OtherError "could not compute a cutoff"
+
+    it "keeps a cold store path that a recently read one still references" $ do
+      uploaded "aaa" ["bbb"] 0
+      uploaded "bbb" ["ccc"] 200
+      uploaded "ccc" [] 200
+      cutoff <- cutoffInDays 90
+      candidates <- DB.markGcCandidates cutoff 100
+      liftIO $ storeHashes candidates `shouldBe` []
+
+    it "collects the whole closure once its root goes cold" $ do
+      uploaded "aaa" ["bbb"] 200
+      uploaded "bbb" ["ccc"] 200
+      uploaded "ccc" [] 200
+      cutoff <- cutoffInDays 90
+      candidates <- DB.markGcCandidates cutoff 100
+      liftIO
+        $ sort (storeHashes candidates)
+        `shouldBe` [StoreHash "aaa", StoreHash "bbb", StoreHash "ccc"]
+
+    it "terminates on reference cycles" $ do
+      uploaded "ddd" ["eee"] 200
+      uploaded "eee" ["ddd"] 200
+      cutoff <- cutoffInDays 90
+      candidates <- DB.markGcCandidates cutoff 100
+      liftIO $ sort (storeHashes candidates) `shouldBe` [StoreHash "ddd", StoreHash "eee"]
+
+    it "stops serving a store path as soon as it is tombstoned" $ do
+      uploaded "aaa" [] 200
+      cutoff <- cutoffInDays 90
+      tombstoned <- DB.tombstoneGcObjects cutoff [StoreHash "aaa"]
+      liftIO $ storeHashes tombstoned `shouldBe` [StoreHash "aaa"]
+      served <- DB.getS3CacheStoreHash (StoreHash "aaa")
+      liftIO $ isNothing served `shouldBe` True
+
+    it "does not let a tombstoned store path be claimed for upload" $ do
+      uploaded "aaa" [] 200
+      cutoff <- cutoffInDays 90
+      void $ DB.tombstoneGcObjects cutoff [StoreHash "aaa"]
+      DB.claimS3CachedStorePaths [StorePath (StoreHash "aaa") "pkg"] `shouldReturnM` []
+
+    it "cancels an eviction when the store path is read between mark and sweep" $ do
+      uploaded "aaa" [] 200
+      cutoff <- cutoffInDays 90
+      candidates <- DB.markGcCandidates cutoff 100
+      liftIO $ storeHashes candidates `shouldBe` [StoreHash "aaa"]
+      void $ DB.bumpCacheAccessedAt (fromSeconds @Int 0) [StoreHash "aaa"]
+      tombstoned <- DB.tombstoneGcObjects cutoff [StoreHash "aaa"]
+      liftIO $ storeHashes tombstoned `shouldBe` []
+
+    it "removes the rows and edges of collected store paths" $ do
+      uploaded "aaa" ["bbb"] 200
+      uploaded "bbb" [] 200
+      DB.deleteGcObjects [StoreHash "aaa", StoreHash "bbb"]
+      stats <- DB.getCacheSizeStats
+      liftIO $ DB.cacheLiveObjects stats `shouldBe` 0
+      edges <-
+        DB.pgQuery
+          [pgSQL|
+        SELECT count(*) FROM cache_store_hash_references WHERE hash = 'aaa'
+          |]
+      liftIO $ edges `shouldBe` [Just (0 :: Int64)]
+
+    it "only bumps accessed_at once per minimum age" $ do
+      uploaded "aaa" [] 200
+      firstBump <- DB.bumpCacheAccessedAt (fromHours @Int 6) [StoreHash "aaa"]
+      liftIO $ firstBump `shouldBe` 1
+      secondBump <- DB.bumpCacheAccessedAt (fromHours @Int 6) [StoreHash "aaa"]
+      liftIO $ secondBump `shouldBe` 0
+
+    it "is not warmed up until reads have been recorded for the warmup period" $ do
+      void $ DB.pgExec [pgSQL| UPDATE cache_gc_state SET reads_recorded_since = NULL |]
+      untracked <- DB.getGcCutoff (fromDays @Int 90) (fromDays @Int 7)
+      liftIO $ DB.gcCutoffWarmedUp untracked `shouldBe` False
+      DB.stampReadsRecordedSince
+      fresh <- DB.getGcCutoff (fromDays @Int 90) (fromDays @Int 7)
+      liftIO $ DB.gcCutoffWarmedUp fresh `shouldBe` False
+      void
+        $ DB.pgExec
+          [pgSQL|
+        UPDATE cache_gc_state SET reads_recorded_since = now() - interval '8 days'
+          |]
+      warm <- DB.getGcCutoff (fromDays @Int 90) (fromDays @Int 7)
+      liftIO $ DB.gcCutoffWarmedUp warm `shouldBe` True
+      void $ DB.pgExec [pgSQL| UPDATE cache_gc_state SET reads_recorded_since = NULL |]
+
+    it "holds the collector lease against a second host" $ do
+      void $ DB.pgExec [pgSQL| UPDATE cache_gc_state SET lock_owner = NULL, lock_expires_at = NULL |]
+      DB.acquireGcLease "host-a" (fromHours @Int 6) `shouldReturnM` True
+      DB.acquireGcLease "host-b" (fromHours @Int 6) `shouldReturnM` False
+      DB.releaseGcLease "host-a"
+      DB.acquireGcLease "host-b" (fromHours @Int 6) `shouldReturnM` True
+      DB.releaseGcLease "host-b"
 
   context "getIncrementalTarget" $ inM $ beforeM_ truncateDBM $ do
     it "returns nothing if no matching commit exists" $ do
