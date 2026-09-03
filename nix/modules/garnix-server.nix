@@ -112,6 +112,9 @@ let
     "S3_CACHE_PUBLIC_BASE_URL=${cfg.s3Cache.publicBaseUrl}"
     "S3_CACHE_PRIVATE_BUCKET=${cfg.s3Cache.privateBucket}"
     "S3_CACHE_PUBLIC_REPO_OWNERS=${lib.concatStringsSep "," cfg.s3Cache.publicRepoOwners}"
+    "S3_CACHE_GC_ENABLED=${if cfg.s3Cache.gc.enable then "true" else "false"}"
+    "S3_CACHE_GC_RETENTION_PERIOD=${cfg.s3Cache.gc.retentionPeriod}"
+    "S3_CACHE_GC_DRY_RUN=${if cfg.s3Cache.gc.dryRun then "true" else "false"}"
   ];
 
   remoteBuilderSshConfig = lib.concatMapStringsSep "\n"
@@ -353,6 +356,42 @@ in
           logs and flake input authorization keep enforcing the real GitHub privacy.
         '';
       };
+      gc = {
+        enable = lib.mkOption {
+          type = lib.types.bool;
+          default = false;
+          description = ''
+            Delete store paths nobody has fetched for retentionPeriod.
+
+            A path survives if it was fetched recently, or if something that
+            was fetched recently depends on it, so evicting a path never
+            breaks the closure of one that stays.
+
+            Read tracking runs whenever s3Cache.enable is true, whether or not
+            this is set. Nothing is deleted until reads have been recorded for
+            a week, because before this feature the "last accessed" timestamp
+            recorded the last upload, not the last fetch, and everything in an
+            existing cache would look cold.
+          '';
+        };
+        retentionPeriod = lib.mkOption {
+          type = lib.types.str;
+          default = "90d";
+          example = "15d";
+          description = ''
+            How long a store path survives without being fetched. Accepts a
+            number of seconds or a suffixed value such as 30m, 12h, 15d.
+          '';
+        };
+        dryRun = lib.mkOption {
+          type = lib.types.bool;
+          default = false;
+          description = ''
+            Do everything except the deletion: log and count what a pass would
+            evict. Worth one pass before turning this loose on a real cache.
+          '';
+        };
+      };
     };
 
     remoteBuilders = {
@@ -432,6 +471,10 @@ in
       {
         assertion = !cfg.s3Cache.enable || (cfg.s3Cache.host != "" && cfg.s3Cache.publicBucket != "" && cfg.s3Cache.privateBucket != "" && cfg.s3Cache.publicBaseUrl != "");
         message = "services.garnixServer.s3Cache.{host,publicBucket,privateBucket,publicBaseUrl} must be set when s3Cache.enable = true.";
+      }
+      {
+        assertion = !cfg.s3Cache.gc.enable || cfg.s3Cache.enable;
+        message = "services.garnixServer.s3Cache.gc.enable requires services.garnixServer.s3Cache.enable.";
       }
     ];
 
