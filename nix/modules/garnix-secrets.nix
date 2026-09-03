@@ -254,7 +254,6 @@ in
       restartTriggers = [ stageScript ];
       serviceConfig = {
         Type = "oneshot";
-        RemainAfterExit = true;
         ExecStart = lib.getExe stageScript;
       };
     };
