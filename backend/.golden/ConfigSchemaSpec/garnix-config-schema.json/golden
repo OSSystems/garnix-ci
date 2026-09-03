@@ -96,6 +96,10 @@
                         }
                     ]
                 },
+                "commentOnFailure": {
+                    "$comment": "Whether to post a comment on the pull request when the garnix checks for a commit fail. Requires the garnix app to have write access to pull requests.",
+                    "type": "boolean"
+                },
                 "flakeDir": {
                     "$comment": "The directory containing your flake.nix relative from the repo root (if not in the repo root).",
                     "type": "string"
