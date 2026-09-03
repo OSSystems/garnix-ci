@@ -21,6 +21,7 @@ module Garnix.API.Hosts
 where
 
 import Control.Lens
+import Data.Aeson qualified as Aeson
 import Data.Map (Map)
 import Data.Map qualified as Map
 import Data.Maybe (listToMaybe, mapMaybe)
@@ -157,24 +158,33 @@ instance ToJSON HostList where
                    address <- toList (serverAddressText (_hostAddress host)),
                    (name, port) <- _hostHttpPorts host
                ]
-     in [aesonQQ|
-         {
-          http:
-             {
-              routers: #{httpRouters},
-              services: #{httpServices},
-              middlewares: {
-                heartbeatmiddleware: {
-                  plugin: {
-                    heartbeatmiddleware: {
-                      reportEndpoint: #{baseUrl <> "/api/hosts/heartbeat"}
-                    }
-                  }
-                }
-              }
-             }
-         }
-       |]
+        -- Traefik rejects the whole configuration -- and so keeps serving
+        -- the previous one -- if `routers` or `services` is present but
+        -- empty ("routers cannot be a standalone element"). Omitting them
+        -- instead is what makes the last server's teardown actually take its
+        -- routes down with it.
+        nonEmpty name entries
+          | Map.null entries = []
+          | otherwise = [(name, toJSON entries)]
+     in Aeson.object
+          [ ( "http",
+              Aeson.object
+                $ nonEmpty "routers" httpRouters
+                <> nonEmpty "services" httpServices
+                <> [ ( "middlewares",
+                       [aesonQQ| {
+                         heartbeatmiddleware: {
+                           plugin: {
+                             heartbeatmiddleware: {
+                               reportEndpoint: #{baseUrl <> "/api/hosts/heartbeat"}
+                             }
+                           }
+                         }
+                       } |]
+                     )
+                   ]
+            )
+          ]
 
 -- | Hosts whose every name component is a legal DNS label. One that is not
 -- could not be routed to anyway, and would produce a router rule the gateway

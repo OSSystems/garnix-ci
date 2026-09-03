@@ -28,6 +28,19 @@ spec = do
       -- The short name points at the same service, not a second copy of it.
       serviceNames config `shouldBe` ["web.main.widgets.acme"]
 
+    it "omits the router and service keys entirely when nothing is deployed" $ do
+      -- Traefik refuses a whole configuration document that carries an empty
+      -- `routers` object ("routers cannot be a standalone element") and goes
+      -- on serving the previous one. Sending `{}` here meant the last server
+      -- of a repo kept being routed to after it was destroyed.
+      let config = renderTraefik []
+      config ^? key "http" . key "routers" `shouldBe` Nothing
+      config ^? key "http" . key "services" `shouldBe` Nothing
+      -- The middleware definition still has to be there, or the routers of
+      -- the next deploy would reference one that does not exist.
+      config ^? key "http" . key "middlewares" . key "heartbeatmiddleware"
+        `shouldNotBe` Nothing
+
     it "gives a non-primary deploy no short name" $ do
       routerNames (renderTraefik [webHost]) `shouldNotContain` ["widgets.acme"]
 
