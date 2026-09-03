@@ -33,6 +33,12 @@ sops edit secrets/dev.yaml
 ```
 
 Then you have to enable your new GitHub app on a repo that you want to build through the GitHub ui.
+
+The app manifest asks for `pull_requests: write`, which is used only by the
+`commentOnFailure` option in `garnix.yaml`. If you are updating an app created
+before that permission existed, every installation has to accept it; until then
+the comment request 403s, which is logged but doesn't fail the build.
+
 Finally, you can submit a test build, with something like this:
 
 ```bash
