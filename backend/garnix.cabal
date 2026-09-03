@@ -58,6 +58,7 @@ library
       Garnix.Build.MetaCheck
       Garnix.Build.Module
       Garnix.Build.Package
+      Garnix.Build.PrComment
       Garnix.Build.Reporting
       Garnix.Build.Types
       Garnix.BuildLogs
@@ -718,6 +719,7 @@ test-suite spec
       Garnix.Build.CheckoutSpec
       Garnix.Build.FodCheckSpec
       Garnix.Build.ModuleSpec
+      Garnix.Build.PrCommentSpec
       Garnix.BuildSpec
       Garnix.DB.FeatureFlagsSpec
       Garnix.DBSpec
@@ -796,6 +798,7 @@ test-suite spec
       Garnix.Build.MetaCheck
       Garnix.Build.Module
       Garnix.Build.Package
+      Garnix.Build.PrComment
       Garnix.Build.Reporting
       Garnix.Build.Types
       Garnix.BuildLogs
