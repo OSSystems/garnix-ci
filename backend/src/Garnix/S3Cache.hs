@@ -17,7 +17,7 @@ import Garnix.DB qualified as DB
 import Garnix.Duration
 import Garnix.Monad
 import Garnix.Monad.Memoization (memoize)
-import Garnix.Monad.Metrics (incrementEvent, timingAs)
+import Garnix.Monad.Metrics (addEvent, incrementEvent, timingAs)
 import Garnix.Monad.Pool
 import Garnix.Monad.SubProcess (runSubProcess, runSubProcess_)
 import Garnix.Nix.PathInfo (getPathInfo)
@@ -45,7 +45,11 @@ upload = curry5 $ mockable #s3CacheUploadMock $ \(runReporter, repoOwner, repoNa
         storePathClosure <- nubOrd . mconcat . catMaybes <$> forM (evalResult ^. #toUpload) Nix.getClosure
         notInNixosCache <- filterM (fmap not . isInNixosCache) storePathClosure
         notInS3Cache <- DB.claimS3CachedStorePaths notInNixosCache
-        forM_ (notInNixosCache \\ notInS3Cache) $ \storePath -> do
+        let notClaimed = notInNixosCache \\ notInS3Cache
+        skippedForDeletion <- DB.countDeletingStoreHashes (fmap getHash notClaimed)
+        when (skippedForDeletion > 0)
+          $ addEvent #s3CacheUploadsSkippedDeleting (fromIntegral skippedForDeletion)
+        forM_ notClaimed $ \storePath -> do
           DB.tagCacheUploadForS3Cache repoOwner repoName $ getHash storePath
         forConcurrently_ notInS3Cache $ \storePath -> do
           dirSize <- liftIO $ getDirSize $ cs $ getStorePath storePath

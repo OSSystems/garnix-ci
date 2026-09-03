@@ -185,6 +185,7 @@ truncateDBMNoInsert = do
           github_user_credentials,
           cache_store_hashes,
           cache_store_hash_tags,
+          cache_store_hash_references,
           repo_config,
           modules,
           module_user_repo,
