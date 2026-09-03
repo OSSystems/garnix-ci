@@ -4,6 +4,7 @@ module Garnix.Build.Flake
 where
 
 import Control.Lens
+import Data.IORef (newIORef, readIORef, writeIORef)
 import Garnix.Attribute
 import Garnix.Build.Action qualified as Action
 import Garnix.Build.Checkout (Remote, runWithCheckout, withAuthorization)
@@ -20,17 +21,30 @@ import Garnix.Monad
 import Garnix.Monad.Async (joinAll, joinAll_, resolve, spawn)
 import Garnix.Prelude
 import Garnix.Types as Types
-import Garnix.YamlConfig (Action, ExcludeBranches (..), GarnixConfig, IncrementalizeBuildsSection (..), flakeDir, incrementalizeBuildsSection)
+import Garnix.YamlConfig (Action, ExcludeBranches (..), GarnixConfig, IncrementalizeBuildsSection (..), commentOnFailure, flakeDir, incrementalizeBuildsSection)
 
 runBuildFlake :: (HasCallStack) => Reporter -> BuildKind -> CommitInfo -> Remote -> M ()
 runBuildFlake reporter buildKind commitInfo withCheckout = do
   (startingBuild, startingBuildRunReporter) <- newBuild reporter commitInfo (PackageInfo TypeOverall NoSystem buildStarting) False
   withInternalCacheToken (commitInfo ^. reqUser) $ do
     metaCheckRun <- MetaCheck.newReport reporter commitInfo
-    flip catchEither (\err -> MetaCheck.updateFail commitInfo metaCheckRun (Just err) >> rethrowEither err) $ do
+    -- Only known once the checkout hands us the repo's garnix.yaml, but needed
+    -- by the handler below, which also covers failures from before that point
+    -- (a broken checkout, an unparseable garnix.yaml).
+    commentPolicy <- liftIO $ newIORef MetaCheck.NoComment
+    let onFail err = do
+          policy <- liftIO $ readIORef commentPolicy
+          MetaCheck.updateFail policy commitInfo metaCheckRun (Just err)
+          rethrowEither err
+    flip catchEither onFail $ do
       reportOnError startingBuildRunReporter startingBuild commitInfo $ do
         repoConfig <- DB.getRepoConfig (commitInfo ^. repoInfo . ghRepoOwner) (commitInfo ^. repoInfo . ghRepoName)
         runWithCheckout withCheckout commitInfo $ \config -> do
+          let policy =
+                if config ^. commentOnFailure
+                  then MetaCheck.CommentOnFailure
+                  else MetaCheck.NoComment
+          liftIO $ writeIORef commentPolicy policy
           withAuthorization (config ^. flakeDir) repoConfig commitInfo $ do
             initialBuilds <- setupBuilds reporter commitInfo config
             initialActions <- setupActions reporter commitInfo config
@@ -67,7 +81,7 @@ runBuildFlake reporter buildKind commitInfo withCheckout = do
 
               if allBuildsSucceeded
                 then MetaCheck.updateSuccess commitInfo metaCheckRun
-                else MetaCheck.updateFail commitInfo metaCheckRun Nothing
+                else MetaCheck.updateFail policy commitInfo metaCheckRun Nothing
 
 setupBuilds :: Reporter -> CommitInfo -> GarnixConfig -> M [(Build, RunReporter)]
 setupBuilds reporter commitInfo config = do

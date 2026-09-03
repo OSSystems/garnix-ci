@@ -1,11 +1,14 @@
 module Garnix.Build.MetaCheck
-  ( update,
+  ( CommentPolicy (..),
+    update,
     newReport,
     updateFail,
     updateSuccess,
   )
 where
 
+import Garnix.Build.PrComment (CommentPolicy (..))
+import Garnix.Build.PrComment qualified as PrComment
 import Garnix.DB qualified as DB
 import Garnix.Monad
 import Garnix.Prelude
@@ -65,8 +68,8 @@ newReport reporter commitInfo = do
   void $ DB.newCommit (commitInfo ^. repoInfo . ghRepoOwner) (commitInfo ^. repoInfo . ghRepoName) (commitInfo ^. commit)
   createNewRun reporter MetaCheck
 
-updateFail :: CommitInfo -> RunReporter -> Maybe (Either SomeException ErrorWithContext) -> M ()
-updateFail commitInfo runReporter e = do
+updateFail :: CommentPolicy -> CommitInfo -> RunReporter -> Maybe (Either SomeException ErrorWithContext) -> M ()
+updateFail commentPolicy commitInfo runReporter e = do
   case e of
     Just err ->
       log Warning $ "failMetaCheck: uncaught " <> either (const "IO exception: ") (const "monadic error: ") err <> either show show err
@@ -81,7 +84,11 @@ updateFail commitInfo runReporter e = do
             _checkStatusUpdateTo = CheckFail
           }
       )
-  when updated $ reportComplete runReporter RunReportStatusFailure
+  when updated $ do
+    reportComplete runReporter RunReportStatusFailure
+    case commentPolicy of
+      CommentOnFailure -> PrComment.commentOnFailure commitInfo
+      NoComment -> pure ()
 
 updateSuccess :: CommitInfo -> RunReporter -> M ()
 updateSuccess commitInfo runReporter = do
