@@ -17,6 +17,7 @@ import Amazonka.Auth qualified as Amazonka
 import Amazonka.Data qualified as Amazonka
 import Amazonka.S3 as Amazonka
 import Control.Concurrent.Lifted (newMVar)
+import Control.Concurrent.STM (newTVarIO)
 import Control.Exception (ErrorCall (..))
 import Control.Exception.Safe (throwIO)
 import Control.Exception.Safe qualified as Safe
@@ -29,6 +30,7 @@ import Data.ByteString qualified as ByteString
 import Data.ByteString.Base64 qualified as Base64
 import Data.ByteString.Lazy qualified as Lazy
 import Data.Containers.ListUtils (nubOrd)
+import Data.HashSet qualified as HashSet
 import Data.HashTable.IO qualified as HashTables
 import Data.List.Extra (firstJust)
 import Data.Map qualified as Map
@@ -760,6 +762,7 @@ withGarageS3 inner =
       Safe.bracket (startGarage garageDir) killGarage $ const $ do
         amazonkaEnv <- initializeGarage garageDir
         isInNixosCacheMemoTable <- HashTables.new >>= newMVar
+        accessBuffer <- liftIO $ newTVarIO HashSet.empty
         inner
           ( #s3CacheEnv
               .~ S3CacheEnv
@@ -772,7 +775,11 @@ withGarageS3 inner =
                   cachePrivKeyName = "test-key",
                   expiration = fromSeconds @Int 10,
                   maxUploadSize = 2 ^ (30 :: Integer),
-                  isInNixosCacheMemoTable
+                  isInNixosCacheMemoTable,
+                  accessBuffer,
+                  accessFlushEvery = defaultAccessFlushEvery,
+                  accessFlushMax = defaultAccessFlushMax,
+                  accessBumpMinAge = defaultAccessBumpMinAge
                 }
           )
   where

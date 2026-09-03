@@ -24,7 +24,7 @@ import Garnix.Monad
 import Garnix.Monad.Metrics (incrementEvent)
 import Garnix.Nix.Types (StorePath (..))
 import Garnix.Prelude
-import Garnix.S3Cache (toNarFilePath)
+import Garnix.S3Cache (recordCacheAccess, toNarFilePath)
 import Garnix.Types
 import Servant
 
@@ -98,6 +98,7 @@ serveNarInfo xForwardedFor (NarInfoFileName hash) authorization = do
               case permission of
                 Disallowed -> shortcut NotFound
                 Allowed -> privateS3Url storePath compression
+        recordCacheAccess hash
         incrementEvent #s3CacheNarfilesServed
         pure
           $ NarInfo
