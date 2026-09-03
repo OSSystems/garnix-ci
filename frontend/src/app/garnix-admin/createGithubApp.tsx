@@ -17,7 +17,10 @@ const newManifest = () => {
       checks: "write",
       contents: "read",
       metadata: "read",
-      pull_requests: "read",
+      // write, not read: commenting on a PR when checks fail (garnix.yaml
+      // `commentOnFailure`) is the only way to produce a Github inbox
+      // notification. Existing installations must accept this permission.
+      pull_requests: "write",
       statuses: "write",
       emails: "read",
       members: "read",
