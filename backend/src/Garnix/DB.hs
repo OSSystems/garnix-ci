@@ -926,6 +926,38 @@ claimS3CachedStorePaths (sort -> storePaths) = do
 
 -- * S3 cache retention
 
+data GcObject = GcObject
+  { gcObjectHash :: StoreHash,
+    gcObjectPackageName :: Text,
+    gcObjectPublic :: Bool,
+    gcObjectFileSize :: Int64
+  }
+  deriving (Generic, Show)
+
+data GcCutoff = GcCutoff
+  { gcCutoffTime :: UTCTime,
+    gcCutoffWarmedUp :: Bool
+  }
+  deriving (Generic, Show)
+
+data CacheSizeStats = CacheSizeStats
+  { cacheLiveObjects :: Int64,
+    cacheLiveBytes :: Int64
+  }
+  deriving (Generic, Show)
+
+data TombstoneStats = TombstoneStats
+  { tombstonesPending :: Int64,
+    oldestTombstone :: Maybe UTCTime
+  }
+  deriving (Generic, Show)
+
+toGcObject :: (StoreHash, Maybe Text, Maybe Bool, Maybe Int64) -> Maybe GcObject
+toGcObject = \case
+  (gcObjectHash, Just gcObjectPackageName, Just gcObjectPublic, Just gcObjectFileSize) ->
+    Just GcObject {gcObjectHash, gcObjectPackageName, gcObjectPublic, gcObjectFileSize}
+  _ -> Nothing
+
 countDeletingStoreHashes :: [StoreHash] -> M Int64
 countDeletingStoreHashes [] = pure 0
 countDeletingStoreHashes (sort -> hashes) = do
@@ -962,6 +994,173 @@ stampReadsRecordedSince =
         SET reads_recorded_since = NOW()
         WHERE id AND reads_recorded_since IS NULL
       |]
+
+getGcCutoff :: Duration -> Duration -> M GcCutoff
+getGcCutoff retentionPeriod warmupPeriod = do
+  let retentionSeconds = toSeconds retentionPeriod
+  let warmupSeconds = toSeconds warmupPeriod
+  result <-
+    pgQuery
+      [pgSQL|
+        SELECT
+          NOW() - (${retentionSeconds}::double precision * interval '1 second'),
+          reads_recorded_since IS NOT NULL
+            AND NOW() >= reads_recorded_since + (${warmupSeconds}::double precision * interval '1 second')
+        FROM cache_gc_state
+        WHERE id
+      |]
+  case result of
+    [(Just gcCutoffTime, Just gcCutoffWarmedUp)] -> pure GcCutoff {gcCutoffTime, gcCutoffWarmedUp}
+    _ -> throw $ OtherError "getGcCutoff: cache_gc_state is missing its singleton row"
+
+acquireGcLease :: Text -> Duration -> M Bool
+acquireGcLease owner lease = do
+  let leaseSeconds = toSeconds lease
+  updated <-
+    pgExec
+      [pgSQL|
+        UPDATE cache_gc_state
+        SET lock_owner = ${owner},
+            lock_expires_at = NOW() + (${leaseSeconds}::double precision * interval '1 second')
+        WHERE id
+          AND (lock_expires_at IS NULL OR lock_expires_at < NOW() OR lock_owner = ${owner})
+      |]
+  pure $ updated > 0
+
+releaseGcLease :: Text -> M ()
+releaseGcLease owner =
+  void
+    $ pgExec
+      [pgSQL|
+        UPDATE cache_gc_state
+        SET lock_owner = NULL,
+            lock_expires_at = NULL,
+            last_run_at = NOW()
+        WHERE id AND lock_owner = ${owner}
+      |]
+
+countExpiredStoreHashes :: UTCTime -> M Int64
+countExpiredStoreHashes cutoff = do
+  result <-
+    pgQuery
+      [pgSQL|
+        SELECT count(*)
+        FROM cache_store_hashes
+        WHERE deleting_since IS NULL
+          AND uploaded_at IS NOT NULL
+          AND accessed_at < ${cutoff}
+      |]
+  pure $ case result of
+    [Just count] -> count
+    _ -> 0
+
+markGcCandidates :: UTCTime -> Int -> M [GcObject]
+markGcCandidates cutoff batchSize = do
+  let limit = fromIntegral batchSize :: Int64
+  rows <-
+    pgQuery
+      [pgSQL|
+        WITH RECURSIVE reachable(hash) AS (
+            SELECT hash
+              FROM cache_store_hashes
+             WHERE deleting_since IS NULL
+               AND (uploaded_at IS NULL OR accessed_at >= ${cutoff})
+          UNION
+            SELECT edges.reference_hash
+              FROM reachable
+              JOIN cache_store_hash_references AS edges ON edges.hash = reachable.hash
+        )
+        SELECT candidate.hash,
+               candidate.package_name,
+               candidate.public,
+               candidate.file_size
+          FROM cache_store_hashes AS candidate
+         WHERE candidate.deleting_since IS NULL
+           AND candidate.uploaded_at IS NOT NULL
+           AND candidate.accessed_at < ${cutoff}
+           AND NOT EXISTS (
+                 SELECT 1 FROM reachable WHERE reachable.hash = candidate.hash
+               )
+         ORDER BY candidate.accessed_at
+         LIMIT ${limit}::bigint
+      |]
+  pure $ catMaybes $ fmap toGcObject rows
+
+tombstoneGcObjects :: UTCTime -> [StoreHash] -> M [GcObject]
+tombstoneGcObjects _ [] = pure []
+tombstoneGcObjects cutoff (sort -> hashes) = do
+  rows <-
+    pgQuery
+      [pgSQL|
+        UPDATE cache_store_hashes
+        SET deleting_since = NOW()
+        WHERE hash = ANY(${hashes}::text[])
+          AND deleting_since IS NULL
+          AND uploaded_at IS NOT NULL
+          AND accessed_at < ${cutoff}
+        RETURNING hash, package_name, public, file_size
+      |]
+  pure $ catMaybes $ fmap toGcObject rows
+
+getPendingTombstones :: Int -> M [GcObject]
+getPendingTombstones batchSize = do
+  let limit = fromIntegral batchSize :: Int64
+  rows <-
+    pgQuery
+      [pgSQL|
+        SELECT hash, package_name, public, file_size
+        FROM cache_store_hashes
+        WHERE deleting_since IS NOT NULL
+        ORDER BY deleting_since
+        LIMIT ${limit}::bigint
+      |]
+  pure $ catMaybes $ fmap toGcObject rows
+
+deleteGcObjects :: [StoreHash] -> M ()
+deleteGcObjects [] = pure ()
+deleteGcObjects (sort -> hashes) = do
+  void
+    $ pgExec
+      [pgSQL|
+        DELETE FROM cache_store_hash_tags WHERE hash = ANY(${hashes}::text[])
+      |]
+  void
+    $ pgExec
+      [pgSQL|
+        DELETE FROM cache_store_hash_references WHERE hash = ANY(${hashes}::text[])
+      |]
+  void
+    $ pgExec
+      [pgSQL|
+        DELETE FROM cache_store_hashes WHERE hash = ANY(${hashes}::text[])
+      |]
+
+getCacheSizeStats :: M CacheSizeStats
+getCacheSizeStats = do
+  result <-
+    pgQuery
+      [pgSQL|
+        SELECT count(*), COALESCE(sum(file_size), 0)::bigint
+        FROM cache_store_hashes
+        WHERE uploaded_at IS NOT NULL
+          AND deleting_since IS NULL
+      |]
+  pure $ case result of
+    [(Just cacheLiveObjects, Just cacheLiveBytes)] -> CacheSizeStats {cacheLiveObjects, cacheLiveBytes}
+    _ -> CacheSizeStats {cacheLiveObjects = 0, cacheLiveBytes = 0}
+
+getTombstoneStats :: M TombstoneStats
+getTombstoneStats = do
+  result <-
+    pgQuery
+      [pgSQL|
+        SELECT count(*), min(deleting_since)
+        FROM cache_store_hashes
+        WHERE deleting_since IS NOT NULL
+      |]
+  pure $ case result of
+    [(Just tombstonesPending, oldestTombstone)] -> TombstoneStats {tombstonesPending, oldestTombstone}
+    _ -> TombstoneStats {tombstonesPending = 0, oldestTombstone = Nothing}
 
 -- * /api/account/tokens
 

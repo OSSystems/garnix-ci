@@ -197,6 +197,26 @@ lookupEnvInt name fallback =
           <> " must be a positive whole number, got: "
           <> cs raw
 
+gcConfigFromEnv :: IO GcConfig
+gcConfigFromEnv = do
+  gcEnabled <- lookupEnvBool "S3_CACHE_GC_ENABLED" (gcEnabled defaultGcConfig)
+  gcInterval <- lookupEnvDuration "S3_CACHE_GC_INTERVAL" (gcInterval defaultGcConfig)
+  retentionPeriod <- lookupEnvDuration "S3_CACHE_GC_RETENTION_PERIOD" (retentionPeriod defaultGcConfig)
+  warmupPeriod <- lookupEnvDuration "S3_CACHE_GC_WARMUP_PERIOD" (warmupPeriod defaultGcConfig)
+  batchSize <- lookupEnvInt "S3_CACHE_GC_BATCH_SIZE" (batchSize defaultGcConfig)
+  deleteConcurrency <- lookupEnvInt "S3_CACHE_GC_DELETE_CONCURRENCY" (deleteConcurrency defaultGcConfig)
+  dryRun <- lookupEnvBool "S3_CACHE_GC_DRY_RUN" (dryRun defaultGcConfig)
+  pure
+    GcConfig
+      { gcEnabled,
+        gcInterval,
+        retentionPeriod,
+        warmupPeriod,
+        batchSize,
+        deleteConcurrency,
+        dryRun
+      }
+
 withEnv :: (HasCallStack) => Set TestFeature -> FilePath -> Maybe Warp.Port -> (Env -> IO a) -> IO a
 withEnv testFeatures buildLogsDir buildLogsReportingPort action = do
   buildLogsDir' <- makeAbsolute buildLogsDir
@@ -275,6 +295,7 @@ withEnv testFeatures buildLogsDir buildLogsReportingPort action = do
         accessFlushEvery <- lookupEnvDuration "S3_CACHE_ACCESS_FLUSH_EVERY" defaultAccessFlushEvery
         accessFlushMax <- lookupEnvInt "S3_CACHE_ACCESS_FLUSH_MAX" defaultAccessFlushMax
         accessBumpMinAge <- lookupEnvDuration "S3_CACHE_ACCESS_BUMP_MIN_AGE" defaultAccessBumpMinAge
+        gc <- gcConfigFromEnv
         pure
           $ S3CacheEnv
             { amazonkaEnv,
@@ -290,7 +311,8 @@ withEnv testFeatures buildLogsDir buildLogsReportingPort action = do
               accessBuffer,
               accessFlushEvery,
               accessFlushMax,
-              accessBumpMinAge
+              accessBumpMinAge,
+              gc
             }
       else do
         amazonkaEnv <-
@@ -313,7 +335,8 @@ withEnv testFeatures buildLogsDir buildLogsReportingPort action = do
               accessBuffer,
               accessFlushEvery = defaultAccessFlushEvery,
               accessFlushMax = defaultAccessFlushMax,
-              accessBumpMinAge = defaultAccessBumpMinAge
+              accessBumpMinAge = defaultAccessBumpMinAge,
+              gc = defaultGcConfig
             }
   actionServerUrl <- fromMaybe "action-runner2.garnix.io" <$> lookupEnv "GARNIX_ACTION_HOST"
   actionRunnerSshKey <- lookupEnv "GARNIX_ACTION_RUNNER_SSH_KEY" >>= maybe (pure (secretFile "garnix_action_runner_ssh")) makeAbsolute

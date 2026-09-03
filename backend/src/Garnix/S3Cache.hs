@@ -6,6 +6,7 @@ module Garnix.S3Cache
     recordCacheAccess,
     runCacheMaintenance,
     flushAccessBuffer,
+    runGcOnce,
   )
 where
 
@@ -94,6 +95,8 @@ runCacheMaintenance = do
   when enabled $ do
     flushEvery <- view $ #s3CacheEnv . #accessFlushEvery
     void $ forkForever flushEvery flushAccessBuffer
+    gcConfig <- view $ #s3CacheEnv . #gc
+    when (gcConfig ^. #gcEnabled) $ void $ forkForever (gcConfig ^. #gcInterval) runGcOnce
 
 flushAccessBuffer :: M ()
 flushAccessBuffer = do
@@ -109,6 +112,156 @@ flushAccessBuffer = do
     minAge <- view $ #s3CacheEnv . #accessBumpMinAge
     bumped <- timingAs #s3CacheAccessFlushTime $ DB.bumpCacheAccessedAt minAge hashes
     addEvent #s3CacheAccessBumps bumped
+
+runGcOnce :: M ()
+runGcOnce = withTextSpan ("phase", "s3-cache-gc") $ do
+  gcConfig <- view $ #s3CacheEnv . #gc
+  owner <- view #hostname
+  acquired <- DB.acquireGcLease owner (gcConfig ^. #gcInterval)
+  if not acquired
+    then log Informational "s3 cache gc: the collector lease is held elsewhere, skipping this pass"
+    else do
+      outcome <- (Right <$> gcPass gcConfig) `catchError` (pure . Left)
+      DB.releaseGcLease owner
+      case outcome of
+        Right () -> incrementEvent #s3CacheGcRuns
+        Left err -> do
+          incrementEvent #s3CacheGcFailures
+          throwError err
+
+gcPass :: GcConfig -> M ()
+gcPass gcConfig = timingAs #s3CacheGcRunTime $ do
+  unless (gcConfig ^. #dryRun) $ void $ reapPendingTombstones gcConfig
+  cutoffInfo <- DB.getGcCutoff (gcConfig ^. #retentionPeriod) (gcConfig ^. #warmupPeriod)
+  DB.getCacheSizeStats >>= publishCacheSize
+  log Informational
+    $ "s3 cache gc: starting pass with cutoff "
+    <> show (DB.gcCutoffTime cutoffInfo)
+    <> ", dry run "
+    <> show (gcConfig ^. #dryRun)
+  if toSeconds (gcConfig ^. #retentionPeriod) <= 0
+    then log Informational "s3 cache gc: retentionPeriod is 0, retention is disabled"
+    else
+      if not (DB.gcCutoffWarmedUp cutoffInfo)
+        then
+          log Notice
+            $ "s3 cache gc: read tracking has not been running for warmupPeriod yet; "
+            <> "accessed_at still reflects writes, so nothing is evicted"
+        else void $ collectAtCutoff gcConfig (DB.gcCutoffTime cutoffInfo)
+  DB.getCacheSizeStats >>= publishCacheSize
+  publishTombstoneStats
+
+publishCacheSize :: DB.CacheSizeStats -> M ()
+publishCacheSize stats = do
+  setGauge #s3CacheLiveObjects (fromIntegral $ DB.cacheLiveObjects stats)
+  setGauge #s3CacheLiveBytes (fromIntegral $ DB.cacheLiveBytes stats)
+
+publishTombstoneStats :: M ()
+publishTombstoneStats = do
+  stats <- DB.getTombstoneStats
+  setGauge #s3CacheGcTombstonesPending (fromIntegral $ DB.tombstonesPending stats)
+  now <- liftIO getCurrentTime
+  setGauge #s3CacheGcOldestTombstoneAge $ case DB.oldestTombstone stats of
+    Nothing -> 0
+    Just oldest -> toSeconds $ diffTime now oldest
+
+collectAtCutoff :: GcConfig -> UTCTime -> M Int
+collectAtCutoff gcConfig cutoff = do
+  expired <- DB.countExpiredStoreHashes cutoff
+  addEvent #s3CacheGcCandidates (fromIntegral expired)
+  collected <- go 0
+  addEvent #s3CacheGcRescued (max 0 (fromIntegral expired - collected))
+  pure collected
+  where
+    go collected = do
+      candidates <-
+        timingAs #s3CacheGcMarkTime
+          $ DB.markGcCandidates cutoff (gcConfig ^. #batchSize)
+      if null candidates
+        then pure collected
+        else do
+          deleted <- sweepBatch gcConfig cutoff candidates
+          if deleted <= 0
+            then pure collected
+            else go (collected + deleted)
+
+sweepBatch :: GcConfig -> UTCTime -> [DB.GcObject] -> M Int
+sweepBatch gcConfig cutoff candidates
+  | gcConfig ^. #dryRun = do
+      log Informational
+        $ "s3 cache gc: dry run, would evict "
+        <> show (length candidates)
+        <> " store paths totalling "
+        <> show (sum (fmap DB.gcObjectFileSize candidates))
+        <> " bytes"
+      pure 0
+  | otherwise = do
+      tombstoned <- DB.tombstoneGcObjects cutoff (fmap DB.gcObjectHash candidates)
+      reapTombstoned gcConfig tombstoned
+
+reapPendingTombstones :: GcConfig -> M Int
+reapPendingTombstones gcConfig = go 0
+  where
+    go reaped = do
+      pending <- DB.getPendingTombstones (gcConfig ^. #batchSize)
+      if null pending
+        then pure reaped
+        else do
+          deleted <- reapTombstoned gcConfig pending
+          if deleted <= 0
+            then pure reaped
+            else go (reaped + deleted)
+
+reapTombstoned :: GcConfig -> [DB.GcObject] -> M Int
+reapTombstoned _ [] = pure 0
+reapTombstoned gcConfig objects = do
+  deleted <- deleteFromS3 gcConfig objects
+  DB.deleteGcObjects (fmap DB.gcObjectHash deleted)
+  addEvent #s3CacheGcObjectsDeleted (length deleted)
+  addEvent #s3CacheGcBytesDeleted (fromIntegral (sum (fmap DB.gcObjectFileSize deleted)))
+  log Informational
+    $ "s3 cache gc: evicted "
+    <> show (length deleted)
+    <> " of "
+    <> show (length objects)
+    <> " tombstoned store paths"
+  pure (length deleted)
+
+deleteFromS3 :: GcConfig -> [DB.GcObject] -> M [DB.GcObject]
+deleteFromS3 gcConfig objects = do
+  publicBucket <- view $ #s3CacheEnv . #publicBucket
+  privateBucket <- view $ #s3CacheEnv . #privateBucket
+  results <-
+    forM (chunksOf (max 1 (gcConfig ^. #deleteConcurrency)) objects)
+      $ \chunk -> forConcurrently chunk (deleteOne publicBucket privateBucket)
+  pure $ catMaybes $ mconcat results
+  where
+    deleteOne publicBucket privateBucket object = do
+      let storePath = StorePath (DB.gcObjectHash object) (DB.gcObjectPackageName object)
+      let key = toNarFilePath storePath XZ
+      let buckets =
+            if DB.gcObjectPublic object
+              then [publicBucket, privateBucket]
+              else [privateBucket, publicBucket]
+      let deleteAll =
+            forM_ buckets $ \bucket ->
+              void $ sendWithLogging $ Amazonka.newDeleteObject bucket (Amazonka.ObjectKey key)
+      outcome <-
+        ((Right <$> deleteAll) `catchError` (pure . Left . showDebug))
+          `catchAny` (pure . Left . show)
+      case outcome of
+        Right () -> pure $ Just object
+        Left message -> do
+          incrementEvent #s3CacheGcDeleteFailures
+          log Warning $ "s3 cache gc: could not delete " <> key <> ": " <> message
+          pure Nothing
+
+chunksOf :: Int -> [a] -> [[a]]
+chunksOf n items
+  | n <= 0 = [items]
+  | otherwise = case splitAt n items of
+      ([], _) -> []
+      (chunk, rest) -> chunk : chunksOf n rest
 
 getPackageName :: DrvPath -> PackageName
 getPackageName drvPath =

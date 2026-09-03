@@ -38,6 +38,19 @@ data Metrics = Metrics
     s3CacheAccessFlushes :: Counter,
     s3CacheAccessBufferSize :: Gauge,
     s3CacheAccessFlushTime :: Histogram,
+    s3CacheGcRuns :: Counter,
+    s3CacheGcFailures :: Counter,
+    s3CacheGcRunTime :: Histogram,
+    s3CacheGcMarkTime :: Histogram,
+    s3CacheGcCandidates :: Counter,
+    s3CacheGcRescued :: Counter,
+    s3CacheGcObjectsDeleted :: Counter,
+    s3CacheGcBytesDeleted :: Counter,
+    s3CacheGcDeleteFailures :: Counter,
+    s3CacheGcTombstonesPending :: Gauge,
+    s3CacheGcOldestTombstoneAge :: Gauge,
+    s3CacheLiveObjects :: Gauge,
+    s3CacheLiveBytes :: Gauge,
     fodCheckTime :: Histogram,
     fodCheckBatchSize :: Histogram,
     fodCheckQueueLen :: Gauge,
@@ -208,6 +221,73 @@ registerMetrics = do
       "garnix_s3_cache_access_flush_time"
       mempty
       [0.01, 0.05, 0.1, 0.5, 1, 2, 5, 10, 30, 60]
+      registry
+  s3CacheGcRuns <-
+    registerCounter
+      "garnix_s3_cache_gc_runs"
+      mempty
+      registry
+  s3CacheGcFailures <-
+    registerCounter
+      "garnix_s3_cache_gc_failures"
+      mempty
+      registry
+  s3CacheGcRunTime <-
+    registerHistogram
+      "garnix_s3_cache_gc_run_time"
+      mempty
+      [1, 5, 10, 30, 60, 120, 300, 600, 1800, 3600]
+      registry
+  s3CacheGcMarkTime <-
+    registerHistogram
+      "garnix_s3_cache_gc_mark_time"
+      mempty
+      [0.1, 0.5, 1, 2, 5, 10, 30, 60, 120, 300, 600]
+      registry
+  s3CacheGcCandidates <-
+    registerCounter
+      "garnix_s3_cache_gc_candidates"
+      mempty
+      registry
+  s3CacheGcRescued <-
+    registerCounter
+      "garnix_s3_cache_gc_rescued"
+      mempty
+      registry
+  s3CacheGcObjectsDeleted <-
+    registerCounter
+      "garnix_s3_cache_gc_objects_deleted"
+      mempty
+      registry
+  s3CacheGcBytesDeleted <-
+    registerCounter
+      "garnix_s3_cache_gc_bytes_deleted"
+      mempty
+      registry
+  s3CacheGcDeleteFailures <-
+    registerCounter
+      "garnix_s3_cache_gc_delete_failures"
+      mempty
+      registry
+  s3CacheGcTombstonesPending <-
+    registerGauge
+      "garnix_s3_cache_gc_tombstones_pending"
+      mempty
+      registry
+  s3CacheGcOldestTombstoneAge <-
+    registerGauge
+      "garnix_s3_cache_gc_oldest_tombstone_age_seconds"
+      mempty
+      registry
+  s3CacheLiveObjects <-
+    registerGauge
+      "garnix_s3_cache_live_objects"
+      mempty
+      registry
+  s3CacheLiveBytes <-
+    registerGauge
+      "garnix_s3_cache_live_bytes"
+      mempty
       registry
   fodCheckTime <-
     registerHistogram
