@@ -941,6 +941,28 @@ countDeletingStoreHashes (sort -> hashes) = do
     [Just count] -> count
     _ -> 0
 
+bumpCacheAccessedAt :: Duration -> [StoreHash] -> M Int
+bumpCacheAccessedAt _ [] = pure 0
+bumpCacheAccessedAt minAge (sort -> hashes) = do
+  let minAgeSeconds = toSeconds minAge
+  pgExec
+    [pgSQL|
+      UPDATE cache_store_hashes
+      SET accessed_at = NOW()
+      WHERE hash = ANY(${hashes}::text[])
+        AND accessed_at < NOW() - (${minAgeSeconds}::double precision * interval '1 second')
+    |]
+
+stampReadsRecordedSince :: M ()
+stampReadsRecordedSince =
+  void
+    $ pgExec
+      [pgSQL|
+        UPDATE cache_gc_state
+        SET reads_recorded_since = NOW()
+        WHERE id AND reads_recorded_since IS NULL
+      |]
+
 -- * /api/account/tokens
 
 getAccessTokensForUser :: UserId -> M [AccessTokenMetadata]

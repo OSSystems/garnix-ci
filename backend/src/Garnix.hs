@@ -4,6 +4,7 @@ import Amazonka qualified
 import Amazonka.Auth qualified as Amazonka
 import Amazonka.S3 qualified as Amazonka
 import Control.Concurrent (getNumCapabilities, newMVar)
+import Control.Concurrent.STM (newTVarIO)
 import Control.Exception qualified
 import Control.Exception.Safe qualified as Safe
 import Cradle qualified
@@ -12,6 +13,7 @@ import Data.ByteString.Base64 qualified as B64
 import Data.ByteString.Char8 qualified
 import Data.ByteString.Char8 qualified as BSC
 import Data.Functor ((<&>))
+import Data.HashSet qualified as HashSet
 import Data.HashTable.IO qualified as HashTables
 import Data.Map.Strict qualified as Map
 import Data.Pool qualified as Pool
@@ -32,6 +34,7 @@ import Garnix.Monad.Metrics (registerMetrics, serveMetrics)
 import Garnix.Monad.Pool qualified
 import Garnix.NixConfig (defaultNixConfig, githubAccessTokenNixConfig)
 import Garnix.Prelude
+import Garnix.S3Cache (runCacheMaintenance)
 import Garnix.Types
 import Garnix.UserLogs
 import GitHub.App.Auth (AppAuth (..))
@@ -156,6 +159,44 @@ lookupOptionalSecret envVar path = do
       let trimmed = T.dropWhileEnd (`elem` ['\n', '\r', ' ', '\t']) (cs raw)
        in if T.null trimmed then Nothing else Just trimmed
 
+lookupEnvText :: String -> IO (Maybe Text)
+lookupEnvText name =
+  lookupEnv name <&> \case
+    Nothing -> Nothing
+    Just raw -> let trimmed = T.strip (cs raw) in if T.null trimmed then Nothing else Just trimmed
+
+lookupEnvBool :: String -> Bool -> IO Bool
+lookupEnvBool name fallback =
+  lookupEnvText name <&> \case
+    Nothing -> fallback
+    Just raw -> T.toLower raw `elem` ["true", "yes", "1", "on"]
+
+lookupEnvDuration :: String -> Duration -> IO Duration
+lookupEnvDuration name fallback =
+  lookupEnvText name >>= \case
+    Nothing -> pure fallback
+    Just raw -> case parseDuration raw of
+      Just duration -> pure duration
+      Nothing ->
+        Control.Exception.throwIO
+          $ Control.Exception.ErrorCall
+          $ name
+          <> " is not a valid duration: "
+          <> cs raw
+
+lookupEnvInt :: String -> Int -> IO Int
+lookupEnvInt name fallback =
+  lookupEnvText name >>= \case
+    Nothing -> pure fallback
+    Just raw -> case readMaybe (cs raw) of
+      Just value | value > 0 -> pure value
+      _ ->
+        Control.Exception.throwIO
+          $ Control.Exception.ErrorCall
+          $ name
+          <> " must be a positive whole number, got: "
+          <> cs raw
+
 withEnv :: (HasCallStack) => Set TestFeature -> FilePath -> Maybe Warp.Port -> (Env -> IO a) -> IO a
 withEnv testFeatures buildLogsDir buildLogsReportingPort action = do
   buildLogsDir' <- makeAbsolute buildLogsDir
@@ -230,6 +271,10 @@ withEnv testFeatures buildLogsDir buildLogsReportingPort action = do
         let expiration = fromHours @Int 2
         let maxUploadSize = 4 * 2 ^ (30 :: Integer)
         isInNixosCacheMemoTable <- HashTables.new >>= newMVar
+        accessBuffer <- newTVarIO HashSet.empty
+        accessFlushEvery <- lookupEnvDuration "S3_CACHE_ACCESS_FLUSH_EVERY" defaultAccessFlushEvery
+        accessFlushMax <- lookupEnvInt "S3_CACHE_ACCESS_FLUSH_MAX" defaultAccessFlushMax
+        accessBumpMinAge <- lookupEnvDuration "S3_CACHE_ACCESS_BUMP_MIN_AGE" defaultAccessBumpMinAge
         pure
           $ S3CacheEnv
             { amazonkaEnv,
@@ -241,13 +286,18 @@ withEnv testFeatures buildLogsDir buildLogsReportingPort action = do
               cachePrivKeyName,
               expiration,
               maxUploadSize,
-              isInNixosCacheMemoTable
+              isInNixosCacheMemoTable,
+              accessBuffer,
+              accessFlushEvery,
+              accessFlushMax,
+              accessBumpMinAge
             }
       else do
         amazonkaEnv <-
           Amazonka.newEnv (pure . Amazonka.fromKeys (Amazonka.AccessKey "") (Amazonka.SecretKey ""))
             <&> (#region .~ Amazonka.Region' "auto")
         isInNixosCacheMemoTable <- HashTables.new >>= newMVar
+        accessBuffer <- newTVarIO HashSet.empty
         pure
           $ S3CacheEnv
             { amazonkaEnv,
@@ -259,7 +309,11 @@ withEnv testFeatures buildLogsDir buildLogsReportingPort action = do
               cachePrivKeyName = "",
               expiration = fromHours @Int 2,
               maxUploadSize = 4 * 2 ^ (30 :: Integer),
-              isInNixosCacheMemoTable
+              isInNixosCacheMemoTable,
+              accessBuffer,
+              accessFlushEvery = defaultAccessFlushEvery,
+              accessFlushMax = defaultAccessFlushMax,
+              accessBumpMinAge = defaultAccessBumpMinAge
             }
   actionServerUrl <- fromMaybe "action-runner2.garnix.io" <$> lookupEnv "GARNIX_ACTION_HOST"
   actionRunnerSshKey <- lookupEnv "GARNIX_ACTION_RUNNER_SSH_KEY" >>= maybe (pure (secretFile "garnix_action_runner_ssh")) makeAbsolute
@@ -391,6 +445,9 @@ runWith opts = do
     (Garnix.buildLogsReportingPort opts)
     $ \env -> do
       serveMetrics (Garnix.metricsPort opts) (env ^. #metrics)
+      runM env runCacheMaintenance >>= \case
+        Right () -> pure ()
+        Left err -> hPutStrLn stderr $ "could not start s3 cache maintenance: " <> show err
       let settings =
             Warp.defaultSettings
               & Warp.setPort (port opts)

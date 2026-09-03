@@ -1,4 +1,13 @@
-module Garnix.S3Cache (upload, toNarFilePath, compress, parallelisableBlocks) where
+module Garnix.S3Cache
+  ( upload,
+    toNarFilePath,
+    compress,
+    parallelisableBlocks,
+    recordCacheAccess,
+    runCacheMaintenance,
+    flushAccessBuffer,
+  )
+where
 
 import Amazonka qualified
 import Amazonka.S3 qualified as Amazonka
@@ -8,6 +17,7 @@ import Control.Retry (RetryPolicyM, fullJitterBackoff, limitRetries, limitRetrie
 import Cradle
 import Data.ByteString.Builder qualified as ByteString
 import Data.Containers.ListUtils (nubOrd)
+import Data.HashSet qualified as HashSet
 import Data.Set qualified as Set
 import Data.Text qualified as T
 import Garnix.API.Cache.Types
@@ -17,7 +27,8 @@ import Garnix.DB qualified as DB
 import Garnix.Duration
 import Garnix.Monad
 import Garnix.Monad.Memoization (memoize)
-import Garnix.Monad.Metrics (addEvent, incrementEvent, timingAs)
+import Garnix.Monad.Metrics (addEvent, incrementEvent, setGauge, timingAs)
+import Garnix.Monad.NoThrow (forkForever)
 import Garnix.Monad.Pool
 import Garnix.Monad.SubProcess (runSubProcess, runSubProcess_)
 import Garnix.Nix.PathInfo (getPathInfo)
@@ -69,6 +80,35 @@ upload = curry5 $ mockable #s3CacheUploadMock $ \(runReporter, repoOwner, repoNa
             else do
               uploadStorePath repoOwner repoName storePath repoPublicity <?> "uploading to s3-cache"
               reportLogs runReporter $ mkLogLine ("Uploaded " <> getStorePath storePath <> " to the garnix binary cache.")
+
+recordCacheAccess :: StoreHash -> M ()
+recordCacheAccess hash = do
+  buffer <- view $ #s3CacheEnv . #accessBuffer
+  limit <- view $ #s3CacheEnv . #accessFlushMax
+  liftIO $ atomically $ modifyTVar' buffer $ \seen ->
+    if HashSet.size seen >= limit then seen else HashSet.insert hash seen
+
+runCacheMaintenance :: M ()
+runCacheMaintenance = do
+  enabled <- view #s3CacheEnabled
+  when enabled $ do
+    flushEvery <- view $ #s3CacheEnv . #accessFlushEvery
+    void $ forkForever flushEvery flushAccessBuffer
+
+flushAccessBuffer :: M ()
+flushAccessBuffer = do
+  buffer <- view $ #s3CacheEnv . #accessBuffer
+  hashes <- liftIO $ atomically $ do
+    seen <- readTVar buffer
+    writeTVar buffer HashSet.empty
+    pure $ HashSet.toList seen
+  setGauge #s3CacheAccessBufferSize (fromIntegral $ length hashes)
+  DB.stampReadsRecordedSince
+  incrementEvent #s3CacheAccessFlushes
+  unless (null hashes) $ do
+    minAge <- view $ #s3CacheEnv . #accessBumpMinAge
+    bumped <- timingAs #s3CacheAccessFlushTime $ DB.bumpCacheAccessedAt minAge hashes
+    addEvent #s3CacheAccessBumps bumped
 
 getPackageName :: DrvPath -> PackageName
 getPackageName drvPath =

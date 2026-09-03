@@ -12,6 +12,7 @@ module Garnix.Duration
     fromMinutes,
     fromSeconds,
     maxDuration,
+    parseDuration,
     subTime,
     subtractDuration,
     threadDelay,
@@ -23,7 +24,9 @@ module Garnix.Duration
 where
 
 import Control.Concurrent qualified as M (threadDelay)
+import Data.Text qualified as T
 import Garnix.Prelude
+import Text.Read (readMaybe)
 import Prelude qualified
 
 newtype Duration = Seconds {inSeconds :: Double}
@@ -104,3 +107,20 @@ subTime duration = addTime $ Seconds (inSeconds duration * (-1))
 
 threadDelay :: (MonadIO m) => Duration -> m ()
 threadDelay = liftIO . M.threadDelay . toMicroseconds
+
+parseDuration :: Text -> Maybe Duration
+parseDuration raw =
+  case T.unsnoc (T.strip raw) of
+    Nothing -> Nothing
+    Just (init', last') -> case last' of
+      'd' -> fromDays <$> number init'
+      'h' -> fromHours <$> number init'
+      'm' -> fromMinutes <$> number init'
+      's' -> fromSeconds <$> number init'
+      _ -> fromSeconds <$> number (T.strip raw)
+  where
+    number :: Text -> Maybe Double
+    number text = do
+      value <- readMaybe (cs (T.strip text))
+      guard (value >= 0)
+      pure value

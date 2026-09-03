@@ -6,7 +6,7 @@ import Network.Wai.Handler.Warp (Port, run)
 import System.Metrics.Prometheus.Concurrent.Registry
 import System.Metrics.Prometheus.Http.Scrape qualified as Prom
 import System.Metrics.Prometheus.Metric.Counter (Counter, add, inc)
-import System.Metrics.Prometheus.Metric.Gauge (Gauge)
+import System.Metrics.Prometheus.Metric.Gauge (Gauge, set)
 import System.Metrics.Prometheus.Metric.Histogram (Histogram, observe)
 import System.Metrics.Prometheus.MetricId (fromList)
 
@@ -34,6 +34,10 @@ data Metrics = Metrics
     s3CacheUploads :: Counter,
     s3CacheNarfilesServed :: Counter,
     s3CacheUploadsSkippedDeleting :: Counter,
+    s3CacheAccessBumps :: Counter,
+    s3CacheAccessFlushes :: Counter,
+    s3CacheAccessBufferSize :: Gauge,
+    s3CacheAccessFlushTime :: Histogram,
     fodCheckTime :: Histogram,
     fodCheckBatchSize :: Histogram,
     fodCheckQueueLen :: Gauge,
@@ -66,6 +70,11 @@ addEvent :: (MonadIO m, MonadReader e m, HasField' "metrics" e Metrics) => Lens'
 addEvent l n = do
   h <- view (#metrics . l)
   void . liftIO $ fork $ add n h
+
+setGauge :: (MonadIO m, MonadReader e m, HasField' "metrics" e Metrics) => Lens' Metrics Gauge -> Double -> m ()
+setGauge l value = do
+  g <- view (#metrics . l)
+  void . liftIO $ fork $ set value g
 
 registerMetrics :: IO Metrics
 registerMetrics = do
@@ -178,6 +187,27 @@ registerMetrics = do
     registerCounter
       "garnix_s3_cache_uploads_skipped_deleting"
       mempty
+      registry
+  s3CacheAccessBumps <-
+    registerCounter
+      "garnix_s3_cache_access_bumps"
+      mempty
+      registry
+  s3CacheAccessFlushes <-
+    registerCounter
+      "garnix_s3_cache_access_flushes"
+      mempty
+      registry
+  s3CacheAccessBufferSize <-
+    registerGauge
+      "garnix_s3_cache_access_buffer_size"
+      mempty
+      registry
+  s3CacheAccessFlushTime <-
+    registerHistogram
+      "garnix_s3_cache_access_flush_time"
+      mempty
+      [0.01, 0.05, 0.1, 0.5, 1, 2, 5, 10, 30, 60]
       registry
   fodCheckTime <-
     registerHistogram

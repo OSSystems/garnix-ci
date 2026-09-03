@@ -20,6 +20,7 @@ import Data.Aeson.Types (Parser, parseEither)
 import Data.ByteString (ByteString)
 import Data.ByteString.Lazy qualified as BSL
 import Data.Containers.ListUtils (nubOrd)
+import Data.HashSet (HashSet)
 import Data.Map.Strict (Map)
 import Data.Set qualified as Set
 import Data.Text qualified as T
@@ -166,9 +167,22 @@ data S3CacheEnv = S3CacheEnv
     cachePrivKeyName :: Text,
     expiration :: Duration,
     maxUploadSize :: Integer,
-    isInNixosCacheMemoTable :: MVar (MemoTable StoreHash Bool)
+    isInNixosCacheMemoTable :: MVar (MemoTable StoreHash Bool),
+    accessBuffer :: TVar (HashSet StoreHash),
+    accessFlushEvery :: Duration,
+    accessFlushMax :: Int,
+    accessBumpMinAge :: Duration
   }
   deriving (Generic)
+
+defaultAccessFlushEvery :: Duration
+defaultAccessFlushEvery = fromSeconds @Int 30
+
+defaultAccessFlushMax :: Int
+defaultAccessFlushMax = 10_000
+
+defaultAccessBumpMinAge :: Duration
+defaultAccessBumpMinAge = fromHours @Int 6
 
 data ActionEnv = ActionEnv
   { runnerHost :: Text,
