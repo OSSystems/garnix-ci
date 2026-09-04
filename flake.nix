@@ -144,7 +144,11 @@
             namespace "frontend" frontend.checks //
             namespace "frontend" (namespace "ageWasm" frontend-age-wasm.checks) //
             namespace "provisioner" provisioner.checks //
-            namespace "hostingGateway" hosting-gateway.checks;
+            namespace "hostingGateway" hosting-gateway.checks //
+            # NixOS VM tests only build on Linux.
+            lib.optionalAttrs pkgs.stdenv.isLinux {
+              nixosTests_hostingDeploy = import ./nix/tests/hosting-deploy.nix subDirInputs;
+            };
 
           packages =
             lib.mapAttrs' (name: value: { name = "hosting-gateway/${name}"; inherit value; })

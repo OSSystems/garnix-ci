@@ -9,7 +9,7 @@
 # server here is a seeded database row pointing at a plain web server. The
 # provisioning path itself (acquireServer, copyClosure, switch-to-configuration)
 # is still only exercised on a real host.
-{ pkgs, lib, system, self, flakeInputs, ... }:
+{ pkgs, system, self, flakeInputs, ... }:
 let
   hostingDomain = "hosting.test";
   backendHostname = "garnix.test";
@@ -51,7 +51,7 @@ pkgs.testers.runNixOSTest {
   };
 
   nodes = {
-    backend = { config, lib, pkgs, ... }: {
+    backend = { config, lib, ... }: {
       imports = [ self.nixosModules.garnix ];
 
       networking.extraHosts = ''
@@ -60,6 +60,10 @@ pkgs.testers.runNixOSTest {
 
       garnix.devMode.enable = true;
       garnix.monitoring-client.enable = false;
+
+      # sqitch refuses to run without one ("Cannot determine local time
+      # zone"), and a NixOS test node has none by default.
+      time.timeZone = "UTC";
 
       virtualisation.memorySize = 3072;
       virtualisation.diskSize = 4096;
@@ -116,6 +120,10 @@ pkgs.testers.runNixOSTest {
 
       services.postgresql = {
         enable = true;
+        # postgresql-typed speaks md5 but not SCRAM, and modern postgres
+        # hashes new passwords with SCRAM by default, which the backend then
+        # rejects with "unsupported authentication type: 10".
+        settings.password_encryption = "md5";
         ensureDatabases = [ "garnix" ];
         ensureUsers = [{
           name = "garnix";
@@ -159,6 +167,13 @@ pkgs.testers.runNixOSTest {
       '';
 
       garnix.monitoring-client.enable = false;
+
+      # Traefik's cnameFlattening resolves the request's Host on every
+      # request. There is no DNS in a NixOS test, and the default resolver
+      # address black-holes, costing 30s a request; pointing at a closed port
+      # makes the lookup fail immediately instead.
+      networking.nameservers = lib.mkForce [ "127.0.0.1" ];
+
       security.acme.defaults.email = "ops@example.test";
       security.acme.acceptTerms = true;
 
@@ -198,15 +213,16 @@ pkgs.testers.runNixOSTest {
   testScript = { nodes, ... }:
     let
       guestIp = nodes.guest.networking.primaryIPAddress;
-      gatewayIp = nodes.gateway.networking.primaryIPAddress;
     in
     ''
       import json
 
       def psql(query):
+          # Via a heredoc rather than -c, so the JSON literals below do not
+          # have to survive a round of shell quoting.
+          backend.succeed("cat > /tmp/query.sql <<'SQL'\n" + query + "\nSQL")
           return backend.succeed(
-              "sudo -u postgres psql garnix -tAX -v ON_ERROR_STOP=1 -c "
-              + "\"" + query.replace('"', '\\"') + "\""
+              "sudo -u postgres psql garnix -tAX -v ON_ERROR_STOP=1 -f /tmp/query.sql"
           ).strip()
 
       def through_traefik(host):
@@ -238,7 +254,10 @@ pkgs.testers.runNixOSTest {
           empty = json.loads(
               backend.succeed("curl --fail http://${backendHostname}/api/hosts/traefik")
           )
-          assert empty["http"]["routers"] == {}, empty
+          # An empty "routers" key makes traefik reject the whole document, so
+          # with nothing deployed the key has to be absent rather than {}.
+          assert "routers" not in empty["http"], empty
+          assert "services" not in empty["http"], empty
           assert "heartbeatmiddleware" in empty["http"]["middlewares"]
 
       with subtest("seeding a deployed server"):
@@ -248,17 +267,17 @@ pkgs.testers.runNixOSTest {
               " req_user, repo_is_public, branch, drv_path, uploaded_to_cache) "
               "VALUES ('acme', 'widgets', 'deadbeef', 'web', 'success', "
               "'nixosConfiguration', 'acme', true, 'main', "
-              "'/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-web.drv', true)"
+              "'/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-web.drv', true);"
           )
           psql(
               "INSERT INTO servers "
               "(configuration_build_id, provider, instance_id, ipv4, ready_at, "
               " server_tier, is_primary, exposed, domains) "
               "SELECT id, 'microvm', 'guest-1', '${guestIp}', now(), 'i1x2', true, "
-              "'{\\\"ssh_port\\\": null, \\\"tcp\\\": [], "
-              "\\\"http\\\": [{\\\"name\\\": \\\"api\\\", \\\"port\\\": 8080}]}'::json, "
-              "'[\\\"${declaredDomain}\\\"]'::json "
-              "FROM builds WHERE package = 'web'"
+              "'{\"ssh_port\": null, \"tcp\": [], "
+              "\"http\": [{\"name\": \"api\", \"port\": 8080}]}'::json, "
+              "'[\"${declaredDomain}\"]'::json "
+              "FROM builds WHERE package = 'web';"
           )
 
       with subtest("the backend publishes a router for every name the server answers on"):
@@ -326,7 +345,8 @@ pkgs.testers.runNixOSTest {
               "sudo -u postgres psql garnix -tAX -c "
               "\"SELECT count(*) FROM heartbeat "
               "WHERE hostname = '${canonicalName}.${hostingDomain}'\" | grep -qx 1",
-              timeout=60,
+              # The middleware batches and flushes every 30s.
+              timeout=120,
           )
 
       with subtest("caddy is allowed a certificate for names we actually serve"):
@@ -383,7 +403,10 @@ pkgs.testers.runNixOSTest {
           )
 
       with subtest("tearing the server down takes its routes with it"):
-          psql("UPDATE servers SET ended_at = now() WHERE instance_id = 'guest-1'")
+          # Regression: while the backend sent an empty "routers" object here,
+          # traefik refused the update and kept routing to a server that had
+          # already been destroyed.
+          psql("UPDATE servers SET ended_at = now() WHERE instance_id = 'guest-1';")
           gateway.wait_until_fails(
               "curl --fail --silent -H 'Host: ${canonicalName}.${hostingDomain}' "
               "http://localhost:8080/",

@@ -5,12 +5,14 @@ import Control.Lens
 import Data.Aeson qualified as Aeson
 import Data.Aeson.Key qualified as Aeson.Key
 import Data.Text qualified as T
+import Data.Time (UTCTime (..), fromGregorian)
 import Garnix.Build.Package (decodeDeploySpec)
 import Garnix.Hosting.Deploy
 import Garnix.Hosting.Types
 import Garnix.Prelude
-import Garnix.TestHelpers (defaultCommitInfo)
+import Garnix.TestHelpers (defaultCommitInfo, runTestM)
 import Garnix.Types
+import Garnix.YamlConfig qualified as Yaml
 import Test.Hspec
 
 spec :: Spec
@@ -169,6 +171,240 @@ spec = do
               ]
       decodeDeploySpec (cs (Aeson.encode json)) `shouldSatisfy` isLeft
 
+  describe "assembleDeployPlan" $ do
+    it "wants the configuration the yaml names for this branch" $ do
+      let plan = assembleDeployPlan mainDeploy [declOnBranch "web" "main"] [] [built "web"]
+      packagesToSpinUp plan `shouldBe` ["web"]
+      serverIdsToSpinDown plan `shouldBe` []
+      redeployPairs plan `shouldBe` []
+
+    it "leaves alone a nixosConfiguration the yaml never names" $ do
+      -- The ordinary case: most repos build NixOS configurations they have no
+      -- intention of hosting. Importing the guest profile does not make one a
+      -- server; being listed under `servers:` does.
+      let plan = assembleDeployPlan mainDeploy [] [] [built "laptop"]
+      packagesToSpinUp plan `shouldBe` []
+
+    it "deploys a declared server whose extras could not be read" $ do
+      -- A configuration that sets no `garnix.server` at all still gets
+      -- deployed if the yaml asks for it; it just gets no ports or domains.
+      let plan =
+            assembleDeployPlan mainDeploy [declOnBranch "web" "main"] [] [(buildFor "web", Nothing)]
+      packagesToSpinUp plan `shouldBe` ["web"]
+      map _serverToSpinUpDomains (_deployPlanToSpinUp plan) `shouldBe` [[]]
+
+    it "ignores a declaration pinned to a different branch" $ do
+      let plan = assembleDeployPlan mainDeploy [declOnBranch "web" "staging"] [] [built "web"]
+      packagesToSpinUp plan `shouldBe` []
+
+    it "does not deploy a branch server for a pull request" $ do
+      let plan = assembleDeployPlan prDeploy [declOnBranch "web" "main"] [] [built "web"]
+      packagesToSpinUp plan `shouldBe` []
+
+    it "does not deploy a pull-request server for a branch push" $ do
+      let plan = assembleDeployPlan mainDeploy [declOnPullRequest "web"] [] [built "web"]
+      packagesToSpinUp plan `shouldBe` []
+
+    it "deploys a pull-request server whatever branch the PR is on" $ do
+      let plan = assembleDeployPlan prDeploy [declOnPullRequest "web"] [] [built "web"]
+      packagesToSpinUp plan `shouldBe` ["web"]
+
+    it "never treats a pull-request deploy as primary" $ do
+      -- A PR deploy answering on <repo>.<owner> would take the production
+      -- hostname away from the branch deploy. The yaml cannot ask for it: a
+      -- pull-request declaration carries no isPrimary at all.
+      let plan = assembleDeployPlan prDeploy [declOnPullRequest "web"] [] [built "web"]
+      map _serverToSpinUpIsPrimary (_deployPlanToSpinUp plan) `shouldBe` [False]
+
+    it "asks for one guest when the same package was built for two systems" $ do
+      -- Both builds carry the same package name; provisioning both would put
+      -- two guests behind one hostname.
+      let plan =
+            assembleDeployPlan
+              mainDeploy
+              [declOnBranch "web" "main"]
+              []
+              [built "web", built "web"]
+      packagesToSpinUp plan `shouldBe` ["web"]
+
+    it "ignores a declaration whose configuration this commit did not build" $ do
+      -- getDeployPlan reports this to the user separately; the plan itself
+      -- must not invent a server out of a build it does not have.
+      let plan = assembleDeployPlan mainDeploy [declOnBranch "web" "main"] [] []
+      packagesToSpinUp plan `shouldBe` []
+
+    it "tears down a running server the commit no longer wants" $ do
+      let plan = assembleDeployPlan mainDeploy [] [runningServer 1 Nothing] []
+      serverIdsToSpinDown plan `shouldBe` [serverIdOf 1]
+      packagesToSpinUp plan `shouldBe` []
+
+    it "replaces a disposable server rather than redeploying onto it" $ do
+      -- With no persistence name the guest is throwaway: the new generation
+      -- comes up first, and the old one is torn down after it is ready.
+      let plan =
+            assembleDeployPlan
+              mainDeploy
+              [declOnBranch "web" "main"]
+              [runningServer 1 Nothing]
+              [built "web"]
+      packagesToSpinUp plan `shouldBe` ["web"]
+      serverIdsToSpinDown plan `shouldBe` [serverIdOf 1]
+      redeployPairs plan `shouldBe` []
+
+    it "redeploys onto the running guest that shares its persistence name" $ do
+      -- This is the whole point of persistence: the guest keeps its disk
+      -- across a push instead of being recreated empty.
+      let plan =
+            assembleDeployPlan
+              mainDeploy
+              [declOnBranch "web" "main"]
+              [runningServer 1 (Just "db")]
+              [builtPersistent "web" (Just "db")]
+      redeployPairs plan `shouldBe` [(serverIdOf 1, "web")]
+      packagesToSpinUp plan `shouldBe` []
+      serverIdsToSpinDown plan `shouldBe` []
+
+    it "replaces a persistent guest when the persistence name changes" $ do
+      let plan =
+            assembleDeployPlan
+              mainDeploy
+              [declOnBranch "web" "main"]
+              [runningServer 1 (Just "old")]
+              [builtPersistent "web" (Just "new")]
+      packagesToSpinUp plan `shouldBe` ["web"]
+      serverIdsToSpinDown plan `shouldBe` [serverIdOf 1]
+      redeployPairs plan `shouldBe` []
+
+    it "does not redeploy a persistent build onto a disposable guest" $ do
+      -- The running guest has no disk to keep, so reusing it would silently
+      -- give the repo a "persistent" server that is not.
+      let plan =
+            assembleDeployPlan
+              mainDeploy
+              [declOnBranch "web" "main"]
+              [runningServer 1 Nothing]
+              [builtPersistent "web" (Just "db")]
+      redeployPairs plan `shouldBe` []
+      packagesToSpinUp plan `shouldBe` ["web"]
+      serverIdsToSpinDown plan `shouldBe` [serverIdOf 1]
+
+    it "keeps one guest and tears down another in the same rollout" $ do
+      let plan =
+            assembleDeployPlan
+              mainDeploy
+              [declOnBranch "db" "main", declOnBranch "web" "main"]
+              [runningServer 1 (Just "db"), runningServer 2 Nothing]
+              [builtPersistent "db" (Just "db"), built "web"]
+      redeployPairs plan `shouldBe` [(serverIdOf 1, "db")]
+      packagesToSpinUp plan `shouldBe` ["web"]
+      serverIdsToSpinDown plan `shouldBe` [serverIdOf 2]
+
+    it "takes machine size and primacy from the yaml, and the rest from nix" $ do
+      -- The split is the whole point of the contract: reading garnix.yaml
+      -- tells you what a push deploys and how big it is; reading the nix
+      -- tells you what the server exposes once it is up.
+      let declaration =
+            Yaml.ServerSection
+              { Yaml._serverSectionConfiguration = PackageName "web",
+                Yaml._serverSectionDeploySection =
+                  Yaml.OnBranch (Branch "main") (ServerTier "i4x8") True
+              }
+          extras =
+            defaultServerExtras
+              { _serverExtrasExposeSSH = True,
+                _serverExtrasDomains = ["app.example"],
+                _serverExtrasPorts =
+                  [ ServerPort "api" 8080 HttpPort,
+                    ServerPort "db" 5432 TcpPort
+                  ]
+              }
+          plan = assembleDeployPlan mainDeploy [declaration] [] [(buildFor "web", Just extras)]
+      case _deployPlanToSpinUp plan of
+        [wanted] -> do
+          _serverToSpinUpTier wanted `shouldBe` ServerTier "i4x8"
+          _serverToSpinUpIsPrimary wanted `shouldBe` True
+          _serverToSpinUpExposeSSH wanted `shouldBe` True
+          _serverToSpinUpDomains wanted `shouldBe` ["app.example"]
+          -- http ports are routed by the gateway, tcp ports DNAT'd by the
+          -- provisioner, so the split has to survive planning.
+          _serverToSpinUpHttpPorts wanted `shouldBe` [("api", 8080)]
+          _serverToSpinUpTcpPorts wanted `shouldBe` [("db", 5432)]
+        other ->
+          expectationFailure $ cs $ "expected exactly one server, got " <> show (length other)
+
+  describe "matchesDeployment" $ do
+    it "matches a branch declaration only against its own branch" $ do
+      matchesDeployment mainDeploy (Yaml.OnBranch (Branch "main") (ServerTier "i2x4") True)
+        `shouldBe` Just (ServerTier "i2x4", True)
+      matchesDeployment mainDeploy (Yaml.OnBranch (Branch "staging") (ServerTier "i2x4") True)
+        `shouldBe` Nothing
+
+    it "gives a pull-request deploy the default size and no primacy" $ do
+      matchesDeployment prDeploy Yaml.OnPullRequest
+        `shouldBe` Just (ServerTier "i1x2", False)
+
+  describe "checkDeployPlan" $ do
+    it "accepts a plan whose every name is a legal DNS label" $ do
+      planError mainDeploy (planFor mainDeploy [declOnBranch "web" "main"] [built "web"])
+        `shouldReturn` Nothing
+
+    it "refuses a package name that cannot be a subdomain" $ do
+      planError mainDeploy (planFor mainDeploy [declOnBranch "my_server" "main"] [built "my_server"])
+        `shouldReturn` Just (NameIsNotValidSubdomain PackageNameSubdomain "my_server")
+
+    it "refuses a branch name that cannot be a subdomain" $ do
+      let slashy = BranchDeployment (Branch "feature/x")
+      planError slashy (planFor slashy [declOnBranch "web" "feature/x"] [built "web"])
+        `shouldReturn` Just (NameIsNotValidSubdomain BranchSubdomain "feature/x")
+
+    it "refuses a persistence name that cannot be a subdomain" $ do
+      planError
+        mainDeploy
+        (planFor mainDeploy [declOnBranch "web" "main"] [builtPersistent "web" (Just "my_db")])
+        `shouldReturn` Just (NameIsNotValidSubdomain PersistenceNameSubdomain "my_db")
+
+    it "refuses a repo owner that cannot be a subdomain" $ do
+      planErrorFor "bad_owner" "widgets" mainDeploy (planFor mainDeploy [declOnBranch "web" "main"] [built "web"])
+        `shouldReturn` Just (NameIsNotValidSubdomain RepoOwnerSubdomain "bad_owner")
+
+    it "refuses a repo name that cannot be a subdomain" $ do
+      planErrorFor "acme" "my_widgets" mainDeploy (planFor mainDeploy [declOnBranch "web" "main"] [built "web"])
+        `shouldReturn` Just (NameIsNotValidSubdomain RepoNameSubdomain "my_widgets")
+
+    it "does not check the branch of a pull-request deploy" $ do
+      -- A PR deploy is addressed as pull-<n>, so a branch name that is not a
+      -- legal label never reaches a hostname.
+      planError prDeploy (planFor prDeploy [declOnPullRequest "web"] [built "web"])
+        `shouldReturn` Nothing
+
+    it "reports a failed build instead of deploying it" $ do
+      let failed = (buildFor "web") {_buildStatus = Just Failure}
+      planError mainDeploy (planFor mainDeploy [declOnBranch "web" "main"] [(failed, Nothing)])
+        `shouldReturn` Just (OtherError "web failed")
+
+    it "reports a build that timed out" $ do
+      let timedOut = (buildFor "web") {_buildStatus = Just Timeout}
+      planError mainDeploy (planFor mainDeploy [declOnBranch "web" "main"] [(timedOut, Nothing)])
+        `shouldReturn` Just (OtherError "web timed out")
+
+    it "checks the builds it is redeploying, not only the new ones" $ do
+      -- A redeploy switches a running guest to a new closure; a failed build
+      -- must not be activated onto it either.
+      let failed = (persistentBuildFor "web" (Just "db")) {_buildStatus = Just Failure}
+          plan =
+            assembleDeployPlan
+              mainDeploy
+              [declOnBranch "web" "main"]
+              [runningServer 1 (Just "db")]
+              [(failed, Nothing)]
+      redeployPairs plan `shouldBe` [(serverIdOf 1, "web")]
+      planError mainDeploy plan `shouldReturn` Just (OtherError "web failed")
+
+    it "says nothing about a repo that deploys no servers at all" $ do
+      -- getDeployPlan skips the check entirely for an empty plan; this pins
+      -- down that an empty plan is not itself an error.
+      planError mainDeploy (planFor mainDeploy [] []) `shouldReturn` Nothing
+
 -- | A commit on @\<owner\>\/\<repo\>@; only the repo identity matters here.
 commitInfoFor :: GhLogin -> Text -> CommitInfo
 commitInfoFor owner repo =
@@ -176,35 +412,125 @@ commitInfoFor owner repo =
     & repoInfo . ghRepoOwner .~ GhRepoOwner owner
     & repoInfo . ghRepoName .~ GhRepoName repo
 
--- | A build of one package. Only the package name is read here; the rest are
--- left undefined so a test that starts depending on one fails loudly rather
--- than quietly asserting against a placeholder.
+-- | A successful @nixosConfiguration@ build of one package, with an optional
+-- persistence name. Every field is concrete rather than a placeholder:
+-- 'assembleDeployPlan' compares whole builds for equality, so an undefined
+-- field would be forced.
 buildFor :: Text -> Build
-buildFor package' =
+buildFor package' = persistentBuildFor package' Nothing
+
+persistentBuildFor :: Text -> Maybe Text -> Build
+persistentBuildFor package' persistence =
   Build
-    { _buildId = undefined,
-      _buildRepoUser = undefined,
-      _buildRepoName = undefined,
-      _buildPrFromFork = undefined,
-      _buildBranch = undefined,
-      _buildRepoIsPublic = undefined,
-      _buildGitCommit = undefined,
+    { _buildId = BuildId (review hashIdInt 1),
+      _buildRepoUser = "owner",
+      _buildRepoName = "repo",
+      _buildPrFromFork = Nothing,
+      _buildBranch = Just "main",
+      _buildRepoIsPublic = RepoIsPublic False,
+      _buildGitCommit = CommitHash "aaaaaaaa",
       _buildPackage = PackageName package',
       _buildPackageType = TypeNixosConfiguration,
-      _buildSystem = undefined,
-      _buildReqUser = undefined,
+      _buildSystem = NoSystem,
+      _buildReqUser = "owner",
       _buildStatus = Just Success,
-      _buildStartTime = undefined,
-      _buildEndTime = undefined,
-      _buildDrvPath = undefined,
-      _buildOutputPaths = undefined,
-      _buildGithubRunId = undefined,
-      _buildPersistenceName = Nothing,
-      _buildWantsIncrementalism = undefined,
-      _buildEvalHost = undefined,
-      _buildUploadedToCache = undefined,
-      _buildAlreadyBuilt = undefined
+      _buildStartTime = testTime,
+      _buildEndTime = Just testTime,
+      _buildDrvPath = Just "/nix/store/whatever.drv",
+      _buildOutputPaths = Nothing,
+      _buildGithubRunId = Nothing,
+      _buildPersistenceName = persistence,
+      _buildWantsIncrementalism = False,
+      _buildEvalHost = Nothing,
+      _buildUploadedToCache = Just True,
+      _buildAlreadyBuilt = Just False
     }
+
+testTime :: UTCTime
+testTime = UTCTime (fromGregorian 2026 1 1) 0
+
+-- | A guest already running for this repo, with an optional persistence name.
+runningServer :: Int -> Maybe Text -> ServerInfo
+runningServer n persistence =
+  ServerInfo
+    { _serverInfoId = ServerId (review hashIdInt n),
+      _serverInfoProvider = MicroVM,
+      _serverInfoInstanceId = Just (InstanceId ("guest-" <> cs (show n))),
+      _serverInfoAddress = ServerAddress (Just "10.111.0.7") Nothing,
+      _serverInfoCreatedAt = testTime,
+      _serverInfoEndedAt = Nothing,
+      _serverInfoConfigurationBuildId = BuildId (review hashIdInt n),
+      _serverInfoPullRequest = Nothing,
+      _serverInfoReadyAt = Just testTime,
+      _serverInfoTier = ServerTier "i1x2",
+      _serverInfoIsPrimary = False,
+      _serverInfoPersistenceName = persistence
+    }
+
+-- | A @servers:@ entry deploying one configuration from one branch.
+declOnBranch :: Text -> Text -> Yaml.ServerSection
+declOnBranch package' branch' =
+  Yaml.ServerSection
+    { Yaml._serverSectionConfiguration = PackageName package',
+      Yaml._serverSectionDeploySection =
+        Yaml.OnBranch (Branch branch') (ServerTier "i1x2") False
+    }
+
+-- | A @servers:@ entry deploying one configuration per open pull request.
+declOnPullRequest :: Text -> Yaml.ServerSection
+declOnPullRequest package' =
+  Yaml.ServerSection
+    { Yaml._serverSectionConfiguration = PackageName package',
+      Yaml._serverSectionDeploySection = Yaml.OnPullRequest
+    }
+
+-- | A finished build of one configuration, declaring no extras of its own.
+built :: Text -> (Build, Maybe ServerExtras)
+built package' = (buildFor package', Just defaultServerExtras)
+
+builtPersistent :: Text -> Maybe Text -> (Build, Maybe ServerExtras)
+builtPersistent package' persistence =
+  (persistentBuildFor package' persistence, Just defaultServerExtras)
+
+packagesToSpinUp :: DeployPlan -> [Text]
+packagesToSpinUp plan =
+  [ getPackageName (_serverToSpinUpBuild wanted ^. package)
+    | wanted <- _deployPlanToSpinUp plan
+  ]
+
+serverIdsToSpinDown :: DeployPlan -> [ServerId]
+serverIdsToSpinDown = map _serverInfoId . _deployPlanToSpinDown
+
+-- | (server kept, package redeployed onto it)
+redeployPairs :: DeployPlan -> [(ServerId, Text)]
+redeployPairs plan =
+  [ (_serverInfoId server, getPackageName (_serverToSpinUpBuild wanted ^. package))
+    | (server, wanted) <- _deployPlanToRedeploy plan
+  ]
+
+-- | Run 'checkDeployPlan' and report the error it raised, if any.
+planError :: DeploymentType -> DeployPlan -> IO (Maybe Error)
+planError = planErrorFor "acme" "widgets"
+
+planErrorFor :: GhLogin -> Text -> DeploymentType -> DeployPlan -> IO (Maybe Error)
+planErrorFor owner repo deploymentType plan =
+  runTestM
+    $ either (Just . err) (const Nothing)
+    <$> try (checkDeployPlan (commitInfoFor owner repo ^. repoInfo) deploymentType plan)
+
+-- | The two deployments every planning test is phrased against.
+mainDeploy :: DeploymentType
+mainDeploy = BranchDeployment (Branch "main")
+
+prDeploy :: DeploymentType
+prDeploy = GhPrDeployment (GhPullRequestId 42)
+
+serverIdOf :: Int -> ServerId
+serverIdOf = ServerId . review hashIdInt
+
+-- | A plan for a repo with nothing running yet.
+planFor :: DeploymentType -> [Yaml.ServerSection] -> [(Build, Maybe ServerExtras)] -> DeployPlan
+planFor deploymentType declared = assembleDeployPlan deploymentType declared []
 
 -- | The shape guest-profile.nix's @deploySpec@ renders, with the given fields
 -- overridden. Written out rather than reusing production code so that a change
