@@ -8,6 +8,7 @@ module Garnix.Hosting.Types
     PreprovisionedServerId (..),
     ServerTier (..),
     tierResources,
+    parseServerTier,
     HostingBudget (..),
     ServerAddress (..),
     serverAddressText,
@@ -147,6 +148,23 @@ tierResources tier = case getServerTier tier of
   "medium" -> (2, 4096)
   "large" -> (4, 8192)
   other -> fromMaybe (1, 2048) (parseMachineTier other)
+
+-- | Validate a tier as written in @garnix.yaml@.
+--
+-- 'tierResources' is deliberately total -- a running deploy must not die over
+-- a tier it cannot parse -- so the rejection of typos happens here instead,
+-- at the point where the user's yaml is read and they can still see the error.
+parseServerTier :: Text -> Either String ServerTier
+parseServerTier raw
+  | raw `elem` ["small", "medium", "large"] = Right (ServerTier raw)
+  | isJust (parseMachineTier raw) = Right (ServerTier raw)
+  | otherwise =
+      Left
+        $ cs
+        $ "Wrong machine size: "
+        <> raw
+        <> ". Write it as i<vcpus>x<gibibytes> (e.g. i2x4), "
+        <> "or use one of: small, medium, large."
 
 -- | Parse @iNxM@ (N vCPUs, M GiB) into (vCPU, MiB).
 parseMachineTier :: Text -> Maybe (Int, Int)
