@@ -16,6 +16,7 @@ module Garnix.Hosting.Deploy
     stopUnusedServers,
     cleanupUnreadyServers,
     checkDeployPlan,
+    checkTiersWithinCap,
     statsEnvContents,
     parseLoginUsers,
     failedUnitsFromActivation,
@@ -102,6 +103,8 @@ getDeployPlan reporter commitInfo deploymentType =
             | section <- config ^. serverSection,
               isJust (matchesDeployment deploymentType (_serverSectionDeploySection section))
           ]
+
+    checkTiersWithinCap deploymentType wanted
 
     -- Deploying means activating a closure, so every nixosConfiguration build
     -- of the commit has to have finished and uploaded first. We wait on all of
@@ -266,6 +269,25 @@ withErrorReporter reporter commitInfo action =
         reportLogs runReporter (mkLogLine $ userMessage $ toErrorDetails problem)
         reportComplete runReporter RunReportStatusFailure
       rethrow problem
+
+-- | Refuse a @servers:@ entry asking for a larger machine than this instance
+-- hands out, before anything is waited on.
+--
+-- Refused here rather than at acquisition time, where it would surface as "no
+-- capacity" and blame the instance for what the repo asked for. Applies to
+-- branch and pull request deploys alike: the limit is the instance's.
+checkTiersWithinCap :: DeploymentType -> [ServerSection] -> M ()
+checkTiersWithinCap deploymentType sections = do
+  maxTier <- _hostingBudgetMaxTier <$> view #hostingBudget
+  forM_ maxTier $ \cap ->
+    forM_ sections $ \section ->
+      forM_ (matchesDeployment deploymentType (_serverSectionDeploySection section)) $ \(tier, _) ->
+        unless (tierWithinCap (Just cap) tier)
+          $ throw
+          $ ServerTierExceedsInstanceCap
+            (_serverSectionConfiguration section)
+            (getServerTier tier)
+            (getServerTier cap)
 
 checkDeployPlan :: RepoInfo -> DeploymentType -> DeployPlan -> M ()
 checkDeployPlan repo deploymentType plan = do

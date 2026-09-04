@@ -116,6 +116,8 @@ with a CNAME.
       # Leave the host 2 cores and 4 GiB for itself.
       vcpuBudget = "reserve:2";
       memoryBudget = "reserve:4096";
+      # The largest machine any repo's garnix.yaml may ask for.
+      maxTier = "i4x8";
     };
   };
 
@@ -164,6 +166,19 @@ guest rather than adding to it.
 A `servers:` entry naming a configuration the commit does not build fails the
 deploy with that name, rather than silently deploying nothing.
 
+## Limits
+
+Two separate things, easy to confuse:
+
+- `vcpuBudget` / `memoryBudget` cap what **every guest together** may hold, live
+  and pooled. They are the instance's ceiling, checked when a guest is acquired.
+- `maxTier` caps what a **single `servers:` entry** may ask for. Checked while
+  planning, before any build is waited on, so a repo asking for `i16x32` is told
+  which entry is at fault instead of being told the instance is out of capacity.
+  It applies to branch and pull request deploys alike.
+Both default to unset, which is no limit at all beyond the host's own
+hardware.
+
 ## Lifecycle
 
 A branch deploy is replaced on every push, unless it declares persistence, in
@@ -177,6 +192,7 @@ the gateway is down rather than that everything is idle.
 
 A pull request from a fork is never deployed. Its code would run on a guest
 holding the repo's deploy key.
+
 
 ## Checking it works
 

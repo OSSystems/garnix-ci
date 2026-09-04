@@ -9,6 +9,7 @@ import Data.Time (UTCTime (..), fromGregorian)
 import Garnix.Build.Package (decodeDeploySpec)
 import Garnix.Hosting.Deploy
 import Garnix.Hosting.Types
+import Garnix.Monad (Env (..))
 import Garnix.Prelude
 import Garnix.TestHelpers (defaultCommitInfo, runTestM)
 import Garnix.Types
@@ -343,6 +344,34 @@ spec = do
       matchesDeployment prDeploy Yaml.OnPullRequest
         `shouldBe` Just (ServerTier "i1x2", False)
 
+  describe "checkTiersWithinCap" $ do
+    it "accepts anything when the instance sets no cap" $ do
+      capError Nothing mainDeploy [declOnBranchTier "web" "main" "i64x256"]
+        `shouldReturn` Nothing
+
+    it "refuses a branch deploy asking for more than the cap" $ do
+      capError (Just "i4x8") mainDeploy [declOnBranchTier "web" "main" "i8x16"]
+        `shouldReturn` Just (ServerTierExceedsInstanceCap (PackageName "web") "i8x16" "i4x8")
+
+    it "names the entry at fault, not the first one it looked at" $ do
+      capError
+        (Just "i4x8")
+        mainDeploy
+        [declOnBranch "web" "main", declOnBranchTier "worker" "main" "i8x16"]
+        `shouldReturn` Just (ServerTierExceedsInstanceCap (PackageName "worker") "i8x16" "i4x8")
+
+    it "ignores an entry this deployment does not match" $ do
+      capError (Just "i4x8") mainDeploy [declOnBranchTier "web" "staging" "i8x16"]
+        `shouldReturn` Nothing
+
+    it "lets a pull request deploy through: its size is the default" $ do
+      capError (Just "i4x8") prDeploy [declOnPullRequest "web"]
+        `shouldReturn` Nothing
+
+    it "accepts a tier that meets the cap exactly" $ do
+      capError (Just "i4x8") mainDeploy [declOnBranchTier "web" "main" "i4x8"]
+        `shouldReturn` Nothing
+
   describe "checkDeployPlan" $ do
     it "accepts a plan whose every name is a legal DNS label" $ do
       planError mainDeploy (planFor mainDeploy [declOnBranch "web" "main"] [built "web"])
@@ -507,6 +536,25 @@ redeployPairs plan =
   [ (_serverInfoId server, getPackageName (_serverToSpinUpBuild wanted ^. package))
     | (server, wanted) <- _deployPlanToRedeploy plan
   ]
+
+-- | Run 'checkTiersWithinCap' under an instance cap, and report the error it
+-- raised, if any.
+capError :: Maybe Text -> DeploymentType -> [Yaml.ServerSection] -> IO (Maybe Error)
+capError cap deploymentType sections =
+  runTestM
+    $ local (\env -> env {hostingBudget = budget})
+    $ either (Just . err) (const Nothing)
+    <$> try (checkTiersWithinCap deploymentType sections)
+  where
+    budget = HostingBudget Nothing Nothing (ServerTier <$> cap)
+
+declOnBranchTier :: Text -> Text -> Text -> Yaml.ServerSection
+declOnBranchTier package' branch' tier =
+  Yaml.ServerSection
+    { Yaml._serverSectionConfiguration = PackageName package',
+      Yaml._serverSectionDeploySection =
+        Yaml.OnBranch (Branch branch') (ServerTier tier) False
+    }
 
 -- | Run 'checkDeployPlan' and report the error it raised, if any.
 planError :: DeploymentType -> DeployPlan -> IO (Maybe Error)

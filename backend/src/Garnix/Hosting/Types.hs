@@ -9,6 +9,7 @@ module Garnix.Hosting.Types
     ServerTier (..),
     tierResources,
     parseServerTier,
+    tierWithinCap,
     HostingBudget (..),
     ServerAddress (..),
     serverAddressText,
@@ -180,13 +181,28 @@ parseMachineTier raw = do
       Right (value, "") | value > 0 -> Just value
       _ -> Nothing
 
--- | Resolved absolute caps on what all guests together may hold.
+-- | Whether a tier is within a cap. Both dimensions have to fit: @i1x16@ is
+-- over an @i4x8@ cap on memory even though it is under it on vCPUs.
+tierWithinCap :: Maybe ServerTier -> ServerTier -> Bool
+tierWithinCap Nothing _ = True
+tierWithinCap (Just cap) tier =
+  let (capVcpus, capMiB) = tierResources cap
+      (vcpus, miB) = tierResources tier
+   in vcpus <= capVcpus && miB <= capMiB
+
+-- | What this instance is willing to spend on hosting, and on whom.
 --
 -- Lives here rather than in "Garnix.Hosting.ServerPool" because
 -- "Garnix.Monad" carries one in its @Env@, and ServerPool imports Monad.
 data HostingBudget = HostingBudget
-  { _hostingBudgetVcpus :: Maybe Int,
-    _hostingBudgetMemoryMiB :: Maybe Int
+  { -- | Cap on the vCPUs all guests together may hold.
+    _hostingBudgetVcpus :: Maybe Int,
+    -- | Cap on the MiB all guests together may hold.
+    _hostingBudgetMemoryMiB :: Maybe Int,
+    -- | Largest tier a single @servers:@ entry may ask for. About one repo's
+    -- declaration rather than the instance as a whole, so it is checked while
+    -- planning, where the user can still be told which entry is at fault.
+    _hostingBudgetMaxTier :: Maybe ServerTier
   }
   deriving stock (Eq, Show, Generic)
 
