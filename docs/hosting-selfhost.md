@@ -45,6 +45,22 @@ A push to `main` then deploys it at
 `web.main.<repo>.<owner>.<hostingDomain>`, with a certificate issued on first
 request.
 
+`machine:` is available to both deployment types, and defaults to `i1x2` in
+both:
+
+```yaml
+servers:
+  - configuration: web
+    deployment:
+      type: on-pull-request
+      machine: i2x4
+```
+
+A pull request deploy is a throwaway copy, so the default is usually right for
+it — but a configuration that will not boot in 2 GiB will not boot in a pull
+request either, and had no way to say so. `branchReserve` is what keeps pull
+requests from eating the budget a branch deploy needs; the size field is not.
+
 Nothing garnix-specific is required beyond that import: no hostnames, no keys.
 The hosting SSH key belongs to the garnix instance doing the hosting, not to
 the repository being deployed, so it never appears in the repo — the
@@ -192,8 +208,8 @@ hardware.
 A branch deploy is replaced on every push, unless it declares persistence, in
 which case the same guest is redeployed in place.
 
-A pull request gets its own `pull-<n>` deployment. Those are also reaped when
-idle: the gateway reports which hostnames it served, and a PR guest that has
+A pull request gets its own `pull-<n>` deployment, at the `machine:` size its
+entry names. Those are also reaped when idle: the gateway reports which hostnames it served, and a PR guest that has
 been up more than 12 hours without appearing in a report is torn down. The
 reaper does nothing at all when no heartbeats have arrived, since that means
 the gateway is down rather than that everything is idle.

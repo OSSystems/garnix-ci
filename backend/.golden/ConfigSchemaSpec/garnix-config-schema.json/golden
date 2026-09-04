@@ -155,21 +155,17 @@
                                 "$comment": "When to deploy a new server, or redeploy an existing one\ndeployment",
                                 "oneOf": [
                                     {
-                                        "allOf": [
-                                            {
-                                                "type": "object"
+                                        "properties": {
+                                            "machine": {
+                                                "$comment": "What machine size to deploy on",
+                                                "type": "string"
                                             },
-                                            {
-                                                "properties": {
-                                                    "type": {
-                                                        "const": "on-pull-request"
-                                                    }
-                                                },
-                                                "required": [
-                                                    "type"
-                                                ],
-                                                "type": "object"
+                                            "type": {
+                                                "const": "on-pull-request"
                                             }
+                                        },
+                                        "required": [
+                                            "type"
                                         ],
                                         "type": "object"
                                     },

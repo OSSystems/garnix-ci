@@ -278,16 +278,17 @@ assembleDeployPlan deploymentType declared existing discovered =
 -- | Does this yaml entry's declared deployment match what we are rolling out,
 -- and if so at what machine size and primacy?
 --
--- A pull request deploy has no size of its own to declare: it is a throwaway
--- copy, so it gets the default.
+-- A pull request deploy sizes itself the same way a branch deploy does, and is
+-- held to the same instance cap. It is never primary: the short hostname
+-- belongs to the branch deploy, and the yaml has no field to ask for it.
 matchesDeployment :: DeploymentType -> DeploySection -> Maybe (ServerTier, Bool)
 matchesDeployment deploymentType = \case
   OnBranch wantedBranch tier isPrimary'
     | BranchDeployment thisBranch <- deploymentType,
       wantedBranch == thisBranch ->
         Just (tier, isPrimary')
-  OnPullRequest
-    | GhPrDeployment _ <- deploymentType -> Just (ServerTier "i1x2", False)
+  OnPullRequest tier
+    | GhPrDeployment _ <- deploymentType -> Just (tier, False)
   _ -> Nothing
 
 toSpinUpSpec :: (ServerTier, Bool, ServerExtras, Build) -> ServerToSpinUp
