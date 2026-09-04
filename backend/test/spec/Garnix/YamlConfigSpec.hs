@@ -212,7 +212,23 @@ spec = do
                           type: on-pull-request
                   |]
         let actual = (^. serverSection) <$> decodeConfig simpleServerConfig
-        actual `shouldBe` Right [ServerSection "foo" OnPullRequest]
+        actual `shouldBe` Right [ServerSection "foo" (OnPullRequest (ServerTier "i1x2"))]
+        roundtripTest actual
+
+      it "parses an 'on-pull-request' deployment with a machine size" $ do
+        let simpleServerConfig :: ByteString
+            simpleServerConfig =
+              cs
+                $ unindent
+                  [i|
+                    servers:
+                      - configuration: foo
+                        deployment:
+                          type: on-pull-request
+                          machine: i4x8
+                  |]
+        let actual = (^. serverSection) <$> decodeConfig simpleServerConfig
+        actual `shouldBe` Right [ServerSection "foo" (OnPullRequest (ServerTier "i4x8"))]
         roundtripTest actual
 
       it "parses an 'on-branch' deployment with a machine size" $ do

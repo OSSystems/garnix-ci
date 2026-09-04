@@ -7,6 +7,7 @@ module Garnix.Hosting.Types
     ServerId (..),
     PreprovisionedServerId (..),
     ServerTier (..),
+    defaultServerTier,
     tierResources,
     parseServerTier,
     tierWithinCap,
@@ -137,6 +138,10 @@ newtype ServerTier = ServerTier {getServerTier :: Text}
       PGColumn "text",
       PGParameter "text"
     )
+
+-- | The size a @servers:@ entry gets when its @machine@ field is absent.
+defaultServerTier :: ServerTier
+defaultServerTier = ServerTier "i1x2"
 
 -- | vCPU and MiB for a tier.
 --
