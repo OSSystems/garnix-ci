@@ -1023,6 +1023,9 @@ data Error
   | InvalidAccessToken
   | DevModeOnly
   | DeploymentWantsNixosConfigurationsThatDontExist [PackageName]
+  | -- | The configuration, the machine size its @servers:@ entry asked for,
+    -- and the largest this instance hands out.
+    ServerTierExceedsInstanceCap PackageName Text Text
   | NameIsNotValidSubdomain SubdomainKind Text
   | TransactionAlreadyStarted
   | BuildAlreadyStopped {buildId :: BuildId}
@@ -1133,6 +1136,14 @@ instance Pretty Error where
     InvalidAccessToken -> "Invalid access token"
     DevModeOnly -> "dev mode only"
     DeploymentWantsNixosConfigurationsThatDontExist packages -> "Deployment wants package(s) that have not been built: " <> pretty packages
+    ServerTierExceedsInstanceCap package' wanted cap ->
+      "Deployment of"
+        <+> Pretty.squotes (pretty package')
+        <+> "asks for machine"
+        <+> Pretty.squotes (pretty wanted)
+        <> ", over this instance's cap of"
+        <+> Pretty.squotes (pretty cap)
+        <> "."
     NameIsNotValidSubdomain kind name -> pretty kind <+> "name" <+> Pretty.squotes (pretty name) <+> "is not a valid subdomain name."
     TransactionAlreadyStarted -> "Internal transaction error."
     BuildAlreadyStopped {buildId} -> "Build with id" <+> pretty buildId <+> "has already been stopped."
@@ -1249,6 +1260,15 @@ toErrorDetails e = case err e of
     errorDetails 400
       $ "NixOS configuration(s) not found: "
       <> T.intercalate ", " (map getPackageName packages)
+  ServerTierExceedsInstanceCap package' wanted cap ->
+    errorDetails 400
+      $ "The servers: entry for '"
+      <> getPackageName package'
+      <> "' asks for machine '"
+      <> wanted
+      <> "', but this garnix instance hands out at most '"
+      <> cap
+      <> "'. Lower the machine: field, or ask the instance's admin to raise its limit."
   NameIsNotValidSubdomain kind name ->
     errorDetails 400 $ show kind <> " name '" <> name <> "' is not a valid subdomain name."
   TransactionAlreadyStarted ->
