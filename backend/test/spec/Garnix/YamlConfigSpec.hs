@@ -1,11 +1,16 @@
 module Garnix.YamlConfigSpec (spec) where
 
+import Autodocodec (HasCodec, eitherDecodeJSONViaCodec, encodeJSONViaCodec)
+import Data.ByteString (ByteString)
 import Data.String.Interpolate
+import Data.String.Interpolate.Util
 import Garnix.Build.Checkout (remoteWithConfig, runWithCheckout)
+import Garnix.Hosting.Types (ServerTier (..))
 import Garnix.Prelude
 import Garnix.TestHelpers (defaultCommitInfo, fromSingleton)
 import Garnix.TestHelpers.GithubInterface qualified as GH
 import Garnix.TestHelpers.Monad
+import Garnix.Types (Branch (..))
 import Garnix.YamlConfig
 import Test.Hspec
 
@@ -172,6 +177,97 @@ spec = do
         let actual = (^. incrementalizeBuildsSection) <$> decodeConfig config
         actual `shouldBe` Right (IncrementalBuildsExcludeBranches (ExcludeBranches ["main"]))
 
+    describe "server section" $ do
+      let roundtripTest :: (Show a, Eq a, HasCodec a) => a -> IO ()
+          roundtripTest a = do
+            let encoded = encodeJSONViaCodec a
+                decoded = eitherDecodeJSONViaCodec encoded
+            decoded `shouldBe` Right a
+
+      it "parses an 'on-branch' deployment" $ do
+        let simpleServerConfig :: ByteString
+            simpleServerConfig =
+              cs
+                $ unindent
+                  [i|
+                    servers:
+                      - configuration: foo
+                        deployment:
+                          type: on-branch
+                          branch: master
+                  |]
+        let actual = (^. serverSection) <$> decodeConfig simpleServerConfig
+        actual `shouldBe` Right [ServerSection "foo" (OnBranch (Branch "master") (ServerTier "i1x2") False)]
+        roundtripTest actual
+
+      it "parses and serializes an 'on-pull-request' deployment" $ do
+        let simpleServerConfig :: ByteString
+            simpleServerConfig =
+              cs
+                $ unindent
+                  [i|
+                    servers:
+                      - configuration: foo
+                        deployment:
+                          type: on-pull-request
+                  |]
+        let actual = (^. serverSection) <$> decodeConfig simpleServerConfig
+        actual `shouldBe` Right [ServerSection "foo" OnPullRequest]
+        roundtripTest actual
+
+      it "parses an 'on-branch' deployment with a machine size" $ do
+        let simpleServerConfig :: ByteString
+            simpleServerConfig =
+              cs
+                $ unindent
+                  [i|
+                    servers:
+                      - configuration: foo
+                        deployment:
+                          type: on-branch
+                          branch: master
+                          machine: i4x8
+                  |]
+        let actual = (^. serverSection) <$> decodeConfig simpleServerConfig
+        actual `shouldBe` Right [ServerSection "foo" (OnBranch (Branch "master") (ServerTier "i4x8") False)]
+        roundtripTest actual
+
+      it "explains a machine size it cannot read" $ do
+        let simpleServerConfig :: ByteString
+            simpleServerConfig =
+              cs
+                $ unindent
+                  [i|
+                    servers:
+                      - configuration: foo
+                        deployment:
+                          type: on-branch
+                          branch: master
+                          machine: enormous
+                  |]
+        let actual = (^. serverSection) <$> decodeConfig simpleServerConfig
+        actual
+          `shouldSatisfy` either
+            (("Wrong machine size: enormous" `isInfixOf`) . cs)
+            (const False)
+
+      it "allows setting a primary deployment" $ do
+        let simpleServerConfig :: ByteString
+            simpleServerConfig =
+              cs
+                $ unindent
+                  [i|
+                    servers:
+                      - configuration: foo
+                        deployment:
+                          type: on-branch
+                          branch: master
+                          isPrimary: true
+                  |]
+        let actual = (^. serverSection) <$> decodeConfig simpleServerConfig
+        actual `shouldBe` Right [ServerSection "foo" (OnBranch (Branch "master") (ServerTier "i1x2") True)]
+        roundtripTest actual
+
     context "actions section" $ do
       it "allows empty action sections" $ do
         let config = "actions: []"
@@ -219,6 +315,62 @@ spec = do
         config <- GH.withLocalRepo ghState "owner" "repo" identity defaultCommitInfo (GH.simpleSetup emptyFlake) $ \commitInfo ->
           runWithCheckout remoteWithConfig commitInfo pure
         config `shouldBeM` def
+
+      it "reads server section from garnix.config" $ GH.withFakeGithubInterface $ \ghState -> do
+        let flake =
+              cs
+                [i|
+                  {
+                    outputs = _: {
+                      garnix.config = {
+                        servers = [
+                          {
+                            configuration = "foo";
+                            deployment = {
+                              type = "on-branch";
+                              branch = "master";
+                            };
+                          }
+                        ];
+                      };
+                    };
+                  }
+                |]
+        config <- GH.withLocalRepo ghState "owner" "repo" identity defaultCommitInfo (GH.simpleSetup flake) $ \commitInfo ->
+          runWithCheckout remoteWithConfig commitInfo pure
+        (config ^. serverSection) `shouldBeM` [ServerSection "foo" (OnBranch (Branch "master") (ServerTier "i1x2") False)]
+
+      it "ignores the garnix.yaml file if there is a flake.nix garnix.config" $ GH.withFakeGithubInterface $ \ghState -> do
+        let flake =
+              cs
+                [i|
+                  {
+                    outputs = _: {
+                      garnix.config = {
+                        servers = [
+                          {
+                            configuration = "foo";
+                            deployment = {
+                              type = "on-branch";
+                              branch = "master";
+                            };
+                          }
+                        ];
+                      };
+                    };
+                  }
+                |]
+            yaml =
+              cs
+                [i|
+                  servers:
+                    - configuration: bar
+                      deployment:
+                        type: on-pull-request
+                |]
+        config <- GH.withLocalRepo ghState "owner" "repo" identity defaultCommitInfo (GH.setupWithConfig flake $ Just yaml) $ \commitInfo ->
+          runWithCheckout remoteWithConfig commitInfo pure
+        (config ^. serverSection) `shouldBeM` [ServerSection "foo" (OnBranch (Branch "master") (ServerTier "i1x2") False)]
 
     context "modules section" $ do
       it "sets the publish field for the default section to false" $ do

@@ -11,16 +11,21 @@ module Garnix.YamlConfig
     withRepoContents,
     AttributeMatcher (..),
     BuildSection (..),
+    DeploySection (OnBranch, OnPullRequest),
     ExcludeBranches (..),
     GarnixConfig,
     IncrementalizeBuildsSection (..),
     ModuleSection (..),
+    ServerSection (..),
     _garnixConfigActions,
     actions,
     asAttributeMatcher,
     branchSection,
     buildSections,
+    configuration,
     decodeConfig,
+    deploySection,
+    deployTypeExplanation,
     excludeBranches,
     excludeSection,
     firstPart,
@@ -30,6 +35,7 @@ module Garnix.YamlConfig
     moduleSection,
     parseAttributeMatcher,
     secondPart,
+    serverSection,
     thirdPart,
     fodChecks,
     commentOnFailure,
@@ -41,9 +47,14 @@ where
 import Autodocodec
 import Cradle qualified
 import Data.ByteString (ByteString)
+import Data.HashMap.Strict (HashMap)
+import Data.HashMap.Strict qualified as HashMap
 import Data.Text qualified as T
+import Data.Tuple.Extra (fst3, snd3, thd3, uncurry3)
+import Data.Void (Void)
 import Data.Yaml (decodeEither', decodeFileEither, prettyPrintParseException)
 import GHC.IsList (fromList)
+import Garnix.Hosting.Types (ServerTier (..), parseServerTier)
 import Garnix.Log
 import Garnix.Monad
 import Garnix.NixConfig (addNixConfigEnvironment)
@@ -216,6 +227,81 @@ instance HasCodec IncrementalizeBuildsSection where
 instance Default IncrementalizeBuildsSection where
   def = IncrementalizeBuilds False
 
+-- | One entry of the @servers:@ list: which @nixosConfiguration@ to deploy,
+-- and when.
+--
+-- This is the whole of the deployment declaration. The configuration it names
+-- is plain NixOS as far as this is concerned; whatever else it wants from the
+-- hosting (ports, domains, ssh access) it sets on 'garnix.server' in its own
+-- nix code, and we read that off the build afterwards --- see
+-- 'Garnix.Hosting.Types.ServerExtras'.
+data ServerSection = ServerSection
+  { _serverSectionConfiguration :: PackageName,
+    _serverSectionDeploySection :: DeploySection
+  }
+  deriving stock (Eq, Show, Generic)
+
+instance HasCodec ServerSection where
+  codec =
+    object "servers"
+      $ ServerSection
+      <$> requiredField
+        "configuration"
+        "What attribute to deploy (e.g.: 'myServer' for 'nixosConfigurations.myServer')"
+      .= _serverSectionConfiguration
+      <*> requiredField
+        "deployment"
+        "When to deploy a new server, or redeploy an existing one"
+      .= _serverSectionDeploySection
+
+data DeploySection
+  = OnPullRequest
+  | OnBranch
+      { branch :: Branch,
+        tier :: ServerTier,
+        isPrimary :: Bool
+      }
+  deriving stock (Eq, Show, Generic)
+
+deployTypeExplanation :: Text
+deployTypeExplanation =
+  "When and how to deploy. The current available types "
+    <> "are: \n"
+    <> " - on-branch: deploy a new version every time the HEAD of the specified "
+    <> "branch changes.\n"
+    <> " - on-pull-request: deploy a version for every open pull request, and "
+    <> "tear it down when the pull request closes."
+
+instance HasCodec DeploySection where
+  codec =
+    object "deployment"
+      $ discriminatedUnionCodec "type" serialize deserialize
+    where
+      branchCodec =
+        (,,)
+          <$> requiredField "branch" "What git branch to deploy from"
+          .= fst3
+          <*> optionalFieldWithDefault "machine" (ServerTier "i1x2") "What machine size to deploy on"
+          .= snd3
+          <*> optionalFieldWithDefault "isPrimary" False "If this deploy should also be reachable at the repo's short hostname"
+          .= thd3
+      serialize :: DeploySection -> (Discriminator, ObjectCodec DeploySection ())
+      serialize = \case
+        OnBranch branch' serverTier isPrimary' ->
+          ( "on-branch",
+            mapToEncoder (branch', serverTier, isPrimary') branchCodec
+          )
+        OnPullRequest -> ("on-pull-request", mapToEncoder () $ pureCodec ())
+      deserialize :: HashMap Discriminator (Text, ObjectCodec Void DeploySection)
+      deserialize =
+        HashMap.fromList
+          [ ("on-branch", ("", mapToDecoder (uncurry3 OnBranch) branchCodec)),
+            ("on-pull-request", ("", mapToDecoder (const OnPullRequest) $ pureCodec ()))
+          ]
+
+instance HasCodec ServerTier where
+  codec = bimapCodec parseServerTier getServerTier textCodec
+
 instance HasCodec Branch where
   codec = dimapCodec Branch getBranch textCodec
 
@@ -282,6 +368,7 @@ instance Default ModuleSection where
 data GarnixConfig = GarnixConfig
   { _garnixConfigBuildSections :: [BuildSection],
     _garnixConfigIncrementalizeBuildsSection :: IncrementalizeBuildsSection,
+    _garnixConfigServerSection :: [ServerSection],
     _garnixConfigActions :: [Action],
     _garnixConfigModuleSection :: ModuleSection,
     _garnixConfigFodChecks :: Bool,
@@ -291,7 +378,7 @@ data GarnixConfig = GarnixConfig
   deriving stock (Eq, Show, Generic)
 
 instance Default GarnixConfig where
-  def = GarnixConfig [def] def [] def False False (FlakeDir ".")
+  def = GarnixConfig [def] def [] [] def False False (FlakeDir ".")
 
 instance FromJSON GarnixConfig where
   parseJSON = parseJSONViaCodec
@@ -334,6 +421,12 @@ instance HasCodec GarnixConfig where
                   .= _garnixConfigIncrementalizeBuildsSection
               )
           <*> ( optionalFieldWithDefault
+                  "servers"
+                  []
+                  "Specifies what servers to deploy."
+                  .= _garnixConfigServerSection
+              )
+          <*> ( optionalFieldWithDefault
                   "actions"
                   []
                   "Specifies which actions to run."
@@ -372,6 +465,7 @@ instance Loggable GarnixConfig where
 
 makeFields ''ExcludeBranches
 makeFields ''GarnixConfig
+makeFields ''ServerSection
 makeFields ''AttributeMatcher
 makeFields ''BuildSection
 makeFields ''Action
