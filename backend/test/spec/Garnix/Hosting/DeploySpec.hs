@@ -546,7 +546,7 @@ capError cap deploymentType sections =
     $ either (Just . err) (const Nothing)
     <$> try (checkTiersWithinCap deploymentType sections)
   where
-    budget = HostingBudget Nothing Nothing (ServerTier <$> cap)
+    budget = HostingBudget Nothing Nothing (ServerTier <$> cap) Nothing
 
 declOnBranchTier :: Text -> Text -> Text -> Yaml.ServerSection
 declOnBranchTier package' branch' tier =

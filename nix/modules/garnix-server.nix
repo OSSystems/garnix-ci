@@ -284,6 +284,22 @@ in
         '';
       };
 
+      branchReserve = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        example = "i2x4";
+        description = ''
+          Resources pull request deploys have to leave unspoken-for, written as
+          a machine size. A pull request deploy is refused when taking it would
+          leave less than this free, so a branch deploy always has room to land
+          even while many pull requests are open.
+
+          Only meaningful together with `vcpuBudget` or `memoryBudget`: it is
+          a slice held back from those caps, not a cap of its own. When null,
+          pull requests may commit the budget down to nothing.
+        '';
+      };
+
       memoryBudget = lib.mkOption {
         type = lib.types.nullOr lib.types.str;
         default = null;
@@ -724,6 +740,8 @@ in
           "GARNIX_HOSTING_MEMORY_BUDGET=${cfg.hosting.memoryBudget}"
         ++ lib.optional (cfg.hosting.maxTier != null)
           "GARNIX_HOSTING_MAX_TIER=${cfg.hosting.maxTier}"
+        ++ lib.optional (cfg.hosting.branchReserve != null)
+          "GARNIX_HOSTING_BRANCH_RESERVE=${cfg.hosting.branchReserve}"
         ++ [ "GARNIX_GUEST_SUBNET_PREFIX=${cfg.hosting.guestSubnetPrefix}" ]
         ++ lib.optionals (cfg.database.ssl.mode != "disable") [
           # postgresql-typed reads TPG_TLS via lookupEnv — presence enables
