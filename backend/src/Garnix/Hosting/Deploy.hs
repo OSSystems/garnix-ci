@@ -8,6 +8,8 @@
 -- the build afterwards via 'Garnix.Build.Package.discoverDeploySpec'.
 module Garnix.Hosting.Deploy
   ( rolloutNewServerVersion,
+    assembleDeployPlan,
+    matchesDeployment,
     startServer,
     redeployServer,
     stopServer,
@@ -95,7 +97,7 @@ getDeployPlan reporter commitInfo deploymentType =
     -- What the yaml asks for on this push. A repo that declares nothing here
     -- has no builds to wait for: the only thing left to plan is tearing down
     -- whatever is still running from an earlier declaration.
-    let declared =
+    let wanted =
           [ section
             | section <- config ^. serverSection,
               isJust (matchesDeployment deploymentType (_serverSectionDeploySection section))
@@ -138,7 +140,7 @@ getDeployPlan reporter commitInfo deploymentType =
     let missing =
           nubOrd
             [ packageName
-              | section <- declared,
+              | section <- wanted,
                 let packageName = _serverSectionConfiguration section,
                 packageName `notElem` map (view package) nixosBuilds
             ]
@@ -153,45 +155,69 @@ getDeployPlan reporter commitInfo deploymentType =
       forM nixosBuilds $ \build ->
         (build,) <$> Package.discoverDeploySpec (config ^. flakeDir) build
 
-    -- Keyed by package name, so the same package built for two systems asks
-    -- for one guest rather than two fighting over the same hostname.
-    let buildsByPackage :: Map PackageName (Build, ServerExtras)
-        buildsByPackage =
-          Map.fromList
-            [ (build ^. package, (build, fromMaybe defaultServerExtras extras))
-              | (build, extras) <- discovered
-            ]
-        wantedPackages :: Map PackageName (ServerTier, Bool, ServerExtras, Build)
-        wantedPackages =
-          Map.fromList
-            [ (packageName, (tier, isPrimary', extras, build))
-              | section <- declared,
-                let packageName = _serverSectionConfiguration section,
-                Just (tier, isPrimary') <-
-                  [matchesDeployment deploymentType (_serverSectionDeploySection section)],
-                Just (build, extras) <- [Map.lookup packageName buildsByPackage]
-            ]
-        wantedServers = map toSpinUpSpec (Map.elems wantedPackages)
-        -- A running server is redeployed in place, rather than replaced, when
-        -- it and the wanted server share a persistence name. That is what
-        -- makes a persistent guest keep its disk across a push.
-        toRedeploy =
-          [ (server, wanted)
-            | server <- existing,
-              wanted <- wantedServers,
-              let persistence = _serverToSpinUpBuild wanted ^. persistenceName,
-              isJust persistence,
-              persistence == _serverInfoPersistenceName server
-          ]
-        redeployedBuilds = map (_serverToSpinUpBuild . snd) toRedeploy
-        toSpinDown = filter (`notElem` map fst toRedeploy) existing
-        toSpinUp =
-          filter ((`notElem` redeployedBuilds) . _serverToSpinUpBuild) wantedServers
-        plan = DeployPlan toSpinDown toSpinUp toRedeploy
+    let plan = assembleDeployPlan deploymentType (config ^. serverSection) existing discovered
 
-    unless (null wantedServers)
+    -- A repo with no servers at all must not be failed for, say, having a
+    -- branch name that is not a legal DNS label.
+    unless (null (_deployPlanToSpinUp plan) && null (_deployPlanToRedeploy plan))
       $ checkDeployPlan (commitInfo ^. repoInfo) deploymentType plan
     pure plan
+
+-- | The difference between what is running and what this commit wants.
+--
+-- Split out of 'getDeployPlan' as a pure function so the decision itself --
+-- which guests to keep, replace, or tear down -- can be tested without a
+-- database, a nix evaluation, or a provisioner.
+assembleDeployPlan ::
+  DeploymentType ->
+  -- | The @servers:@ list of @garnix.yaml@: the whole of the declaration.
+  [ServerSection] ->
+  -- | Servers currently running for this repo and this deployment.
+  [ServerInfo] ->
+  -- | Every @nixosConfiguration@ build of the commit, paired with the extras
+  -- its nix code declared, when we could read them.
+  [(Build, Maybe ServerExtras)] ->
+  DeployPlan
+assembleDeployPlan deploymentType declared existing discovered =
+  DeployPlan toSpinDown toSpinUp toRedeploy
+  where
+    -- Keyed by package name, so the same package built for two systems asks
+    -- for one guest rather than two fighting over the same hostname.
+    buildsByPackage :: Map PackageName (Build, ServerExtras)
+    buildsByPackage =
+      Map.fromList
+        [ (build ^. package, (build, fromMaybe defaultServerExtras extras))
+          | (build, extras) <- discovered
+        ]
+    -- A configuration the yaml never names is not a server, however much
+    -- `garnix.server` it sets. An entry naming a configuration this commit did
+    -- not build is dropped here and reported by 'getDeployPlan' instead.
+    wantedPackages :: Map PackageName (ServerTier, Bool, ServerExtras, Build)
+    wantedPackages =
+      Map.fromList
+        [ (packageName, (tier, isPrimary', extras, build))
+          | section <- declared,
+            let packageName = _serverSectionConfiguration section,
+            Just (tier, isPrimary') <-
+              [matchesDeployment deploymentType (_serverSectionDeploySection section)],
+            Just (build, extras) <- [Map.lookup packageName buildsByPackage]
+        ]
+    wantedServers = map toSpinUpSpec (Map.elems wantedPackages)
+    -- A running server is redeployed in place, rather than replaced, when it
+    -- and the wanted server share a persistence name. That is what makes a
+    -- persistent guest keep its disk across a push.
+    toRedeploy =
+      [ (server, wanted)
+        | server <- existing,
+          wanted <- wantedServers,
+          let persistence = _serverToSpinUpBuild wanted ^. persistenceName,
+          isJust persistence,
+          persistence == _serverInfoPersistenceName server
+      ]
+    redeployedBuilds = map (_serverToSpinUpBuild . snd) toRedeploy
+    toSpinDown = filter (`notElem` map fst toRedeploy) existing
+    toSpinUp =
+      filter ((`notElem` redeployedBuilds) . _serverToSpinUpBuild) wantedServers
 
 -- | Does this yaml entry's declared deployment match what we are rolling out,
 -- and if so at what machine size and primacy?
