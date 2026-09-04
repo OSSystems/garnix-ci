@@ -124,7 +124,6 @@
           backend = import ./backend subDirInputs;
           frontend = import ./frontend subDirInputs;
           frontend-age-wasm = import ./frontend/age-wasm subDirInputs;
-          examples = import ./examples subDirInputs;
           provisioner = import ./provisioner subDirInputs;
           hosting-gateway = import ./hosting-gateway subDirInputs;
         in
@@ -135,9 +134,7 @@
               program = lib.getExe drv;
               meta.description = drv.meta.description;
             })
-            (namespace "backend" backend.commands //
-            namespace "examples" examples.commands
-            );
+            (namespace "backend" backend.commands);
 
           checks =
             namespace "backend" backend.checks //
@@ -186,13 +183,10 @@
         garnix-guest = flakeInputs.garnix-guest-lib.nixosModules.garnix-guest;
       };
       nixosConfigurations =
-        (import ./examples/example-multi-server-deployment.nix {
+        (import ./nix/website.nix {
           inherit self overlays flakeInputs;
         }).nixosConfigurations
         // (import ./examples/example-selfhost.nix {
-          inherit self overlays flakeInputs;
-        }).nixosConfigurations
-        // (import ./examples/example-selfhost-vm.nix {
           inherit self overlays flakeInputs;
         }).nixosConfigurations;
     };
