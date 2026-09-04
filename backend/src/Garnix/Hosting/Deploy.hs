@@ -34,6 +34,7 @@ import Data.Maybe (listToMaybe, mapMaybe)
 import Data.Text qualified as T
 import Garnix.API.Keys (getRepoKeys)
 import Garnix.Build.Package qualified as Package
+import Garnix.Build.PrComment qualified as PrComment
 import Garnix.BuildLogs.Types (mkLogLine)
 import Garnix.DB qualified as DB
 import Garnix.DB.Hosting qualified as DBHosting
@@ -83,9 +84,61 @@ rolloutNewServerVersion reporter commitInfo deploymentType = do
     $ withTextSpan
       ("deployment_type", fromDeploymentType (const "branch") (const "pr") deploymentType)
     $ (<?> "Rolling out new servers")
+    $ reportingToPullRequest commitInfo deploymentType
     $ do
       plan <- getDeployPlan reporter commitInfo deploymentType
-      executeDeployPlan reporter commitInfo plan deploymentType
+      servers <- executeDeployPlan reporter commitInfo plan deploymentType
+      commentDeployedUrls commitInfo deploymentType plan
+      pure servers
+
+-- | Report a failed pull request rollout as a comment on it, then re-raise.
+--
+-- Both channels are caught: a user who only hears about the deploy through
+-- this comment must not miss a rollout that died of an IO exception.
+reportingToPullRequest :: CommitInfo -> DeploymentType -> M a -> M a
+reportingToPullRequest commitInfo deploymentType action =
+  case ghPrDeployment deploymentType of
+    Nothing -> action
+    Just prId -> do
+      -- This runs for every pull request of every repo, most of which never
+      -- asked for a deploy. A yaml we cannot even read declares nothing.
+      declared <- catchEither declaresServers (const (pure False))
+      if not declared
+        then action
+        else
+          action `whenErrorEither` \problem ->
+            PrComment.commentDeployFailed commitInfo prId (problemMessage problem)
+  where
+    declaresServers = do
+      config <- getConfig
+      pure
+        $ any
+          (isJust . matchesDeployment deploymentType . _serverSectionDeploySection)
+          (config ^. serverSection)
+    problemMessage =
+      either
+        (const "Something went wrong.")
+        (userMessage . toErrorDetails)
+
+-- | Tell the pull request the addresses its servers landed on.
+--
+-- Read off the plan rather than the returned 'ServerInfo's: the hostname comes
+-- from the package name, which a bare 'ServerInfo' does not carry.
+commentDeployedUrls :: CommitInfo -> DeploymentType -> DeployPlan -> M ()
+commentDeployedUrls commitInfo deploymentType plan =
+  case ghPrDeployment deploymentType of
+    Nothing -> pure ()
+    Just prId -> do
+      domain <- view #hostingDomain
+      let deployed =
+            [ ( getPackageName (build ^. package),
+                publicHostFor domain commitInfo deploymentType build
+              )
+              | build <-
+                  map _serverToSpinUpBuild (_deployPlanToSpinUp plan)
+                    <> map (_serverToSpinUpBuild . snd) (_deployPlanToRedeploy plan)
+            ]
+      PrComment.commentDeployedUrls commitInfo prId (nubOrd deployed)
 
 -- * Planning
 

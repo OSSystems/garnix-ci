@@ -201,6 +201,12 @@ the gateway is down rather than that everything is idle.
 A pull request from a fork is never deployed. Its code would run on a guest
 holding the repo's deploy key.
 
+garnix comments on the pull request with the addresses its servers landed on,
+once per pull request, and comments again when a deploy fails, once per commit.
+Neither is gated on `commentOnFailure`: declaring an `on-pull-request` server is
+itself the opt-in, and a deploy whose address nobody is told is not much of a
+deploy. Both need the garnix app to have `pull_requests: write`; without it the
+comment is skipped and the deploy is unaffected.
 
 ## Checking it works
 

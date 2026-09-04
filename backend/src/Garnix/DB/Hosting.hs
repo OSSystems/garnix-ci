@@ -26,6 +26,8 @@ module Garnix.DB.Hosting
     getServerGuestIpByInstanceId,
     getServerStatsHistory,
     serverStatsWindow,
+    claimDeployUrlComment,
+    claimDeployFailureComment,
   )
 where
 
@@ -40,6 +42,7 @@ import Garnix.Prelude
 import Garnix.Types
   ( Branch (..),
     BuildId,
+    CommitHash,
     Error (..),
     GhPullRequestId,
     GhRepoName,
@@ -670,3 +673,34 @@ getServerStatsHistory serverId = do
       [ ServerStatsSample cpuPct memUsedKb memTotalKb sampledAt
         | (cpuPct, memUsedKb, memTotalKb, sampledAt) <- rows
       ]
+
+-- * Pull request deploy comments
+
+-- | Claim the right to post this pull request's addresses. True exactly once
+-- per pull request, however many pushes it collects.
+claimDeployUrlComment :: GhRepoOwner -> GhRepoName -> GhPullRequestId -> M Bool
+claimDeployUrlComment owner name pullRequest =
+  (== 1)
+    <$> DB.pgExec
+      [pgSQL|
+        INSERT INTO deploy_comments (repo_user, repo_name, pull_request, kind)
+        VALUES (${owner}, ${name}, ${pullRequest}, 'url')
+        ON CONFLICT DO NOTHING
+      |]
+
+-- | Claim the right to report a failed deploy. Scoped to the commit, so a
+-- later push that breaks a working deploy is still reported.
+claimDeployFailureComment ::
+  GhRepoOwner ->
+  GhRepoName ->
+  GhPullRequestId ->
+  CommitHash ->
+  M Bool
+claimDeployFailureComment owner name pullRequest commit =
+  (== 1)
+    <$> DB.pgExec
+      [pgSQL|
+        INSERT INTO deploy_comments (repo_user, repo_name, pull_request, kind, git_commit)
+        VALUES (${owner}, ${name}, ${pullRequest}, 'failure', ${commit})
+        ON CONFLICT DO NOTHING
+      |]
