@@ -54,7 +54,7 @@ import Data.Tuple.Extra (fst3, snd3, thd3, uncurry3)
 import Data.Void (Void)
 import Data.Yaml (decodeEither', decodeFileEither, prettyPrintParseException)
 import GHC.IsList (fromList)
-import Garnix.Hosting.Types (ServerTier (..), parseServerTier)
+import Garnix.Hosting.Types (ServerTier (..), defaultServerTier, parseServerTier)
 import Garnix.Log
 import Garnix.Monad
 import Garnix.NixConfig (addNixConfigEnvironment)
@@ -255,7 +255,7 @@ instance HasCodec ServerSection where
       .= _serverSectionDeploySection
 
 data DeploySection
-  = OnPullRequest
+  = OnPullRequest {tier :: ServerTier}
   | OnBranch
       { branch :: Branch,
         tier :: ServerTier,
@@ -277,11 +277,13 @@ instance HasCodec DeploySection where
     object "deployment"
       $ discriminatedUnionCodec "type" serialize deserialize
     where
+      machineCodec =
+        optionalFieldWithDefault "machine" defaultServerTier "What machine size to deploy on"
       branchCodec =
         (,,)
           <$> requiredField "branch" "What git branch to deploy from"
           .= fst3
-          <*> optionalFieldWithDefault "machine" (ServerTier "i1x2") "What machine size to deploy on"
+          <*> machineCodec
           .= snd3
           <*> optionalFieldWithDefault "isPrimary" False "If this deploy should also be reachable at the repo's short hostname"
           .= thd3
@@ -291,12 +293,13 @@ instance HasCodec DeploySection where
           ( "on-branch",
             mapToEncoder (branch', serverTier, isPrimary') branchCodec
           )
-        OnPullRequest -> ("on-pull-request", mapToEncoder () $ pureCodec ())
+        OnPullRequest serverTier ->
+          ("on-pull-request", mapToEncoder serverTier machineCodec)
       deserialize :: HashMap Discriminator (Text, ObjectCodec Void DeploySection)
       deserialize =
         HashMap.fromList
           [ ("on-branch", ("", mapToDecoder (uncurry3 OnBranch) branchCodec)),
-            ("on-pull-request", ("", mapToDecoder (const OnPullRequest) $ pureCodec ()))
+            ("on-pull-request", ("", mapToDecoder OnPullRequest machineCodec))
           ]
 
 instance HasCodec ServerTier where

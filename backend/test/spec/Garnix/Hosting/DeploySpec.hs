@@ -210,6 +210,10 @@ spec = do
       let plan = assembleDeployPlan prDeploy [declOnPullRequest "web"] [] [built "web"]
       packagesToSpinUp plan `shouldBe` ["web"]
 
+    it "gives a pull-request server the machine size its entry asked for" $ do
+      let plan = assembleDeployPlan prDeploy [declOnPullRequestTier "web" "i2x4"] [] [built "web"]
+      map _serverToSpinUpTier (_deployPlanToSpinUp plan) `shouldBe` [ServerTier "i2x4"]
+
     it "never treats a pull-request deploy as primary" $ do
       -- A PR deploy answering on <repo>.<owner> would take the production
       -- hostname away from the branch deploy. The yaml cannot ask for it: a
@@ -340,9 +344,9 @@ spec = do
       matchesDeployment mainDeploy (Yaml.OnBranch (Branch "staging") (ServerTier "i2x4") True)
         `shouldBe` Nothing
 
-    it "gives a pull-request deploy the default size and no primacy" $ do
-      matchesDeployment prDeploy Yaml.OnPullRequest
-        `shouldBe` Just (ServerTier "i1x2", False)
+    it "gives a pull-request deploy the size it asked for, and no primacy" $ do
+      matchesDeployment prDeploy (Yaml.OnPullRequest (ServerTier "i2x4"))
+        `shouldBe` Just (ServerTier "i2x4", False)
 
   describe "checkTiersWithinCap" $ do
     it "accepts anything when the instance sets no cap" $ do
@@ -364,9 +368,13 @@ spec = do
       capError (Just "i4x8") mainDeploy [declOnBranchTier "web" "staging" "i8x16"]
         `shouldReturn` Nothing
 
-    it "lets a pull request deploy through: its size is the default" $ do
+    it "lets a pull request deploy through when it stays under the cap" $ do
       capError (Just "i4x8") prDeploy [declOnPullRequest "web"]
         `shouldReturn` Nothing
+
+    it "refuses a pull request deploy asking for more than the cap" $ do
+      capError (Just "i4x8") prDeploy [declOnPullRequestTier "web" "i8x16"]
+        `shouldReturn` Just (ServerTierExceedsInstanceCap (PackageName "web") "i8x16" "i4x8")
 
     it "accepts a tier that meets the cap exactly" $ do
       capError (Just "i4x8") mainDeploy [declOnBranchTier "web" "main" "i4x8"]
@@ -507,10 +515,14 @@ declOnBranch package' branch' =
 
 -- | A @servers:@ entry deploying one configuration per open pull request.
 declOnPullRequest :: Text -> Yaml.ServerSection
-declOnPullRequest package' =
+declOnPullRequest package' = declOnPullRequestTier package' "i1x2"
+
+-- | The same, asking for a machine size of its own.
+declOnPullRequestTier :: Text -> Text -> Yaml.ServerSection
+declOnPullRequestTier package' tier =
   Yaml.ServerSection
     { Yaml._serverSectionConfiguration = PackageName package',
-      Yaml._serverSectionDeploySection = Yaml.OnPullRequest
+      Yaml._serverSectionDeploySection = Yaml.OnPullRequest (ServerTier tier)
     }
 
 -- | A finished build of one configuration, declaring no extras of its own.
