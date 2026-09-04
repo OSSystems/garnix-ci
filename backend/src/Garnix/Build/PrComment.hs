@@ -1,11 +1,15 @@
--- | Posting a comment on the pull request when a commit's garnix checks fail.
+-- | Posting a comment on the pull request when a commit's garnix checks fail,
+-- and when its servers are deployed or fail to deploy.
 --
 -- Check runs from a third-party app create no notification thread in the Github
 -- inbox, so a failure is invisible unless the user goes looking. Commenting is
--- the only way an app can notify.
+-- the only way an app can notify -- and nothing at all tells a user the address
+-- their deploy landed on.
 module Garnix.Build.PrComment
   ( CommentPolicy (..),
     commentOnFailure,
+    commentDeployedUrls,
+    commentDeployFailed,
   )
 where
 
@@ -13,6 +17,7 @@ import Control.Lens
 import Data.Text qualified as T
 import Garnix.Build.Reporting (reportNameForBuild)
 import Garnix.DB qualified as DB
+import Garnix.DB.Hosting qualified as DBHosting
 import Garnix.Monad
 import Garnix.Prelude
 import Garnix.Types as Types
@@ -96,3 +101,82 @@ runLink fromRelativeUrl run =
 
 bullet :: Text -> Text -> Text
 bullet label url = "- [" <> label <> "](" <> url <> ")"
+
+-- * Deploy comments
+
+-- | Tell the pull request where its servers can be reached.
+--
+-- Once per pull request: the address does not change as the branch moves, so
+-- repeating it on every push would be noise.
+--
+-- Not gated on a @garnix.yaml@ flag, unlike 'commentOnFailure' -- declaring an
+-- @on-pull-request@ server is itself the opt-in. A repo that has not granted
+-- @pull_requests: write@ produces a 403 that is swallowed here.
+commentDeployedUrls ::
+  CommitInfo ->
+  GhPullRequestId ->
+  -- | One (configuration, public hostname) per deployed server.
+  [(Text, Text)] ->
+  M ()
+commentDeployedUrls commitInfo prId deployed = ignoringAllErrors $ case deployed of
+  [] -> pure ()
+  _ -> do
+    claimed <-
+      DBHosting.claimDeployUrlComment
+        (commitInfo ^. repoInfo . ghRepoOwner)
+        (commitInfo ^. repoInfo . ghRepoName)
+        prId
+    if not claimed
+      then log Informational "commentDeployedUrls: already commented on this pull request"
+      else do
+        log Informational $ "commentDeployedUrls: commenting on " <> show prId
+        commentOnPullRequest (commitInfo ^. repoInfo) prId (deployedBody deployed)
+
+-- | Tell the pull request that its deploy did not go through.
+--
+-- Claimed per commit, not per pull request: a deploy that used to work and
+-- broke on a later push is exactly the case worth reporting.
+commentDeployFailed :: CommitInfo -> GhPullRequestId -> Text -> M ()
+commentDeployFailed commitInfo prId reason = ignoringAllErrors $ do
+  claimed <-
+    DBHosting.claimDeployFailureComment
+      (commitInfo ^. repoInfo . ghRepoOwner)
+      (commitInfo ^. repoInfo . ghRepoName)
+      prId
+      (commitInfo ^. commit)
+  if not claimed
+    then log Informational "commentDeployFailed: already commented on this commit"
+    else do
+      log Informational $ "commentDeployFailed: commenting on " <> show prId
+      body <- failedBody commitInfo reason
+      commentOnPullRequest (commitInfo ^. repoInfo) prId body
+
+deployedBody :: [(Text, Text)] -> Text
+deployedBody deployed =
+  T.unlines
+    $ [ "## :rocket: garnix deployed this pull request",
+        ""
+      ]
+    <> [bullet configuration ("https://" <> host) | (configuration, host) <- deployed]
+    <> [ "",
+         "These servers are torn down once the pull request stops being reached."
+       ]
+
+failedBody :: CommitInfo -> Text -> M Text
+failedBody commitInfo reason = do
+  fromRelativeUrl <- relativeUrlConverter
+  let commitUrl = fromRelativeUrl $ "/commit/" <> getCommitHash (commitInfo ^. commit)
+  pure
+    $ T.unlines
+      [ "## :x: garnix could not deploy this pull request",
+        "",
+        "The deployment for ["
+          <> T.take 7 (getCommitHash (commitInfo ^. commit))
+          <> "]("
+          <> commitUrl
+          <> ") failed:",
+        "",
+        "```",
+        reason,
+        "```"
+      ]
