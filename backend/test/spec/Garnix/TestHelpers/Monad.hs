@@ -321,7 +321,7 @@ withTestEnvironment tempDir action = do
                   hostingDomain = "hosting.garnix.test",
                   statsReportUrl = Just "https://garnix.io/api/hosts/stats",
                   deployMutex,
-                  hostingBudget = HostingBudget Nothing Nothing Nothing,
+                  hostingBudget = HostingBudget Nothing Nothing Nothing Nothing,
                   hostingSshKeys = [],
                   guestSubnetPrefix = "10.111.0."
                 }

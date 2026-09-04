@@ -6,6 +6,8 @@ module Garnix.Hosting.ServerPool
     warmPool,
     committedResources,
     fitsBudget,
+    leavesReserveFree,
+    reserveFor,
     HostingBudget (..),
     sshArgsFor,
     sshArgsForAddress,
@@ -33,12 +35,32 @@ committedResources = do
 
 -- | Whether one more instance of @tier@ fits within the budget.
 fitsBudget :: HostingBudget -> (Int, Int) -> ServerTier -> Bool
-fitsBudget budget (usedVcpus, usedMiB) tier =
-  let (vcpus, miB) = tierResources tier
-      within Nothing _ = True
-      within (Just cap) wanted = wanted <= cap
-   in within (_hostingBudgetVcpus budget) (usedVcpus + vcpus)
-        && within (_hostingBudgetMemoryMiB budget) (usedMiB + miB)
+fitsBudget budget used tier = leavesReserveFree budget used (tierResources tier) (0, 0)
+
+-- | Whether committing @extra@ on top of @used@ stays under the caps while
+-- still leaving @reserve@ free.
+leavesReserveFree ::
+  HostingBudget ->
+  -- | Already committed.
+  (Int, Int) ->
+  -- | About to be committed.
+  (Int, Int) ->
+  -- | Has to stay free afterwards.
+  (Int, Int) ->
+  Bool
+leavesReserveFree budget (usedVcpus, usedMiB) (extraVcpus, extraMiB) (freeVcpus, freeMiB) =
+  within (_hostingBudgetVcpus budget) (usedVcpus + extraVcpus + freeVcpus)
+    && within (_hostingBudgetMemoryMiB budget) (usedMiB + extraMiB + freeMiB)
+  where
+    within Nothing _ = True
+    within (Just cap) wanted = wanted <= cap
+
+-- | What this acquisition has to leave behind. Only pull requests owe the
+-- reserve; a branch deploy is what it is being kept for.
+reserveFor :: HostingBudget -> Maybe GhPullRequestId -> (Int, Int)
+reserveFor budget = \case
+  Nothing -> (0, 0)
+  Just _ -> branchReserveResources budget
 
 -- | Create one warm instance of @tier@ and leave it in the pool.
 warmPool :: ServerTier -> M PreprovisionedServerId
@@ -74,16 +96,32 @@ acquireServer ::
 acquireServer budget tier buildId pullRequest isPrimary = do
   provider <- provisionerProvider
   let claim = DB.claimPoolServer provider tier buildId pullRequest isPrimary
+      reserve = reserveFor budget pullRequest
+      refuse why =
+        throw
+          $ OtherError
+          $ "no capacity for a "
+          <> getServerTier tier
+          <> " server: "
+          <> why
+  -- Checked before the claim, not only on the create path: a pooled guest is
+  -- already counted in 'committedResources', so claiming one never moves the
+  -- totals -- but it can still hand a pull request the last warm guest the
+  -- reserve was keeping for branch deploys. Hence no extra resources here;
+  -- the create path below adds the tier's own.
+  unless (reserve == (0, 0)) $ do
+    used <- committedResources
+    unless (leavesReserveFree budget used (0, 0) reserve)
+      $ refuse "the hosting budget is committed down to the branch reserve"
   claim >>= \case
     Just serverId -> pure serverId
     Nothing -> do
       used <- committedResources
-      unless (fitsBudget budget used tier)
-        $ throw
-        $ OtherError
-        $ "no capacity for a "
-        <> getServerTier tier
-        <> " server: the hosting budget is fully committed"
+      unless (leavesReserveFree budget used (tierResources tier) reserve)
+        $ refuse
+        $ if reserve == (0, 0)
+          then "the hosting budget is fully committed"
+          else "the hosting budget is committed down to the branch reserve"
       void $ warmPool tier
       claim >>= \case
         Just serverId -> pure serverId

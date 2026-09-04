@@ -7,15 +7,19 @@ import Garnix.Monad (M)
 import Garnix.Prelude
 import Garnix.TestHelpers (testBuild, truncateDBM)
 import Garnix.TestHelpers.Monad (beforeM_, inM, shouldBeM, shouldReturnM, shouldThrowM)
-import Garnix.Types (Build (..), BuildId, Error (..))
+import Garnix.Types (Build (..), BuildId, Error (..), GhPullRequestId (..))
 import Test.Hspec
 
 small, large :: ServerTier
 small = ServerTier "small"
 large = ServerTier "large"
 
+-- | A pull request deploy, as 'acquireServer' sees one.
+aPullRequest :: Maybe GhPullRequestId
+aPullRequest = Just (GhPullRequestId 7)
+
 unbounded :: HostingBudget
-unbounded = HostingBudget Nothing Nothing Nothing
+unbounded = HostingBudget Nothing Nothing Nothing Nothing
 
 aBuild :: M BuildId
 aBuild = _buildId <$> testBuild identity
@@ -42,16 +46,16 @@ spec = do
       fitsBudget unbounded (1000, 1000000) large `shouldBe` True
 
     it "counts the instance being asked for, not just what is already used" $ do
-      let budget = HostingBudget (Just 4) Nothing Nothing
+      let budget = HostingBudget (Just 4) Nothing Nothing Nothing
       fitsBudget budget (3, 0) small `shouldBe` True
       fitsBudget budget (4, 0) small `shouldBe` False
 
     it "refuses when either dimension alone is exceeded" $ do
-      fitsBudget (HostingBudget (Just 1) Nothing Nothing) (0, 0) large `shouldBe` False
-      fitsBudget (HostingBudget Nothing (Just 2048) Nothing) (0, 0) large `shouldBe` False
+      fitsBudget (HostingBudget (Just 1) Nothing Nothing Nothing) (0, 0) large `shouldBe` False
+      fitsBudget (HostingBudget Nothing (Just 2048) Nothing Nothing) (0, 0) large `shouldBe` False
 
     it "lets a cap be met exactly" $ do
-      fitsBudget (HostingBudget (Just 4) (Just 8192) Nothing) (0, 0) large `shouldBe` True
+      fitsBudget (HostingBudget (Just 4) (Just 8192) Nothing Nothing) (0, 0) large `shouldBe` True
 
   describe "tierWithinCap" $ do
     it "lets anything through when no cap is set" $ do
@@ -64,6 +68,24 @@ spec = do
     it "lets the cap itself, and anything under it, through" $ do
       tierWithinCap (Just large) large `shouldBe` True
       tierWithinCap (Just large) small `shouldBe` True
+
+  describe "reserveFor" $ do
+    it "is owed by pull request deploys only" $ do
+      let budget = HostingBudget (Just 4) (Just 8192) Nothing (Just small)
+      reserveFor budget aPullRequest `shouldBe` tierResources small
+      reserveFor budget Nothing `shouldBe` (0, 0)
+
+    it "is nothing when no reserve is configured" $ do
+      reserveFor unbounded aPullRequest `shouldBe` (0, 0)
+
+  describe "leavesReserveFree" $ do
+    it "refuses what would fit, when fitting would eat the reserve" $ do
+      let budget = HostingBudget (Just 4) Nothing Nothing Nothing
+      leavesReserveFree budget (2, 0) (1, 0) (0, 0) `shouldBe` True
+      leavesReserveFree budget (2, 0) (1, 0) (2, 0) `shouldBe` False
+
+    it "ignores the reserve on a dimension that is not capped" $ do
+      leavesReserveFree unbounded (1000, 0) (1000, 0) (1000, 0) `shouldBe` True
 
   describe "committedResources" $ inM $ beforeM_ truncateDBM $ do
     it "is nothing on an idle host" $ do
@@ -104,10 +126,49 @@ spec = do
     it "refuses rather than queueing when the budget is fully committed" $ do
       build <- aBuild
       void $ Hosting.createPoolServer MicroVM large
-      let budget = HostingBudget (Just 4) (Just 8192) Nothing
+      let budget = HostingBudget (Just 4) (Just 8192) Nothing Nothing
       acquireServer budget small build Nothing False
         `shouldThrowM` OtherError
           "no capacity for a small server: the hosting budget is fully committed"
+
+    it "keeps the branch reserve out of a pull request's reach" $ do
+      build <- aBuild
+      -- 4 of the 4 vCPUs are committed to a large guest, so nothing at all is
+      -- free -- let alone the small guest's worth held back for branches.
+      void $ Hosting.createPoolServer MicroVM large
+      let budget = HostingBudget (Just 4) (Just 8192) Nothing (Just small)
+      acquireServer budget small build aPullRequest False
+        `shouldThrowM` OtherError
+          "no capacity for a small server: the hosting budget is committed down to the branch reserve"
+
+    it "refuses a pull request the warm guest that the reserve is holding" $ do
+      build <- aBuild
+      -- The guest is already warm, so claiming it would not move the totals
+      -- and the plain budget check cannot see the problem. It is still the
+      -- last one, and the reserve says a branch deploy gets it.
+      void $ warm large
+      let budget = HostingBudget (Just 4) (Just 8192) Nothing (Just small)
+      acquireServer budget large build aPullRequest False
+        `shouldThrowM` OtherError
+          "no capacity for a large server: the hosting budget is committed down to the branch reserve"
+
+    it "still gives that warm guest to a branch deploy" $ do
+      build <- aBuild
+      void $ warm large
+      let budget = HostingBudget (Just 4) (Just 8192) Nothing (Just small)
+      serverId <- acquireServer budget large build Nothing False
+      live <- Hosting.getLiveServers
+      map _serverInfoId live `shouldBeM` [serverId]
+
+    it "lets a pull request take what is left above the reserve" $ do
+      build <- aBuild
+      -- 4 vCPUs, a small guest reserved for branches, and a small guest warm:
+      -- claiming it leaves 2 vCPUs free, which covers the reserve.
+      void $ warm small
+      let budget = HostingBudget (Just 4) (Just 8192) Nothing (Just small)
+      serverId <- acquireServer budget small build aPullRequest False
+      live <- Hosting.getLiveServers
+      map _serverInfoId live `shouldBeM` [serverId]
 
   describe "warmPool" $ inM $ beforeM_ truncateDBM $ do
     it "leaves no row holding budget when provisioning fails" $ do

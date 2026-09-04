@@ -11,6 +11,7 @@ module Garnix.Hosting.Types
     parseServerTier,
     tierWithinCap,
     HostingBudget (..),
+    branchReserveResources,
     ServerAddress (..),
     serverAddressText,
     ServerInfo (..),
@@ -202,9 +203,17 @@ data HostingBudget = HostingBudget
     -- | Largest tier a single @servers:@ entry may ask for. About one repo's
     -- declaration rather than the instance as a whole, so it is checked while
     -- planning, where the user can still be told which entry is at fault.
-    _hostingBudgetMaxTier :: Maybe ServerTier
+    _hostingBudgetMaxTier :: Maybe ServerTier,
+    -- | Resources pull request deploys have to leave unspoken-for, so a branch
+    -- deploy always has room to land.
+    _hostingBudgetBranchReserve :: Maybe ServerTier
   }
   deriving stock (Eq, Show, Generic)
+
+-- | The reserve as (vCPUs, MiB). Zero when none is configured.
+branchReserveResources :: HostingBudget -> (Int, Int)
+branchReserveResources =
+  maybe (0, 0) tierResources . _hostingBudgetBranchReserve
 
 -- * Addresses
 
