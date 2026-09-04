@@ -16,6 +16,7 @@ import Garnix.BuildLogs
 import Garnix.BuildLogs.Types (LogLine (LogLine), mkLogLine)
 import Garnix.DB qualified as DB
 import Garnix.Duration
+import Garnix.Hosting.Types (ServerExtras)
 import Garnix.Limits qualified as Limits
 import Garnix.Monad
 import Garnix.Monad.Concurrency
@@ -89,6 +90,67 @@ getPersistenceName flakeDir b = do
           Just "" -> Nothing
           other -> other
     else pure Nothing
+
+-- | Read @config.garnix.server.deploySpec@ off a built @nixosConfiguration@.
+--
+-- These are the extras of a server that @garnix.yaml@ already asked for: its
+-- ports, domains, and ssh access. Whether the configuration is deployed at all
+-- is not decided here. Anything that is not a successful @nixosConfiguration@
+-- build, or that does not import garnix's guest profile at all (so the option
+-- does not exist and @nix eval@ fails), yields 'Nothing' — not an error.
+discoverDeploySpec :: FlakeDir -> Build -> M (Maybe ServerExtras)
+discoverDeploySpec flakeDir build = do
+  let isNixos = build ^. packageType == TypeNixosConfiguration
+      succeeded = build ^. status == Just Success
+  if not (isNixos && succeeded)
+    then pure Nothing
+    else do
+      blob <- discoverDeploySpecJson flakeDir build
+      case blob of
+        Nothing -> pure Nothing
+        Just raw -> case decodeDeploySpec raw of
+          Left problem -> do
+            -- A spec we cannot read is a bug on our side or a guest profile
+            -- from a newer garnix. Either way, refusing to deploy is safer
+            -- than deploying a half-understood spec.
+            log Warning
+              $ "Could not decode garnix.server.deploySpec for "
+              <> show (build ^. package)
+              <> ": "
+              <> problem
+            pure Nothing
+          Right section -> pure (Just section)
+
+-- | The raw JSON of @config.garnix.server.deploySpec@, or 'Nothing' when the
+-- option does not exist on this configuration.
+discoverDeploySpecJson :: FlakeDir -> Build -> M (Maybe StrictByteString)
+discoverDeploySpecJson flakeDir build = do
+  workingDir <- view #workingDir
+  cacheDir <- getNixXdgCacheDir
+  nixConfig <- view #userNixConfig
+  flakeDir' <- safeGetAbsoluteFlakeDir flakeDir
+  (exit, StdoutRaw out) <-
+    (>>= run)
+      $ cmd "nix"
+      & addArgs
+        [ "eval",
+          cs flakeDir' <> "#nixosConfigurations." <> cs (build ^. package),
+          "--apply",
+          "c : c.config.garnix.server.deploySpec",
+          "--json" :: Text
+        ]
+      & addNixConfigEnvironment nixConfig
+      & setWorkingDir workingDir
+      & silenceStderr
+      & pure
+      & inNixSandbox [] (Just cacheDir)
+  pure $ case exit of
+    ExitFailure _ -> Nothing
+    ExitSuccess -> Just out
+
+-- | Split out from 'discoverDeploySpec' so it can be tested without nix.
+decodeDeploySpec :: StrictByteString -> Either Text ServerExtras
+decodeDeploySpec = first cs . Aeson.eitherDecodeStrict'
 
 buildPkg ::
   (HasCallStack) =>

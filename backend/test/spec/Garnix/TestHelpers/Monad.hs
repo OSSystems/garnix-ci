@@ -73,6 +73,8 @@ import Test.Hspec
 import Test.Hspec.Core.Spec qualified as Hspec
 import Test.Hspec.Golden (Golden)
 import Prelude qualified (Show (..))
+import Garnix.Monad.KeyedMutex (newKeyedMutex)
+import Garnix.Hosting.Types (HostingBudget (..))
 
 cleanDbConn :: Env -> IO ()
 cleanDbConn env =
@@ -259,6 +261,7 @@ withTestEnvironment tempDir action = do
         secretsDir <- fromMaybe "/run/secrets" <$> lookupEnv "GARNIX_SECRETS_DIR"
         lookupOptionalSecret "GITHUB_ACCESS_TOKEN" (secretsDir <> "/github_access_token")
           <&> maybe defaultNixConfig (\token -> githubAccessTokenNixConfig (GhToken token) <> defaultNixConfig)
+      deployMutex <- newKeyedMutex
       withDefaultLogger $ \defaultLogger -> do
         ghInterface <- Deprecated.testGithubInterface tempDir buildRef
         let env =
@@ -314,7 +317,12 @@ withTestEnvironment tempDir action = do
                   featureFlagConfig,
                   fodCheckPool,
                   provisioner = unconfiguredProvisioner,
-                  provisionerSocket = Nothing
+                  provisionerSocket = Nothing,
+                  hostingDomain = "hosting.garnix.test",
+                  statsReportUrl = Just "https://garnix.io/api/hosts/stats",
+                  deployMutex,
+                  hostingBudget = HostingBudget Nothing Nothing,
+                  hostingSshKeys = []
                 }
         action env
   where
