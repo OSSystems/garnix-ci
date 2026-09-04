@@ -58,6 +58,9 @@ import System.Environment (getEnv)
 import System.Systemd.Daemon (notifyReady)
 import Text.Read (readMaybe)
 import WithCli (HasArguments, withCli)
+import Garnix.Monad.KeyedMutex (newKeyedMutex)
+import Garnix.Hosting.Types (HostingBudget (..))
+import Garnix.Hosting.Budget (hostTotalMiB, hostVcpus, parseBudget, resolveBudget)
 
 run :: IO ()
 run = withCli runWith
@@ -397,6 +400,18 @@ withEnv testFeatures buildLogsDir buildLogsReportingPort action = do
   provisionerSocket <- lookupEnv "GARNIX_PROVISIONER_SOCKET"
   let provisioner =
         maybe unconfiguredProvisioner localProvisionerInterface provisionerSocket
+  hostingDomain <- cs . fromMaybe "" <$> lookupEnv "GARNIX_HOSTING_DOMAIN"
+  statsReportUrl <- fmap cs <$> lookupEnv "GARNIX_STATS_REPORT_URL"
+  deployMutex <- newKeyedMutex
+  hostingSshKeys <-
+    maybe [] (map cs . filter (not . T.null) . T.splitOn ":" . cs)
+      <$> lookupEnv "GARNIX_HOSTING_SSH_KEYS"
+  hostingBudget <- do
+    vcpuSpec <- (>>= parseBudget) . fmap cs <$> lookupEnv "GARNIX_HOSTING_VCPU_BUDGET"
+    memorySpec <- (>>= parseBudget) . fmap cs <$> lookupEnv "GARNIX_HOSTING_MEMORY_BUDGET"
+    HostingBudget
+      <$> (flip resolveBudget vcpuSpec <$> hostVcpus)
+      <*> (flip resolveBudget memorySpec . fromMaybe 0 <$> hostTotalMiB)
   withDefaultLogger $ \defaultLogger -> do
     let env =
           Env
@@ -451,7 +466,12 @@ withEnv testFeatures buildLogsDir buildLogsReportingPort action = do
               featureFlagConfig,
               fodCheckPool,
               provisioner,
-              provisionerSocket
+              provisionerSocket,
+              hostingDomain,
+              statsReportUrl,
+              deployMutex,
+              hostingBudget,
+              hostingSshKeys
             }
     action env
 

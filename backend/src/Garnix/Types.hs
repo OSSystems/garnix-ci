@@ -1039,6 +1039,14 @@ data Error
   | ActionSandboxTypeNotAllowed Text
   | ActionKeyDecryptionFailure
   | ActionEvaluationFailure Text
+  | -- | The provisioner refused, or could not satisfy, a request to create,
+    -- expose, or destroy a guest.
+    ProvisioningError {message :: Text}
+  | -- | @switch-to-configuration@ failed on a guest. Carries the guest's
+    -- address (rather than a @ServerInfo@, which lives in "Garnix.Hosting.Types"
+    -- and would close an import cycle) so the message can tell the user where
+    -- to ssh in and look.
+    ActivationError {serverAddress :: Text, stdErr :: Text}
   deriving stock (Eq, Show, Generic)
 
 instance Pretty Error where
@@ -1141,6 +1149,15 @@ instance Pretty Error where
     ActionSandboxTypeNotAllowed typ -> "You are not allowed to run actions with the '" <> pretty typ <> "'. If you want access, get in touch with us."
     ActionEvaluationFailure t -> "Evaluation for the action failed: " <> Pretty.line <> pretty t
     ActionKeyDecryptionFailure -> "Could not decrypt private key."
+    ProvisioningError {message} -> "Error provisioning server:" <+> pretty message
+    ActivationError {serverAddress, stdErr} ->
+      pretty
+        $ T.unlines
+          [ "Failed to activate server.",
+            "You may be able to debug this by sshing into " <> serverAddress <> ".",
+            "Stderr:",
+            stdErr
+          ]
 
 instance ToJSON Error where
   toJSON x =
@@ -1221,6 +1238,10 @@ toErrorDetails e = case err e of
     errorDetails 400 $ showPretty e
   SshTimeout {command} ->
     errorDetails 500 $ "Timeout: ssh command " <> command
+  ProvisioningError {} ->
+    errorDetails 500 "Error provisioning server. This could be a temporary error."
+  ActivationError {serverAddress, stdErr} ->
+    errorDetails 400 $ "Error activating server at " <> serverAddress <> ": " <> stdErr
   OtherError errMsg ->
     errorDetails 500 errMsg
   DevModeOnly -> fromStatusCode 404

@@ -44,3 +44,14 @@ spec = do
 
     it "treats an unrecognised tier as the smallest one" $ do
       tierResources (ServerTier "enormous") `shouldBe` tierResources (ServerTier "small")
+
+    it "understands the iNxM spelling a servers: entry actually carries" $ do
+      -- A `servers:` entry's `machine` defaults to "i1x2"; before this was
+      -- understood every non-default tier silently deployed at 1 vCPU / 2 GiB.
+      tierResources (ServerTier "i1x2") `shouldBe` (1, 2048)
+      tierResources (ServerTier "i2x4") `shouldBe` (2, 4096)
+      tierResources (ServerTier "i8x16") `shouldBe` (8, 16384)
+
+    it "rejects malformed iNxM rather than reading half of it" $ do
+      map (tierResources . ServerTier) ["i0x2", "i2x0", "ix2", "i2x", "i2x2b", "i-1x2"]
+        `shouldBe` replicate 6 (1, 2048)

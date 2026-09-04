@@ -7,6 +7,8 @@ module Garnix.Hosting.ServerPool
     committedResources,
     fitsBudget,
     HostingBudget (..),
+    sshArgsFor,
+    sshArgsForAddress,
   )
 where
 
@@ -16,13 +18,6 @@ import Garnix.Hosting.Types
 import Garnix.Monad
 import Garnix.Prelude
 import Garnix.Types (BuildId, Error (..), GhPullRequestId)
-
--- | Resolved absolute caps on what all guests together may hold.
-data HostingBudget = HostingBudget
-  { _hostingBudgetVcpus :: Maybe Int,
-    _hostingBudgetMemoryMiB :: Maybe Int
-  }
-  deriving stock (Eq, Show, Generic)
 
 -- | vCPU and MiB already spoken for: every live server plus every instance
 -- in the pool, warm or still being built.
@@ -111,3 +106,35 @@ releaseServer serverId = do
             Just instanceId -> deleteServer instanceId
       teardown `cleaningUpOnFailure` DB.endServer serverId
       DB.endServer serverId
+
+-- * Reaching a guest
+
+-- | The address and ssh options to reach a deployed guest with, using the
+-- hosting key the provisioner authorized on it.
+sshArgsFor :: ServerInfo -> M (Text, [Text])
+sshArgsFor server = case serverAddressText (_serverInfoAddress server) of
+  Nothing ->
+    throw
+      $ ProvisioningError
+      $ "server " <> showPretty (_serverInfoId server) <> " has no address to ssh to"
+  Just address -> sshArgsForAddress address
+
+sshArgsForAddress :: Text -> M (Text, [Text])
+sshArgsForAddress address = do
+  keyFiles <- view #hostingSshKeys
+  pure
+    ( address,
+      concatMap (\keyFile -> ["-i", cs keyFile]) keyFiles
+        <> [ "-o",
+             "BatchMode=yes",
+             -- Guests are created fresh with a new host key on every claim, and
+             -- are reached over a private bridge we control, so pinning host
+             -- keys would only produce spurious mismatches.
+             "-o",
+             "StrictHostKeyChecking=no",
+             "-o",
+             "UserKnownHostsFile=/dev/null",
+             "-o",
+             "ConnectTimeout=15"
+           ]
+    )
