@@ -3,7 +3,7 @@ module Garnix where
 import Amazonka qualified
 import Amazonka.Auth qualified as Amazonka
 import Amazonka.S3 qualified as Amazonka
-import Control.Concurrent (getNumCapabilities, newMVar)
+import Control.Concurrent (forkIO, getNumCapabilities, newMVar)
 import Control.Concurrent.STM (newTVarIO)
 import Control.Exception qualified
 import Control.Exception.Safe qualified as Safe
@@ -29,7 +29,12 @@ import Garnix.DB.FeatureFlags (withRecachedFeatureFlags)
 import Garnix.DB.FeatureFlags.Types (getFeatureFlagConfig)
 import Garnix.Duration
 import Garnix.GithubInterface
+import Garnix.Hosting.Budget (hostTotalMiB, hostVcpus, parseBudget, resolveBudget)
+import Garnix.Hosting.Deploy (cleanupUnreadyServers, stopUnusedServers)
+import Garnix.Hosting.Types (HostingBudget (..), ServerTier, parseServerTier)
+import Garnix.LocalProvisioner (localProvisionerInterface)
 import Garnix.Monad
+import Garnix.Monad.KeyedMutex (newKeyedMutex)
 import Garnix.Monad.Metrics (registerMetrics, serveMetrics)
 import Garnix.Monad.Pool qualified
 import Garnix.NixConfig (defaultNixConfig, githubAccessTokenNixConfig)
@@ -393,6 +398,27 @@ withEnv testFeatures buildLogsDir buildLogsReportingPort action = do
   featureFlagConfig <- getFeatureFlagConfig
   fodCheckPool <- Garnix.Monad.Pool.newPool 20 metrics #fodCheckQueueWaitTime #fodCheckQueueLen
   compressionBudget <- newCompressionBudget
+  provisionerSocket <- lookupEnv "GARNIX_PROVISIONER_SOCKET"
+  let provisioner =
+        maybe unconfiguredProvisioner localProvisionerInterface provisionerSocket
+  hostingDomain <- cs . fromMaybe "" <$> lookupEnv "GARNIX_HOSTING_DOMAIN"
+  statsReportUrl <- fmap cs <$> lookupEnv "GARNIX_STATS_REPORT_URL"
+  deployMutex <- newKeyedMutex
+  hostingSshKeys <-
+    maybe [] (map cs . filter (not . T.null) . T.splitOn ":" . cs)
+      <$> lookupEnv "GARNIX_HOSTING_SSH_KEYS"
+  guestSubnetPrefix <-
+    cs . fromMaybe "10.111.0." <$> lookupEnv "GARNIX_GUEST_SUBNET_PREFIX"
+  hostingBudget <- do
+    vcpuSpec <- (>>= parseBudget . cs) <$> lookupEnv "GARNIX_HOSTING_VCPU_BUDGET"
+    memorySpec <- (>>= parseBudget . cs) <$> lookupEnv "GARNIX_HOSTING_MEMORY_BUDGET"
+    maxTier <- tierFromEnv "GARNIX_HOSTING_MAX_TIER"
+    branchReserve <- tierFromEnv "GARNIX_HOSTING_BRANCH_RESERVE"
+    HostingBudget
+      <$> (flip resolveBudget vcpuSpec <$> hostVcpus)
+      <*> (flip resolveBudget memorySpec . fromMaybe 0 <$> hostTotalMiB)
+      <*> pure maxTier
+      <*> pure branchReserve
   withDefaultLogger $ \defaultLogger -> do
     let env =
           Env
@@ -445,7 +471,15 @@ withEnv testFeatures buildLogsDir buildLogsReportingPort action = do
               hostname = hostname,
               githubLogDebounceDuration = fromSeconds @Int 15,
               featureFlagConfig,
-              fodCheckPool
+              fodCheckPool,
+              provisioner,
+              provisionerSocket,
+              hostingDomain,
+              statsReportUrl,
+              deployMutex,
+              hostingBudget,
+              hostingSshKeys,
+              guestSubnetPrefix
             }
     action env
 
@@ -471,6 +505,29 @@ runWith opts = do
       runM env runCacheMaintenance >>= \case
         Right () -> pure ()
         Left err -> hPutStrLn stderr $ "could not start s3 cache maintenance: " <> show err
+
+      -- A guest claimed out of the pool by a process that then died is a
+      -- transaction remnant: we cannot know how far its deploy got, so it is
+      -- destroyed rather than adopted. A later rollout claims a clean one.
+      runM env cleanupUnreadyServers >>= \case
+        Right cleaned
+          | cleaned > 0 ->
+              hPutStrLn stderr
+                $ "Removed "
+                <> show cleaned
+                <> " unready claimed guest(s) left behind by a previous process"
+        Right _ -> pure ()
+        Left problem ->
+          hPutStrLn stderr $ "Failed to clean up unready claimed guests: " <> show problem
+
+      -- PR deploys are reaped on idleness rather than by a deploy plan: an
+      -- open PR nobody pushes to again would otherwise keep its guest forever.
+      void
+        $ forkIO
+        $ void
+        $ runM env
+        $ forever (reapUnusedServers *> threadDelay (fromMinutes @Int 5))
+
       let settings =
             Warp.defaultSettings
               & Warp.setPort (port opts)
@@ -480,6 +537,12 @@ runWith opts = do
                     void notifyReady
                 )
       Warp.runSettings settings $ Garnix.toApplication env
+  where
+    -- One bad sweep must not take the loop down with it.
+    reapUnusedServers :: M ()
+    reapUnusedServers =
+      stopUnusedServers
+        `catchError` \problem -> log Error $ "stopUnusedServers: " <> show problem
 
 type ContextList =
   '[ JWTSettings,
@@ -534,3 +597,14 @@ mToHandler env requestTraceId action = do
         `Safe.catch` ( \(e :: SomeException) ->
                          throw $ UncaughtRuntimeException (show e)
                      )
+
+-- | Read a tier-valued hosting limit from the environment. A typo is fatal: a
+-- cap that quietly parses as "no cap" is worse than none, because the admin
+-- believes it is in force.
+tierFromEnv :: String -> IO (Maybe ServerTier)
+tierFromEnv name =
+  lookupEnv name >>= \case
+    Nothing -> pure Nothing
+    Just raw -> case parseServerTier (cs raw) of
+      Right tier -> pure (Just tier)
+      Left problem -> fail $ name <> ": " <> problem

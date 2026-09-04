@@ -141,6 +141,69 @@
                         }
                     },
                     "type": "object"
+                },
+                "servers": {
+                    "$comment": "Specifies what servers to deploy.",
+                    "items": {
+                        "$comment": "servers",
+                        "properties": {
+                            "configuration": {
+                                "$comment": "What attribute to deploy (e.g.: 'myServer' for 'nixosConfigurations.myServer')",
+                                "type": "string"
+                            },
+                            "deployment": {
+                                "$comment": "When to deploy a new server, or redeploy an existing one\ndeployment",
+                                "oneOf": [
+                                    {
+                                        "properties": {
+                                            "machine": {
+                                                "$comment": "What machine size to deploy on",
+                                                "type": "string"
+                                            },
+                                            "type": {
+                                                "const": "on-pull-request"
+                                            }
+                                        },
+                                        "required": [
+                                            "type"
+                                        ],
+                                        "type": "object"
+                                    },
+                                    {
+                                        "properties": {
+                                            "branch": {
+                                                "$comment": "What git branch to deploy from",
+                                                "type": "string"
+                                            },
+                                            "isPrimary": {
+                                                "$comment": "If this deploy should also be reachable at the repo's short hostname",
+                                                "type": "boolean"
+                                            },
+                                            "machine": {
+                                                "$comment": "What machine size to deploy on",
+                                                "type": "string"
+                                            },
+                                            "type": {
+                                                "const": "on-branch"
+                                            }
+                                        },
+                                        "required": [
+                                            "type",
+                                            "branch"
+                                        ],
+                                        "type": "object"
+                                    }
+                                ],
+                                "type": "object"
+                            }
+                        },
+                        "required": [
+                            "deployment",
+                            "configuration"
+                        ],
+                        "type": "object"
+                    },
+                    "type": "array"
                 }
             },
             "type": "object"

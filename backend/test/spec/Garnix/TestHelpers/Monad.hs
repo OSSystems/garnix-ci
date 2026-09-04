@@ -53,7 +53,9 @@ import Garnix (envMocks, lookupOptionalSecret)
 import Garnix.Async qualified
 import Garnix.DB.FeatureFlags.Types (getFeatureFlagConfig)
 import Garnix.Duration
+import Garnix.Hosting.Types (HostingBudget (..))
 import Garnix.Monad
+import Garnix.Monad.KeyedMutex (newKeyedMutex)
 import Garnix.Monad.Metrics (registerMetrics)
 import Garnix.Monad.Pool qualified
 import Garnix.NixConfig (defaultNixConfig, githubAccessTokenNixConfig)
@@ -259,6 +261,7 @@ withTestEnvironment tempDir action = do
         secretsDir <- fromMaybe "/run/secrets" <$> lookupEnv "GARNIX_SECRETS_DIR"
         lookupOptionalSecret "GITHUB_ACCESS_TOKEN" (secretsDir <> "/github_access_token")
           <&> maybe defaultNixConfig (\token -> githubAccessTokenNixConfig (GhToken token) <> defaultNixConfig)
+      deployMutex <- newKeyedMutex
       withDefaultLogger $ \defaultLogger -> do
         ghInterface <- Deprecated.testGithubInterface tempDir buildRef
         let env =
@@ -312,7 +315,15 @@ withTestEnvironment tempDir action = do
                   hostname = "garnix-server-test",
                   githubLogDebounceDuration = fromSeconds 0,
                   featureFlagConfig,
-                  fodCheckPool
+                  fodCheckPool,
+                  provisioner = unconfiguredProvisioner,
+                  provisionerSocket = Nothing,
+                  hostingDomain = "hosting.garnix.test",
+                  statsReportUrl = Just "https://garnix.io/api/hosts/stats",
+                  deployMutex,
+                  hostingBudget = HostingBudget Nothing Nothing Nothing Nothing,
+                  hostingSshKeys = [],
+                  guestSubnetPrefix = "10.111.0."
                 }
         action env
   where

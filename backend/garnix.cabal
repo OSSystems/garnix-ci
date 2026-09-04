@@ -43,6 +43,7 @@ library
       Garnix.API.Dev
       Garnix.API.GhWebhooks
       Garnix.API.Health
+      Garnix.API.Hosts
       Garnix.API.Keys
       Garnix.API.Modules
       Garnix.API.Runs
@@ -67,6 +68,7 @@ library
       Garnix.DB
       Garnix.DB.FeatureFlags
       Garnix.DB.FeatureFlags.Types
+      Garnix.DB.Hosting
       Garnix.DB.ModuleValues
       Garnix.Duration
       Garnix.ExpiringCache
@@ -75,7 +77,13 @@ library
       Garnix.GithubInterface
       Garnix.GithubInterface.Types
       Garnix.GithubUserToken
+      Garnix.Hosting.Budget
+      Garnix.Hosting.Deploy
+      Garnix.Hosting.Helpers
+      Garnix.Hosting.ServerPool
+      Garnix.Hosting.Types
       Garnix.Incremental
+      Garnix.LocalProvisioner
       Garnix.Limits
       Garnix.Log
       Garnix.Modules
@@ -89,6 +97,7 @@ library
       Garnix.Monad.Metrics
       Garnix.Monad.NoThrow
       Garnix.Monad.Polling
+      Garnix.Monad.KeyedMutex
       Garnix.Monad.Pool
       Garnix.Monad.SubProcess
       Garnix.Monad.SubProcess.Deprecated
@@ -208,6 +217,7 @@ library
     , lifted-base
     , monad-control
     , mtl
+    , network
     , network-uri
     , nix-derivation
     , oauth2-simple
@@ -353,6 +363,7 @@ executable convert-hashids
     , lifted-base
     , monad-control
     , mtl
+    , network
     , network-uri
     , nix-derivation
     , oauth2-simple
@@ -499,6 +510,7 @@ executable generate-yaml-config-docs
     , lifted-base
     , monad-control
     , mtl
+    , network
     , network-uri
     , nix-derivation
     , oauth2-simple
@@ -644,6 +656,7 @@ executable server
     , lifted-base
     , monad-control
     , mtl
+    , network
     , network-uri
     , nix-derivation
     , oauth2-simple
@@ -711,6 +724,7 @@ test-suite spec
       Garnix.API.DevSpec
       Garnix.API.GhWebhooksSpec
       Garnix.API.HealthSpec
+      Garnix.API.HostsSpec
       Garnix.API.KeysSpec
       Garnix.API.ModulesSpec
       Garnix.API.RunsSpec
@@ -722,7 +736,12 @@ test-suite spec
       Garnix.Build.PrCommentSpec
       Garnix.BuildSpec
       Garnix.DB.FeatureFlagsSpec
+      Garnix.DB.HostingSpec
       Garnix.DBSpec
+      Garnix.Hosting.BudgetSpec
+      Garnix.Hosting.DeploySpec
+      Garnix.Hosting.ServerPoolSpec
+      Garnix.Hosting.TypesSpec
       Garnix.ExpiringCacheSpec
       Garnix.FlakeInputAuthorizationSpec
       Garnix.GetAttributesSpec
@@ -783,6 +802,7 @@ test-suite spec
       Garnix.API.Dev
       Garnix.API.GhWebhooks
       Garnix.API.Health
+      Garnix.API.Hosts
       Garnix.API.Keys
       Garnix.API.Modules
       Garnix.API.Runs
@@ -807,6 +827,7 @@ test-suite spec
       Garnix.DB
       Garnix.DB.FeatureFlags
       Garnix.DB.FeatureFlags.Types
+      Garnix.DB.Hosting
       Garnix.DB.ModuleValues
       Garnix.Duration
       Garnix.ExpiringCache
@@ -815,7 +836,13 @@ test-suite spec
       Garnix.GithubInterface
       Garnix.GithubInterface.Types
       Garnix.GithubUserToken
+      Garnix.Hosting.Budget
+      Garnix.Hosting.Deploy
+      Garnix.Hosting.Helpers
+      Garnix.Hosting.ServerPool
+      Garnix.Hosting.Types
       Garnix.Incremental
+      Garnix.LocalProvisioner
       Garnix.Limits
       Garnix.Log
       Garnix.Modules
@@ -829,6 +856,7 @@ test-suite spec
       Garnix.Monad.Metrics
       Garnix.Monad.NoThrow
       Garnix.Monad.Polling
+      Garnix.Monad.KeyedMutex
       Garnix.Monad.Pool
       Garnix.Monad.SubProcess
       Garnix.Monad.SubProcess.Deprecated
@@ -958,6 +986,7 @@ test-suite spec
     , mockery
     , monad-control
     , mtl
+    , network
     , neat-interpolation
     , network-uri
     , nix-derivation

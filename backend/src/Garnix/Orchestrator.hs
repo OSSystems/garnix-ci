@@ -10,13 +10,17 @@ where
 
 import Garnix.Async (Promise)
 import Garnix.Build (buildFlake, rerunBuild)
+import Garnix.Build.Checkout qualified as Build.Checkout
+import Garnix.Build.Helpers (withInternalCacheToken)
 import Garnix.DB qualified as DB
+import Garnix.Hosting.Deploy (rolloutNewServerVersion)
+import Garnix.Hosting.Types (DeploymentType (..))
 import Garnix.Monad
 import Garnix.Monad.Async (emptyPromise, resolve, spawn)
 import Garnix.Prelude
 import Garnix.Reporters.GithubReporter (mkGithubReporter)
 import Garnix.Reporters.OpenSearchReporter (openSearchReporter)
-import Garnix.Types hiding (ghRunId)
+import Garnix.Types as Types hiding (ghRunId)
 import GitHub.App.Auth qualified as GH
 
 data RerunEvent = RerunEvent
@@ -29,12 +33,24 @@ data RerunEvent = RerunEvent
   deriving stock (Generic)
 
 handlePullRequest :: (HasCallStack) => Reporter -> CommitInfo -> GhPullRequestId -> M (Promise ())
-handlePullRequest reporter commitInfo _prId = do
+handlePullRequest reporter commitInfo prId = do
   assertIsAllowedToBuild (commitInfo ^. repoInfo . ghRepoOwner) (commitInfo ^. repoInfo . ghRepoName)
 
   withSpan commitInfo $ spawn $ do
-    when (isJust $ commitInfo ^. prFromFork) $ do
-      buildFlake reporter commitInfo >>= resolve
+    -- A PR from a fork has no branch on the base repo, so nothing has built it
+    -- yet. A PR from a branch of this repo was already built by the push that
+    -- created it — but that push deployed under its BRANCH, so the PR still
+    -- needs its own rollout to get a pull-N deployment.
+    if isJust (commitInfo ^. prFromFork)
+      then buildFlake reporter commitInfo >>= resolve
+      else deployPrServers
+  where
+    deployPrServers =
+      Build.Checkout.withCheckout commitInfo
+        $ withSpan prId
+        $ withInternalCacheToken (commitInfo ^. Types.reqUser)
+        $ void
+        $ rolloutNewServerVersion reporter commitInfo (GhPrDeployment prId)
 
 handleCommit :: (HasCallStack) => Reporter -> Bool -> CommitInfo -> M (Promise ())
 handleCommit reporter allowDuplicateRun commitInfo = do

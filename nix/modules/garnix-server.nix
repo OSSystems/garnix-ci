@@ -189,6 +189,129 @@ in
       example = "alice";
     };
 
+    provisionerSocket = lib.mkOption {
+      type = lib.types.nullOr lib.types.str;
+      default = null;
+      example = "/run/garnix-provisioner/provisioner.sock";
+      description = ''
+        Unix socket of the garnix microVM provisioner daemon
+        (garnix.local-provisioner.socketPath from the
+        garnix-provisioner NixOS module).
+
+        Hosting is off while this is null: any hosting request fails
+        immediately saying no provisioner is configured, rather than failing
+        later with a confusing symptom. Set it to turn hosting on, and put
+        the server's user in the daemon's backendGroup so it can reach the
+        socket.
+      '';
+    };
+
+    hosting = {
+      domain = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        example = "apps.example.com";
+        description = ''
+          Base domain deployed servers answer under. A server built from
+          package `web` on branch `main` of `owner/repo` is reachable at
+          `web.main.repo.owner.<domain>`, so `*.<domain>` must resolve to the
+          host running the hosting gateway.
+
+          Required for hosting to be usable: without it, deployed servers have
+          no address to be reached at.
+        '';
+      };
+
+      statsReportUrl = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        example = "https://garnix.example.com/api/hosts/stats";
+        description = ''
+          Absolute URL guests POST their CPU and memory samples to, written
+          into each guest's environment at deploy time. When null, guests are
+          deployed with stats reporting off.
+        '';
+      };
+
+      guestSubnetPrefix = lib.mkOption {
+        type = lib.types.str;
+        default = "10.111.0.";
+        description = ''
+          Dotted prefix of the bridge subnet guests live on. A guest's stats
+          push is only accepted from an address under it, and only from the
+          specific guest the report claims to come from.
+
+          Must match `garnix.local-provisioner.hostAddress`.
+        '';
+      };
+
+      sshKeys = lib.mkOption {
+        type = lib.types.listOf lib.types.str;
+        default = [ ];
+        example = [ "/var/lib/garnix-provisioner/hosting" ];
+        description = ''
+          Private keys the deploy ssh uses to reach guests. These are the
+          private halves of `garnix.guest.sshPublicKey`; with the microVM
+          provisioner that is `garnix.local-provisioner.sshPrivateKeyPath`.
+        '';
+      };
+
+      vcpuBudget = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        example = "reserve:2";
+        description = ''
+          Cap on the vCPUs all guests together may hold, as `total:<n>` (an
+          absolute number of cores) or `reserve:<n>` (every core but this
+          many). When null, vCPUs are not capped.
+        '';
+      };
+
+      maxTier = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        example = "i4x8";
+        description = ''
+          Largest machine a repository's `garnix.yaml` may ask for, written the
+          same way as a `servers:` entry's `machine` field. Both dimensions are
+          compared, so `i1x16` is over an `i4x8` cap on memory even though it
+          is under it on vCPUs.
+
+          Checked while planning the deploy, so a repository asking for more is
+          told which `servers:` entry is at fault, rather than being told the
+          instance has no capacity. When null, a repository may ask for any
+          size `vcpuBudget` and `memoryBudget` can pay for.
+        '';
+      };
+
+      branchReserve = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        example = "i2x4";
+        description = ''
+          Resources pull request deploys have to leave unspoken-for, written as
+          a machine size. A pull request deploy is refused when taking it would
+          leave less than this free, so a branch deploy always has room to land
+          even while many pull requests are open.
+
+          Only meaningful together with `vcpuBudget` or `memoryBudget`: it is
+          a slice held back from those caps, not a cap of its own. When null,
+          pull requests may commit the budget down to nothing.
+        '';
+      };
+
+      memoryBudget = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        example = "reserve:4096";
+        description = ''
+          Cap on the memory all guests together may hold, in MiB, in the same
+          `total:<n>` / `reserve:<n>` form as `vcpuBudget`. When null, memory
+          is not capped.
+        '';
+      };
+    };
+
     sessionLifetimeSeconds = lib.mkOption {
       type = lib.types.nullOr lib.types.ints.positive;
       default = null;
@@ -603,6 +726,23 @@ in
           "GARNIX_DEFAULT_EVAL_MEMORY_GB=${toString cfg.evalMemory.defaultGigabytes}"
         ++ lib.optional (cfg.evalMemory.perRepository != { })
           "GARNIX_REPO_EVAL_MEMORY=${lib.concatStringsSep "," (lib.mapAttrsToList (slug: gigabytes: "${slug}=${toString gigabytes}") cfg.evalMemory.perRepository)}"
+        ++ lib.optional (cfg.provisionerSocket != null)
+          "GARNIX_PROVISIONER_SOCKET=${cfg.provisionerSocket}"
+        ++ lib.optional (cfg.hosting.domain != null)
+          "GARNIX_HOSTING_DOMAIN=${cfg.hosting.domain}"
+        ++ lib.optional (cfg.hosting.statsReportUrl != null)
+          "GARNIX_STATS_REPORT_URL=${cfg.hosting.statsReportUrl}"
+        ++ lib.optional (cfg.hosting.sshKeys != [ ])
+          "GARNIX_HOSTING_SSH_KEYS=${lib.concatStringsSep ":" cfg.hosting.sshKeys}"
+        ++ lib.optional (cfg.hosting.vcpuBudget != null)
+          "GARNIX_HOSTING_VCPU_BUDGET=${cfg.hosting.vcpuBudget}"
+        ++ lib.optional (cfg.hosting.memoryBudget != null)
+          "GARNIX_HOSTING_MEMORY_BUDGET=${cfg.hosting.memoryBudget}"
+        ++ lib.optional (cfg.hosting.maxTier != null)
+          "GARNIX_HOSTING_MAX_TIER=${cfg.hosting.maxTier}"
+        ++ lib.optional (cfg.hosting.branchReserve != null)
+          "GARNIX_HOSTING_BRANCH_RESERVE=${cfg.hosting.branchReserve}"
+        ++ [ "GARNIX_GUEST_SUBNET_PREFIX=${cfg.hosting.guestSubnetPrefix}" ]
         ++ lib.optionals (cfg.database.ssl.mode != "disable") [
           # postgresql-typed reads TPG_TLS via lookupEnv — presence enables
           # TLS regardless of value. Only emit when ssl is actually on.

@@ -10,6 +10,13 @@
 
   inputs.flake-utils.url = "github:numtide/flake-utils";
 
+  inputs.garnix-guest-lib = {
+    url = "github:OSSystems/garnix-guest-lib";
+    inputs = {
+      nixpkgs.follows = "nixpkgs";
+    };
+  };
+
   inputs.treetop = {
     url = "github:soenkehahn/treetop";
     inputs = {
@@ -117,7 +124,8 @@
           backend = import ./backend subDirInputs;
           frontend = import ./frontend subDirInputs;
           frontend-age-wasm = import ./frontend/age-wasm subDirInputs;
-          examples = import ./examples subDirInputs;
+          provisioner = import ./provisioner subDirInputs;
+          hosting-gateway = import ./hosting-gateway subDirInputs;
         in
         {
           apps = lib.mapAttrs
@@ -126,16 +134,22 @@
               program = lib.getExe drv;
               meta.description = drv.meta.description;
             })
-            (namespace "backend" backend.commands //
-            namespace "examples" examples.commands
-            );
+            (namespace "backend" backend.commands);
 
           checks =
             namespace "backend" backend.checks //
             namespace "frontend" frontend.checks //
-            namespace "frontend" (namespace "ageWasm" frontend-age-wasm.checks);
+            namespace "frontend" (namespace "ageWasm" frontend-age-wasm.checks) //
+            namespace "provisioner" provisioner.checks //
+            namespace "hostingGateway" hosting-gateway.checks //
+            # NixOS VM tests only build on Linux.
+            lib.optionalAttrs pkgs.stdenv.isLinux {
+              nixosTests_hostingDeploy = import ./nix/tests/hosting-deploy.nix subDirInputs;
+            };
 
           packages =
+            lib.mapAttrs' (name: value: { name = "hosting-gateway/${name}"; inherit value; })
+              hosting-gateway.packages //
             namespace "backend" backend.packages //
             namespace "frontend" frontend.packages //
             namespace "frontend" (namespace "ageWasm" frontend-age-wasm.packages);
@@ -151,7 +165,8 @@
               (pkgs.callPackage ./nix/packages/withSecrets.nix { })
             ]
             ++ backend.devShellInputs
-            ++ frontend.devShellInputs;
+            ++ frontend.devShellInputs
+            ++ hosting-gateway.devShellInputs;
           };
         }
       )
@@ -159,15 +174,19 @@
       nixosModules = {
         garnix = ./nix/modules/garnix-server.nix;
         default = ./nix/modules/garnix-server.nix;
+        garnix-provisioner = {
+          imports = [ ./nix/modules/microvm-provisioner.nix ];
+          garnix.local-provisioner.guestProfile =
+            nixpkgs.lib.mkDefault "${flakeInputs.garnix-guest-lib}/guest-profile.nix";
+        };
+        garnix-hosting-gateway = ./hosting-gateway/nixos-module.nix;
+        garnix-guest = flakeInputs.garnix-guest-lib.nixosModules.garnix-guest;
       };
       nixosConfigurations =
-        (import ./examples/example-multi-server-deployment.nix {
+        (import ./nix/website.nix {
           inherit self overlays flakeInputs;
         }).nixosConfigurations
         // (import ./examples/example-selfhost.nix {
-          inherit self overlays flakeInputs;
-        }).nixosConfigurations
-        // (import ./examples/example-selfhost-vm.nix {
           inherit self overlays flakeInputs;
         }).nixosConfigurations;
     };

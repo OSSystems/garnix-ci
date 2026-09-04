@@ -1023,6 +1023,9 @@ data Error
   | InvalidAccessToken
   | DevModeOnly
   | DeploymentWantsNixosConfigurationsThatDontExist [PackageName]
+  | -- | The configuration, the machine size its @servers:@ entry asked for,
+    -- and the largest this instance hands out.
+    ServerTierExceedsInstanceCap PackageName Text Text
   | NameIsNotValidSubdomain SubdomainKind Text
   | TransactionAlreadyStarted
   | BuildAlreadyStopped {buildId :: BuildId}
@@ -1039,6 +1042,14 @@ data Error
   | ActionSandboxTypeNotAllowed Text
   | ActionKeyDecryptionFailure
   | ActionEvaluationFailure Text
+  | -- | The provisioner refused, or could not satisfy, a request to create,
+    -- expose, or destroy a guest.
+    ProvisioningError {message :: Text}
+  | -- | @switch-to-configuration@ failed on a guest. Carries the guest's
+    -- address (rather than a @ServerInfo@, which lives in "Garnix.Hosting.Types"
+    -- and would close an import cycle) so the message can tell the user where
+    -- to ssh in and look.
+    ActivationError {serverAddress :: Text, stdErr :: Text}
   deriving stock (Eq, Show, Generic)
 
 instance Pretty Error where
@@ -1125,6 +1136,14 @@ instance Pretty Error where
     InvalidAccessToken -> "Invalid access token"
     DevModeOnly -> "dev mode only"
     DeploymentWantsNixosConfigurationsThatDontExist packages -> "Deployment wants package(s) that have not been built: " <> pretty packages
+    ServerTierExceedsInstanceCap package' wanted cap ->
+      "Deployment of"
+        <+> Pretty.squotes (pretty package')
+        <+> "asks for machine"
+        <+> Pretty.squotes (pretty wanted)
+        <> ", over this instance's cap of"
+        <+> Pretty.squotes (pretty cap)
+        <> "."
     NameIsNotValidSubdomain kind name -> pretty kind <+> "name" <+> Pretty.squotes (pretty name) <+> "is not a valid subdomain name."
     TransactionAlreadyStarted -> "Internal transaction error."
     BuildAlreadyStopped {buildId} -> "Build with id" <+> pretty buildId <+> "has already been stopped."
@@ -1141,6 +1160,15 @@ instance Pretty Error where
     ActionSandboxTypeNotAllowed typ -> "You are not allowed to run actions with the '" <> pretty typ <> "'. If you want access, get in touch with us."
     ActionEvaluationFailure t -> "Evaluation for the action failed: " <> Pretty.line <> pretty t
     ActionKeyDecryptionFailure -> "Could not decrypt private key."
+    ProvisioningError {message} -> "Error provisioning server:" <+> pretty message
+    ActivationError {serverAddress, stdErr} ->
+      pretty
+        $ T.unlines
+          [ "Failed to activate server.",
+            "You may be able to debug this by sshing into " <> serverAddress <> ".",
+            "Stderr:",
+            stdErr
+          ]
 
 instance ToJSON Error where
   toJSON x =
@@ -1221,6 +1249,10 @@ toErrorDetails e = case err e of
     errorDetails 400 $ showPretty e
   SshTimeout {command} ->
     errorDetails 500 $ "Timeout: ssh command " <> command
+  ProvisioningError {} ->
+    errorDetails 500 "Error provisioning server. This could be a temporary error."
+  ActivationError {serverAddress, stdErr} ->
+    errorDetails 400 $ "Error activating server at " <> serverAddress <> ": " <> stdErr
   OtherError errMsg ->
     errorDetails 500 errMsg
   DevModeOnly -> fromStatusCode 404
@@ -1228,6 +1260,15 @@ toErrorDetails e = case err e of
     errorDetails 400
       $ "NixOS configuration(s) not found: "
       <> T.intercalate ", " (map getPackageName packages)
+  ServerTierExceedsInstanceCap package' wanted cap ->
+    errorDetails 400
+      $ "The servers: entry for '"
+      <> getPackageName package'
+      <> "' asks for machine '"
+      <> wanted
+      <> "', but this garnix instance hands out at most '"
+      <> cap
+      <> "'. Lower the machine: field, or ask the instance's admin to raise its limit."
   NameIsNotValidSubdomain kind name ->
     errorDetails 400 $ show kind <> " name '" <> name <> "' is not a valid subdomain name."
   TransactionAlreadyStarted ->

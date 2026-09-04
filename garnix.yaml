@@ -8,9 +8,10 @@ builds:
   exclude: []
 
 servers:
-  - configuration: website-pr-qa
+  - configuration: website
     deployment:
       type: on-pull-request
+      machine: i2x4
 
 actions:
   - on: push
