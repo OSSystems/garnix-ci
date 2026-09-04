@@ -94,6 +94,7 @@ library
       Garnix.Monad.Metrics
       Garnix.Monad.NoThrow
       Garnix.Monad.Polling
+      Garnix.Monad.KeyedMutex
       Garnix.Monad.Pool
       Garnix.Monad.SubProcess
       Garnix.Monad.SubProcess.Deprecated
@@ -847,6 +848,7 @@ test-suite spec
       Garnix.Monad.Metrics
       Garnix.Monad.NoThrow
       Garnix.Monad.Polling
+      Garnix.Monad.KeyedMutex
       Garnix.Monad.Pool
       Garnix.Monad.SubProcess
       Garnix.Monad.SubProcess.Deprecated

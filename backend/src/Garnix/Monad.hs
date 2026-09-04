@@ -40,6 +40,7 @@ import Garnix.Log
 import Garnix.Monad.ForkT
 import Garnix.Monad.Memoization (MemoTable)
 import Garnix.Monad.Metrics (Metrics, incrementEvent)
+import Garnix.Monad.KeyedMutex (KeyedMutex)
 import Garnix.Monad.Pool (Pool)
 import Garnix.Nix.Types (StoreHash)
 import Garnix.Nix.Types qualified as Nix
@@ -129,7 +130,22 @@ data Env = Env
     -- | How hosted servers get created and torn down.
     provisioner :: Provisioner,
     -- | Unix socket of the local microVM provisioner daemon, when configured.
-    provisionerSocket :: Maybe FilePath
+    provisionerSocket :: Maybe FilePath,
+    -- | Base domain that deployed servers answer under, e.g. a guest deployed
+    -- from @main@ of @owner\/repo@ as package @web@ is reachable at
+    -- @web.main.repo.owner.\<hostingDomain\>@.
+    hostingDomain :: Text,
+    -- | Absolute URL a guest's stats reporter should POST to, written into its
+    -- durable environment at deploy time. 'Nothing' disables stats reporting.
+    statsReportUrl :: Maybe Text,
+    -- | Serializes rollouts per @(owner, repo)@. Two pushes to the same repo
+    -- must not plan against the same stale snapshot of what is running, so the
+    -- lock covers planning as well as execution.
+    deployMutex :: KeyedMutex (GhRepoOwner, GhRepoName),
+    -- | Absolute caps on what all guests together may hold.
+    hostingBudget :: HostingBudget,
+    -- | Private keys authorized on every guest, used for deploy ssh.
+    hostingSshKeys :: [FilePath]
   }
   deriving stock (Generic)
 
