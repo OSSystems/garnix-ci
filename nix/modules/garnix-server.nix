@@ -267,6 +267,23 @@ in
         '';
       };
 
+      maxTier = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        example = "i4x8";
+        description = ''
+          Largest machine a repository's `garnix.yaml` may ask for, written the
+          same way as a `servers:` entry's `machine` field. Both dimensions are
+          compared, so `i1x16` is over an `i4x8` cap on memory even though it
+          is under it on vCPUs.
+
+          Checked while planning the deploy, so a repository asking for more is
+          told which `servers:` entry is at fault, rather than being told the
+          instance has no capacity. When null, a repository may ask for any
+          size `vcpuBudget` and `memoryBudget` can pay for.
+        '';
+      };
+
       memoryBudget = lib.mkOption {
         type = lib.types.nullOr lib.types.str;
         default = null;
@@ -705,6 +722,8 @@ in
           "GARNIX_HOSTING_VCPU_BUDGET=${cfg.hosting.vcpuBudget}"
         ++ lib.optional (cfg.hosting.memoryBudget != null)
           "GARNIX_HOSTING_MEMORY_BUDGET=${cfg.hosting.memoryBudget}"
+        ++ lib.optional (cfg.hosting.maxTier != null)
+          "GARNIX_HOSTING_MAX_TIER=${cfg.hosting.maxTier}"
         ++ [ "GARNIX_GUEST_SUBNET_PREFIX=${cfg.hosting.guestSubnetPrefix}" ]
         ++ lib.optionals (cfg.database.ssl.mode != "disable") [
           # postgresql-typed reads TPG_TLS via lookupEnv — presence enables

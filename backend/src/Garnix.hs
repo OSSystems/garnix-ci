@@ -31,7 +31,7 @@ import Garnix.Duration
 import Garnix.GithubInterface
 import Garnix.Hosting.Budget (hostTotalMiB, hostVcpus, parseBudget, resolveBudget)
 import Garnix.Hosting.Deploy (cleanupUnreadyServers, stopUnusedServers)
-import Garnix.Hosting.Types (HostingBudget (..))
+import Garnix.Hosting.Types (HostingBudget (..), ServerTier, parseServerTier)
 import Garnix.LocalProvisioner (localProvisionerInterface)
 import Garnix.Monad
 import Garnix.Monad.KeyedMutex (newKeyedMutex)
@@ -412,9 +412,11 @@ withEnv testFeatures buildLogsDir buildLogsReportingPort action = do
   hostingBudget <- do
     vcpuSpec <- (>>= parseBudget . cs) <$> lookupEnv "GARNIX_HOSTING_VCPU_BUDGET"
     memorySpec <- (>>= parseBudget . cs) <$> lookupEnv "GARNIX_HOSTING_MEMORY_BUDGET"
+    maxTier <- tierFromEnv "GARNIX_HOSTING_MAX_TIER"
     HostingBudget
       <$> (flip resolveBudget vcpuSpec <$> hostVcpus)
       <*> (flip resolveBudget memorySpec . fromMaybe 0 <$> hostTotalMiB)
+      <*> pure maxTier
   withDefaultLogger $ \defaultLogger -> do
     let env =
           Env
@@ -593,3 +595,14 @@ mToHandler env requestTraceId action = do
         `Safe.catch` ( \(e :: SomeException) ->
                          throw $ UncaughtRuntimeException (show e)
                      )
+
+-- | Read a tier-valued hosting limit from the environment. A typo is fatal: a
+-- cap that quietly parses as "no cap" is worse than none, because the admin
+-- believes it is in force.
+tierFromEnv :: String -> IO (Maybe ServerTier)
+tierFromEnv name =
+  lookupEnv name >>= \case
+    Nothing -> pure Nothing
+    Just raw -> case parseServerTier (cs raw) of
+      Right tier -> pure (Just tier)
+      Left problem -> fail $ name <> ": " <> problem

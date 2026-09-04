@@ -15,7 +15,7 @@ small = ServerTier "small"
 large = ServerTier "large"
 
 unbounded :: HostingBudget
-unbounded = HostingBudget Nothing Nothing
+unbounded = HostingBudget Nothing Nothing Nothing
 
 aBuild :: M BuildId
 aBuild = _buildId <$> testBuild identity
@@ -42,16 +42,28 @@ spec = do
       fitsBudget unbounded (1000, 1000000) large `shouldBe` True
 
     it "counts the instance being asked for, not just what is already used" $ do
-      let budget = HostingBudget (Just 4) Nothing
+      let budget = HostingBudget (Just 4) Nothing Nothing
       fitsBudget budget (3, 0) small `shouldBe` True
       fitsBudget budget (4, 0) small `shouldBe` False
 
     it "refuses when either dimension alone is exceeded" $ do
-      fitsBudget (HostingBudget (Just 1) Nothing) (0, 0) large `shouldBe` False
-      fitsBudget (HostingBudget Nothing (Just 2048)) (0, 0) large `shouldBe` False
+      fitsBudget (HostingBudget (Just 1) Nothing Nothing) (0, 0) large `shouldBe` False
+      fitsBudget (HostingBudget Nothing (Just 2048) Nothing) (0, 0) large `shouldBe` False
 
     it "lets a cap be met exactly" $ do
-      fitsBudget (HostingBudget (Just 4) (Just 8192)) (0, 0) large `shouldBe` True
+      fitsBudget (HostingBudget (Just 4) (Just 8192) Nothing) (0, 0) large `shouldBe` True
+
+  describe "tierWithinCap" $ do
+    it "lets anything through when no cap is set" $ do
+      tierWithinCap Nothing large `shouldBe` True
+
+    it "refuses a tier that is over the cap on either dimension alone" $ do
+      tierWithinCap (Just (ServerTier "i4x8")) (ServerTier "i8x8") `shouldBe` False
+      tierWithinCap (Just (ServerTier "i4x8")) (ServerTier "i1x16") `shouldBe` False
+
+    it "lets the cap itself, and anything under it, through" $ do
+      tierWithinCap (Just large) large `shouldBe` True
+      tierWithinCap (Just large) small `shouldBe` True
 
   describe "committedResources" $ inM $ beforeM_ truncateDBM $ do
     it "is nothing on an idle host" $ do
@@ -92,7 +104,7 @@ spec = do
     it "refuses rather than queueing when the budget is fully committed" $ do
       build <- aBuild
       void $ Hosting.createPoolServer MicroVM large
-      let budget = HostingBudget (Just 4) (Just 8192)
+      let budget = HostingBudget (Just 4) (Just 8192) Nothing
       acquireServer budget small build Nothing False
         `shouldThrowM` OtherError
           "no capacity for a small server: the hosting budget is fully committed"
