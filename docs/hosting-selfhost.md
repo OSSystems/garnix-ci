@@ -118,6 +118,8 @@ with a CNAME.
       memoryBudget = "reserve:4096";
       # The largest machine any repo's garnix.yaml may ask for.
       maxTier = "i4x8";
+      # Keep that much of the budget out of pull requests' reach.
+      branchReserve = "i2x4";
     };
   };
 
@@ -168,7 +170,7 @@ deploy with that name, rather than silently deploying nothing.
 
 ## Limits
 
-Two separate things, easy to confuse:
+Three separate things, easy to confuse:
 
 - `vcpuBudget` / `memoryBudget` cap what **every guest together** may hold, live
   and pooled. They are the instance's ceiling, checked when a guest is acquired.
@@ -176,7 +178,13 @@ Two separate things, easy to confuse:
   planning, before any build is waited on, so a repo asking for `i16x32` is told
   which entry is at fault instead of being told the instance is out of capacity.
   It applies to branch and pull request deploys alike.
-Both default to unset, which is no limit at all beyond the host's own
+- `branchReserve` is a slice of the budget above that **pull requests may not
+  take**. A pull request deploy is refused when taking it would leave less than
+  the reserve free — including when the guest it would take is already warm in
+  the pool — so a push to a deployed branch always has room to land, however
+  many pull requests are open.
+
+All three default to unset, which is no limit at all beyond the host's own
 hardware.
 
 ## Lifecycle

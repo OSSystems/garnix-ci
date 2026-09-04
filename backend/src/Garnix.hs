@@ -413,10 +413,12 @@ withEnv testFeatures buildLogsDir buildLogsReportingPort action = do
     vcpuSpec <- (>>= parseBudget . cs) <$> lookupEnv "GARNIX_HOSTING_VCPU_BUDGET"
     memorySpec <- (>>= parseBudget . cs) <$> lookupEnv "GARNIX_HOSTING_MEMORY_BUDGET"
     maxTier <- tierFromEnv "GARNIX_HOSTING_MAX_TIER"
+    branchReserve <- tierFromEnv "GARNIX_HOSTING_BRANCH_RESERVE"
     HostingBudget
       <$> (flip resolveBudget vcpuSpec <$> hostVcpus)
       <*> (flip resolveBudget memorySpec . fromMaybe 0 <$> hostTotalMiB)
       <*> pure maxTier
+      <*> pure branchReserve
   withDefaultLogger $ \defaultLogger -> do
     let env =
           Env
