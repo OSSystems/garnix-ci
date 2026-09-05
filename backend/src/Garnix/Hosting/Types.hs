@@ -13,6 +13,7 @@ module Garnix.Hosting.Types
     tierWithinCap,
     HostingBudget (..),
     branchReserveResources,
+    WarmPoolTargets,
     ServerAddress (..),
     serverAddressText,
     ServerInfo (..),
@@ -38,6 +39,7 @@ where
 
 import Data.Aeson ((.:), (.:?), (.=))
 import Data.Aeson qualified as Aeson
+import Data.Map (Map)
 import Data.Text qualified as T
 import Data.Text.Read qualified as T
 import Garnix.Prelude
@@ -214,6 +216,10 @@ data HostingBudget = HostingBudget
     _hostingBudgetBranchReserve :: Maybe ServerTier
   }
   deriving stock (Eq, Show, Generic)
+
+-- | How many warm instances of each tier to keep in the pool. Separate from
+-- 'HostingBudget': that is a set of caps, this is a demand.
+type WarmPoolTargets = Map ServerTier Int
 
 -- | The reserve as (vCPUs, MiB). Zero when none is configured.
 branchReserveResources :: HostingBudget -> (Int, Int)
