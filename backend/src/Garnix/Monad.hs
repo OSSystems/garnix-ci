@@ -144,6 +144,9 @@ data Env = Env
     deployMutex :: KeyedMutex (GhRepoOwner, GhRepoName),
     -- | Absolute caps on what all guests together may hold.
     hostingBudget :: HostingBudget,
+    -- | How many warm instances of each tier to keep ahead of demand. Paid for
+    -- out of 'hostingBudget' like any other guest.
+    warmPoolTargets :: WarmPoolTargets,
     -- | Private keys authorized on every guest, used for deploy ssh.
     hostingSshKeys :: [FilePath],
     -- | Dotted prefix of the bridge subnet guests live on, e.g. @"10.111.0."@.

@@ -284,6 +284,25 @@ in
         '';
       };
 
+      warmPool = lib.mkOption {
+        type = lib.types.attrsOf lib.types.ints.positive;
+        default = { };
+        example = { "i2x4" = 2; };
+        description = ''
+          How many guests of each machine size to keep booted and waiting, so a
+          deploy claims one instead of waiting minutes for a VM to come up.
+          Sizes are written the same way as a `servers:` entry's `machine`
+          field. When empty, no guest is created before a deploy asks for one.
+
+          Warm guests are paid for out of `vcpuBudget` and `memoryBudget` like
+          any other guest, and they are held whether or not anybody deploys.
+          With `vcpuBudget = "total:24"` and `warmPool = { "i4x8" = 1; }`,
+          deploys share 20 vCPUs, and one that does not fit is refused even
+          though the warm guest next to it is idle. Size the pool as capacity
+          you are choosing to spend on latency.
+        '';
+      };
+
       branchReserve = lib.mkOption {
         type = lib.types.nullOr lib.types.str;
         default = null;
@@ -742,6 +761,8 @@ in
           "GARNIX_HOSTING_MAX_TIER=${cfg.hosting.maxTier}"
         ++ lib.optional (cfg.hosting.branchReserve != null)
           "GARNIX_HOSTING_BRANCH_RESERVE=${cfg.hosting.branchReserve}"
+        ++ lib.optional (cfg.hosting.warmPool != { })
+          "GARNIX_HOSTING_WARM_POOL=${lib.concatStringsSep "," (lib.mapAttrsToList (tier: count: "${tier}=${toString count}") cfg.hosting.warmPool)}"
         ++ [ "GARNIX_GUEST_SUBNET_PREFIX=${cfg.hosting.guestSubnetPrefix}" ]
         ++ lib.optionals (cfg.database.ssl.mode != "disable") [
           # postgresql-typed reads TPG_TLS via lookupEnv — presence enables

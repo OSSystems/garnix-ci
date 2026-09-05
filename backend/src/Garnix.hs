@@ -31,7 +31,8 @@ import Garnix.Duration
 import Garnix.GithubInterface
 import Garnix.Hosting.Budget (hostTotalMiB, hostVcpus, parseBudget, resolveBudget)
 import Garnix.Hosting.Deploy (cleanupUnreadyServers, stopUnusedServers)
-import Garnix.Hosting.Types (HostingBudget (..), ServerTier, parseServerTier)
+import Garnix.Hosting.ServerPool (reconcilePool)
+import Garnix.Hosting.Types (HostingBudget (..), ServerTier, WarmPoolTargets, parseServerTier)
 import Garnix.LocalProvisioner (localProvisionerInterface)
 import Garnix.Monad
 import Garnix.Monad.KeyedMutex (newKeyedMutex)
@@ -148,6 +149,34 @@ evalMemoryConfigFromEnv = do
         error
           $ "GARNIX_REPO_EVAL_MEMORY entries must be owner/name=<gigabytes>, got: "
           <> entry
+
+-- | How many warm instances of each tier to keep, from
+-- @GARNIX_HOSTING_WARM_POOL@\'s @\<tier\>=\<n\>@ list.
+warmPoolTargetsFromEnv :: IO WarmPoolTargets
+warmPoolTargetsFromEnv =
+  lookupEnv "GARNIX_HOSTING_WARM_POOL"
+    <&> maybe mempty (Map.fromList . map parseEntry . filter (not . T.null) . map T.strip . T.splitOn "," . cs)
+  where
+    parseEntry :: Text -> (ServerTier, Int)
+    parseEntry entry = case map T.strip (T.splitOn "=" entry) of
+      [tier, count] -> (parseTier tier, parseCount count)
+      _ ->
+        error
+          $ "GARNIX_HOSTING_WARM_POOL entries must be <machine size>=<count>, got: "
+          <> entry
+
+    parseTier :: Text -> ServerTier
+    parseTier raw = case parseServerTier raw of
+      Right tier -> tier
+      Left problem -> error $ "GARNIX_HOSTING_WARM_POOL: " <> cs problem
+
+    parseCount :: Text -> Int
+    parseCount raw = case readMaybe (cs raw) of
+      Just count | count > 0 -> count
+      _ ->
+        error
+          $ "GARNIX_HOSTING_WARM_POOL counts must be a positive whole number, got: "
+          <> raw
 
 lookupOptionalSecret :: String -> FilePath -> IO (Maybe Text)
 lookupOptionalSecret envVar path = do
@@ -419,6 +448,7 @@ withEnv testFeatures buildLogsDir buildLogsReportingPort action = do
       <*> (flip resolveBudget memorySpec . fromMaybe 0 <$> hostTotalMiB)
       <*> pure maxTier
       <*> pure branchReserve
+  warmPoolTargets <- warmPoolTargetsFromEnv
   withDefaultLogger $ \defaultLogger -> do
     let env =
           Env
@@ -478,6 +508,7 @@ withEnv testFeatures buildLogsDir buildLogsReportingPort action = do
               statsReportUrl,
               deployMutex,
               hostingBudget,
+              warmPoolTargets,
               hostingSshKeys,
               guestSubnetPrefix
             }
@@ -528,6 +559,14 @@ runWith opts = do
         $ runM env
         $ forever (reapUnusedServers *> threadDelay (fromMinutes @Int 5))
 
+      -- Warm instances are created ahead of demand rather than on the deploy's
+      -- critical path: creating a guest boots it and waits for ssh.
+      void
+        $ forkIO
+        $ void
+        $ runM env
+        $ forever (maintainWarmPool *> threadDelay (fromMinutes @Int 1))
+
       let settings =
             Warp.defaultSettings
               & Warp.setPort (port opts)
@@ -543,6 +582,11 @@ runWith opts = do
     reapUnusedServers =
       stopUnusedServers
         `catchError` \problem -> log Error $ "stopUnusedServers: " <> show problem
+
+    maintainWarmPool :: M ()
+    maintainWarmPool =
+      reconcilePool
+        `catchError` \problem -> log Error $ "reconcilePool: " <> show problem
 
 type ContextList =
   '[ JWTSettings,

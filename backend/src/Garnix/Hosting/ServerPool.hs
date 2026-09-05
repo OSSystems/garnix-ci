@@ -4,6 +4,12 @@ module Garnix.Hosting.ServerPool
   ( acquireServer,
     releaseServer,
     warmPool,
+    reconcilePool,
+    PoolProblem (..),
+    poolServerUnusable,
+    poolShortfall,
+    poolCreationGrace,
+    poolEntryMaxAge,
     committedResources,
     fitsBudget,
     leavesReserveFree,
@@ -15,11 +21,13 @@ module Garnix.Hosting.ServerPool
 where
 
 import Control.Exception.Safe qualified as Safe
+import Data.Map qualified as Map
 import Garnix.DB.Hosting qualified as DB
+import Garnix.Duration
 import Garnix.Hosting.Types
 import Garnix.Monad
 import Garnix.Prelude
-import Garnix.Types (BuildId, Error (..), GhPullRequestId)
+import Garnix.Types (BuildId, Error (..), GhPullRequestId, showDebug)
 
 -- | vCPU and MiB already spoken for: every live server plus every instance
 -- in the pool, warm or still being built.
@@ -71,6 +79,144 @@ warmPool tier = do
     provisionServer poolId tier `cleaningUpOnFailure` DB.deletePoolServer poolId
   DB.markPoolServerReady server
   pure poolId
+
+-- * Keeping the pool at its target
+
+-- | How long a pool row may sit without an address before it is taken to be a
+-- remnant. Above the provisioner's own 35 minute create timeout, so it can
+-- never destroy a guest that is still being created.
+poolCreationGrace :: Duration
+poolCreationGrace = fromMinutes @Int 40
+
+-- | How long a warm instance may wait to be claimed before it is recycled. A
+-- guest boots the image the provisioner had when it was created.
+poolEntryMaxAge :: Duration
+poolEntryMaxAge = fromHours @Int 24
+
+-- | Why a warm instance is no longer usable.
+data PoolProblem = PoolDead | PoolExpired | PoolStuckCreating
+  deriving stock (Eq, Show)
+
+instance Pretty PoolProblem where
+  pretty = \case
+    PoolDead -> "the provisioner does not report it as running"
+    PoolExpired -> "it has been warm for longer than " <> pretty (show poolEntryMaxAge)
+    PoolStuckCreating -> "it never finished being created"
+
+-- | Whether a pool instance has to go, given the provisioner's reading of it.
+--
+-- A provisioner that has gone quiet must not be read as every guest being
+-- dead, so 'Nothing' for the status leaves the instance alone.
+poolServerUnusable ::
+  -- | Now.
+  UTCTime ->
+  -- | What the provisioner says about it, when it says anything.
+  Maybe Text ->
+  PreprovisionedServer ->
+  Maybe PoolProblem
+poolServerUnusable now status server
+  | isNothing (_preprovisionedServerReadyAt server) =
+      if age > poolCreationGrace then Just PoolStuckCreating else Nothing
+  | Just reported <- status, reported /= runningStatus = Just PoolDead
+  | age > poolEntryMaxAge = Just PoolExpired
+  | otherwise = Nothing
+  where
+    age = diffTime now (_preprovisionedServerCreatedAt server)
+
+-- | The status a live guest is reported under.
+runningStatus :: Text
+runningStatus = "running"
+
+-- | The tiers to create to reach the target, one entry per missing instance.
+-- A surplus contributes nothing: it ages out rather than being destroyed
+-- while it could still serve a deployment.
+poolShortfall :: WarmPoolTargets -> [PreprovisionedServer] -> [ServerTier]
+poolShortfall targets pool =
+  concat
+    [ replicate (target - warm) tier
+      | (tier, target) <- Map.toList targets,
+        let warm = length (filter ((== tier) . _preprovisionedServerTier) pool),
+        target > warm
+    ]
+
+-- | Drop what cannot serve a deployment, then create what is missing, as far
+-- as the budget allows.
+--
+-- Best-effort: the pool is paid for out of the same budget as live servers, so
+-- a host whose deployments have taken everything keeps an emptier pool until
+-- one of them ends.
+reconcilePool :: M ()
+reconcilePool = do
+  targets <- view #warmPoolTargets
+  unless (Map.null targets) $ do
+    dropUnusablePoolServers
+    budget <- view #hostingBudget
+    pool <- DB.getPoolServers
+    fillPool budget (poolShortfall targets pool)
+
+-- | Destroy every warm instance that cannot serve a deployment any more. One
+-- bad instance must not end the sweep.
+dropUnusablePoolServers :: M ()
+dropUnusablePoolServers = do
+  now <- liftIO getCurrentTime
+  pool <- DB.getPoolServers
+  forM_ pool $ \server -> do
+    status <- poolServerStatus server
+    forM_ (poolServerUnusable now status server) $ \problem ->
+      catchEither (discardPoolServer server problem) $ \problem' ->
+        log Error
+          $ "reconcilePool: could not discard pool instance "
+          <> showPretty (_preprovisionedServerId server)
+          <> ": "
+          <> either show showDebug problem'
+
+-- | What the provisioner says about an instance, or 'Nothing' when it cannot
+-- be asked.
+poolServerStatus :: PreprovisionedServer -> M (Maybe Text)
+poolServerStatus server = case _preprovisionedServerInstanceId server of
+  Nothing -> pure Nothing
+  Just instanceId ->
+    catchEither (Just <$> getServerStatus instanceId) $ \problem -> do
+      log Warning
+        $ "reconcilePool: could not read the status of pool instance "
+        <> showPretty (_preprovisionedServerId server)
+        <> ", leaving it in the pool: "
+        <> either show showDebug problem
+      pure Nothing
+
+-- | Tear an instance down and stop counting it against the budget. The row
+-- goes either way, like in 'releaseServer'.
+discardPoolServer :: PreprovisionedServer -> PoolProblem -> M ()
+discardPoolServer server problem = do
+  let poolId = _preprovisionedServerId server
+  log Informational
+    $ "reconcilePool: discarding pool instance "
+    <> showPretty poolId
+    <> " because "
+    <> showPretty problem
+  let teardown = case _preprovisionedServerInstanceId server of
+        Nothing -> pure ()
+        Just instanceId -> deleteServer instanceId
+  teardown `cleaningUpOnFailure` DB.deletePoolServer poolId
+  DB.deletePoolServer poolId
+
+-- | Create the missing warm instances while the budget has room for the next
+-- one. Sequential: 'committedResources' is read before each creation, so
+-- creating concurrently would race the budget check against itself.
+fillPool :: HostingBudget -> [ServerTier] -> M ()
+fillPool _ [] = pure ()
+fillPool budget (tier : rest) = do
+  used <- committedResources
+  if not (fitsBudget budget used tier)
+    then
+      log Informational
+        $ "reconcilePool: leaving "
+        <> show (length (tier : rest))
+        <> " warm instance(s) uncreated; the hosting budget has no room for a "
+        <> getServerTier tier
+    else do
+      void $ warmPool tier
+      fillPool budget rest
 
 -- | Run @cleanup@ if @action@ fails, then re-raise.
 --
