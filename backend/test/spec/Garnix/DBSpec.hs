@@ -83,7 +83,9 @@ spec = do
   context "getUserInternalToken" $ inM $ beforeM_ truncateDBM $ do
     it "gets the same token when called by multiple threads concurrently" $ do
       results <- replicateConcurrently 50 (DB.getUserInternalToken $ GhLogin "user")
-      liftIO $ results `shouldBe` replicate 50 (head results)
+      case results of
+        [] -> liftIO $ expectationFailure "expected 50 tokens, got none"
+        firstResult : _ -> liftIO $ results `shouldBe` replicate 50 firstResult
 
   context "claimS3CachedStorePaths" $ inM $ beforeM_ truncateDBM $ do
     let getCacheEntries :: M [(Text, Maybe Text, Maybe UTCTime)]

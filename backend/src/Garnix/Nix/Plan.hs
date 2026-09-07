@@ -39,8 +39,11 @@ getPlanOf = mockable #getBuildPlanMock $ \input -> do
       . T.lines
       . cs
       $ input
-  when (not (null remaining) && not ("will be fetched" `T.isInfixOf` head remaining))
-    $ log Critical "Expected `nix build --dry-run` to output a list of derivations to be built followed by optionally a list of derivations to be fetched"
+  case remaining of
+    firstRemaining : _
+      | not ("will be fetched" `T.isInfixOf` firstRemaining) ->
+          log Critical "Expected `nix build --dry-run` to output a list of derivations to be built followed by optionally a list of derivations to be fetched"
+    _ -> pure ()
   outputHashes <- forM toBuild $ \drvPath -> (drvPath,) <$> getDrvOutputPaths drvPath
   pure $ Plan outputHashes
 

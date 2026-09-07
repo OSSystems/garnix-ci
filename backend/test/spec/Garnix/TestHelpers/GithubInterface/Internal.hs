@@ -32,7 +32,7 @@ newRepoCollection = liftIO $ RepoCollection <$> newTVarIO mempty
 lookupRepoImpl :: RepoCollection -> GhRepoOwner -> GhRepoName -> M (Maybe TestRepo)
 lookupRepoImpl (RepoCollection rc) owner name = do
   repos <- liftIO $ readTVarIO rc
-  pure $ repos !? (owner, name)
+  pure $ repos Data.Map.!? (owner, name)
 
 updateRepo :: RepoCollection -> GhRepoOwner -> GhRepoName -> (TestRepo -> TestRepo) -> M ()
 updateRepo (RepoCollection rc) owner name modify =
