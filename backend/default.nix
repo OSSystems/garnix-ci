@@ -228,9 +228,12 @@ rec {
           git config --global user.name "Your Name"
           git config --global init.defaultBranch main
 
-          if [ -n "''${WATCHDOG_GITHUB_ACCESS_TOKEN_FILE:-}" ] && [ -s "''${WATCHDOG_GITHUB_ACCESS_TOKEN_FILE}" ]; then
+          githubTokenFile="''${WATCHDOG_GITHUB_ACCESS_TOKEN_FILE:-/run/garnix-action-secrets/github_access_token}"
+          if [ -r "$githubTokenFile" ] && [ -s "$githubTokenFile" ]; then
             mkdir -p ~/.config/nix
-            echo "access-tokens = github.com=$(cat "''${WATCHDOG_GITHUB_ACCESS_TOKEN_FILE}")" > ~/.config/nix/nix.conf
+            echo "access-tokens = github.com=$(cat "$githubTokenFile")" > ~/.config/nix/nix.conf
+          else
+            echo "warning: no GitHub token at $githubTokenFile; flake input resolution will use the anonymous 60 req/h budget and may fail with spurious 'is private or doesn't exist' errors" >&2
           fi
 
           cp -r ${./..} src
