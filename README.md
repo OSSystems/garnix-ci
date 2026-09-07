@@ -1,76 +1,83 @@
-# Garnix
+# garnix
 
-Garnix is a CI service for nixified, flake-based github repos.
+CI for nixified, flake-based GitHub repos: it builds every flake output on push,
+reports per-output checks back to GitHub, and can deploy the NixOS
+configurations a repo declares.
 
-## Seeing the stack run
+This is a fork of [garnix-io/garnix-ci](https://github.com/garnix-io/garnix-ci)
+focused on running the whole stack on your own infrastructure.
 
-Opening a pull request against this repo deploys it. `garnix.yaml` declares
-`nixosConfigurations.website` (see `nix/website.nix`) as an `on-pull-request`
-server, so every pull request gets its own microVM guest running nginx, the
-Next.js frontend, the Haskell backend and postgres together, at
-`website.pull-<n>.<repo>.<owner>.<hostingDomain>`. garnix comments the address
-on the pull request once it is up.
+## Quickstart
 
-That guest is a demonstration instance. It receives no secrets from garnix, so
-its GitHub credentials are dummies generated at build time: no webhook arrives
-and no build can be started on it. `sql/local-fixtures.sql` is seeded on boot so
-the views have something in them, and `/api/dev/log-me-in` mints a session for
-the fixture's `dev-user` without going through OAuth.
+The server is a NixOS module. It needs `flakeInputs` and `flakePackages` in
+`specialArgs`, since it resolves its own binaries from this flake:
 
-There's also an admin page on `/garnix-admin` that is useful for some
-development tasks.
+```nix
+{
+  inputs.garnix.url = "github:OSSystems/garnix-ci";
 
-> The `nixos-compose` flow that used to live here was removed along with the
-> example configurations it drove (`exampleGarnixServer`, `exampleDb`,
-> `exampleOpenSearch`). `examples/example-selfhost.nix` remains as the
-> reference for a real self-hosted deployment.
-
-### Setting up a GitHub app
-
-You _will_ need a github app for Garnix to work, both for production and for testing.
-On the `/garnix-admin` page you can create one by pressing the 'Submit to GitHub' button.
-That will give you a bunch of credentials that you'll have to put into the `/secrets/dev.yaml` file by running
-
-```bash
-sops edit secrets/dev.yaml
+  outputs = { nixpkgs, garnix, ... }: {
+    nixosConfigurations.ci = nixpkgs.lib.nixosSystem {
+      system = "x86_64-linux";
+      specialArgs = {
+        flakeInputs = garnix.inputs;
+        flakePackages = garnix.packages.x86_64-linux;
+      };
+      modules = [ garnix.nixosModules.garnix ./configuration.nix ];
+    };
+  };
+}
 ```
 
-Then you have to enable your new GitHub app on a repo that you want to build through the GitHub ui.
+```nix
+# configuration.nix
+services.garnixServer = {
+  enable = true;
+  hostname = "garnix.example.com";
+  url = "https://garnix.example.com";
+  adminGithubLogin = "your-github-login";
+  githubAppName = "your-github-app-slug";
+  acmeEmail = "ops@example.com";
 
-The app manifest asks for `pull_requests: write`, which is used only by the
-`commentOnFailure` option in `garnix.yaml`. If you are updating an app created
-before that permission existed, every installation has to accept it; until then
-the comment request 403s, which is logged but doesn't fail the build.
+  database = { host = "localhost"; port = 5432; user = "garnix"; name = "garnix"; };
+  opensearch = { url = "https://os.example.com/_msearch"; host = "os.example.com"; username = "garnix"; };
 
-Finally, you can submit a test build against an instance that has the app
-installed, with something like this:
-
-```bash
-curl -v \
-  -XPOST \
-  http://<your-instance>/api/build/submit \
-  -H 'Content-Type: application/json' \
-  -d '{ "owner": "garnix-io", "repo": "comment", "testCommit": "8b2b57d91dd1f4d094bb944a0a0ef65319a5663f" }'
+  # One path per secret, staged out-of-band (sops-nix, Vault, Ansible...).
+  # Eleven are required; the module asserts on any you leave out.
+  secrets.databasePasswordPath = "/var/lib/garnix/secrets/database-password";
+  # ...
+};
 ```
 
-And then you can see the build under `/repo/garnix-io/comment`, for example.
-Note that this endpoint resolves an installation token, so it only works
-against an instance with a real GitHub App -- not against a pull request's
-demonstration deploy.
+[`examples/example-selfhost.nix`](examples/example-selfhost.nix) is the complete,
+evaluated reference: every secret path, the OpenSearch host, and the monitoring
+variants.
 
-### Developing the frontend
+## Modules
 
-You can run the frontend in development mode against a backend you already have
-running:
+| Output | Role |
+| --- | --- |
+| `nixosModules.garnix` | The server: backend, frontend, nginx, migrations, monitoring |
+| `nixosModules.garnix-provisioner` | microVM host for deployed servers |
+| `nixosModules.garnix-hosting-gateway` | HTTPS routing to those guests |
+| `nixosModules.garnix-guest` | Profile applied inside each guest |
+| `opensearch/nixos-module.nix` | OpenSearch, as a machine role of its own |
 
-```bash
-cd frontend
-npm run dev
-```
+## Documentation
 
-Then point your browser to [localhost:3000](http://localhost:3000).
+- [Hosting deployed servers](docs/hosting-selfhost.md) — `servers:` in
+  `garnix.yaml`, DNS, the gateway, guest lifecycle and limits
+- [Monitoring](docs/monitoring-selfhost.md) — Prometheus, Grafana, loopback and
+  split-machine setups
+- [OpenSearch](docs/opensearch-selfhost.md) — build logs storage
+- [Development](docs/development.md) — GitHub app, submitting test builds,
+  running the frontend, the (currently disabled) per-pull-request demo deploy
 
-# Acknowledgments
+## License
+
+See [LICENSE](LICENSE).
+
+## Acknowledgments
 
 We erased git history when open sourcing, so we'll be explicit here about our
 debt to everyone who contributed before the project became open source:
