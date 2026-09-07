@@ -18,6 +18,10 @@ let
         + " (string path. Do NOT use a Nix path literal or the secret will be copied into the world-readable /nix/store).";
     };
 
+  actionSecretsDir = "/run/garnix-action-secrets";
+
+  stageActionToken = config.garnix.actionRunner.enable && secretsCfg.githubAccessTokenPath != null;
+
   installedSecrets = lib.filter (s: s.sourcePath != null) [
     {
       name = "database-password";
@@ -198,7 +202,12 @@ let
       (s: ''
         install -m ${s.mode or "0440"} -o ${s.owner or "root"} -g ${cfg.user} ${s.sourcePath} ${secretsCfg.dir}/${s.name}
       '')
-      installedSecrets;
+      installedSecrets
+    + lib.optionalString stageActionToken ''
+
+      install -d -m 0750 -o root -g action-runner ${actionSecretsDir}
+      install -m 0440 -o root -g action-runner ${secretsCfg.githubAccessTokenPath} ${actionSecretsDir}/github_access_token
+    '';
   };
 in
 {
@@ -219,7 +228,7 @@ in
     githubClientIdPath = pathOption "Path to the GitHub OAuth client id file";
     githubAppIdPath = pathOption "Path to the GitHub App ID file";
     githubAppPkPath = pathOption "Path to the GitHub App private key (PEM) file";
-    githubAccessTokenPath = pathOption "Path to a GitHub personal access token, used to authenticate the GitHub API calls nix makes while resolving flake inputs. Optional: without it those calls are anonymous and share a 60 requests/hour budget per IP, which builds exhaust. The token needs no scopes; it only has to be valid, which raises the budget to 5000/hour";
+    githubAccessTokenPath = pathOption "Path to a GitHub personal access token, used to authenticate the GitHub API calls nix makes while resolving flake inputs. Optional: without it those calls are anonymous and share a 60 requests/hour budget per IP, which builds exhaust. The token needs no scopes; it only has to be valid, which raises the budget to 5000/hour. When garnix.actionRunner.enable is set it is also staged at ${actionSecretsDir}/github_access_token, readable by the action-runner group, so shared-resources actions hit the same authenticated budget";
     opensearchCredentialPath = pathOption "Path to the OpenSearch basic-auth password file";
     jwtKeyPath = pathOption "Path to the JWT signing key file (generated via Servant.Auth.Server.writeKey)";
     repoSecretsKeyPath = pathOption "Path to the repository secrets age private key";
