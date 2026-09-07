@@ -60,17 +60,17 @@
         (outerFinal: outerPrev: {
           haskellPackages =
             with outerPrev.haskell.lib;
-            outerPrev.haskell.packages.ghc967.override {
+            outerPrev.haskellPackages.override {
               overrides = final: prev: {
-                hashids = prev.hashids.overrideAttrs (old: {
+                hashids = doJailbreak (prev.hashids.overrideAttrs (old: {
                   meta = old.meta // {
                     broken = false;
                   };
-                });
+                }));
                 generic-random = prev.callPackage ./nix/packages/generic-random.nix { };
                 HDBC = prev.callPackage ./nix/packages/HDBC.nix { };
                 servant-github-webhook = prev.callPackage ./nix/packages/servant-github-webhook.nix { };
-                generics-eot = prev.callPackage ./nix/packages/generics-eot.nix { };
+                generics-eot = dontCheck (prev.callPackage ./nix/packages/generics-eot.nix { });
                 iso-deriving = prev.callPackage ./nix/packages/iso-deriving.nix { };
                 github-app = prev.callPackage ./nix/packages/github-app.nix { };
                 github-webhooks = prev.callPackage ./nix/packages/github-webhooks.nix { };

@@ -59,7 +59,7 @@ previousCandidates = do
       & addArgs ["rev-list", "-n", "5", "HEAD" :: String]
       & setWorkingDir workingDir
   case e of
-    ExitSuccess -> pure $ CommitHash <$> tail (T.lines out)
+    ExitSuccess -> pure $ CommitHash <$> drop 1 (T.lines out)
     _ -> throw $ OtherError "Could not get rev-list for incrementalization"
 
 makeNormalizedFlake :: [Build] -> M NormalizedFlake

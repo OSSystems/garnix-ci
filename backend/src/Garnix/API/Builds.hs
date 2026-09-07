@@ -1,6 +1,5 @@
 module Garnix.API.Builds where
 
-import Data.List.Extra (unsnoc)
 import Data.Maybe (maybeToList)
 import Data.Text qualified as T
 import Garnix.API.Builds.Types

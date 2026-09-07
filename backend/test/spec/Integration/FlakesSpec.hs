@@ -266,10 +266,10 @@ testFlakeSpec dir fspec = do
               <> pShow ss
               <> "\nBuilds are: "
               <> pShow builds
-        relevant -> do
+        relevant@(firstRelevant : _) -> do
           case index ss of
             -- The builds are in reverse order
-            Last -> testBuild False ss $ head relevant
+            Last -> testBuild False ss firstRelevant
             BeforeLast -> testBuild False ss $ relevant !! 1
             First -> testBuild False ss $ last relevant
             Nowhere -> mapM_ (testBuild True ss) relevant

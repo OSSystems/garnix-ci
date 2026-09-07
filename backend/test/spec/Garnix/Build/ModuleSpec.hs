@@ -334,8 +334,8 @@ spec = inM $ do
         result <- try $ Checkout.runWithCheckout remote commitInfo (const (pure ()))
         case result of
           Left ErrorWithContext {err = RunProcessError {stdErr}} -> stdErr `shouldMatchRegexp` "error: unable to download 'https://api.github.com/repos/garnix-io/test-module/commits/test-module-older-commit'"
-          Left ErrorWithContext {err} -> liftIO $ expectationFailure $ "Expected RunProcessError but got " <> cs (show err)
-          _ -> liftIO $ expectationFailure $ "Expected Left RunProcessError but got " <> cs (show result)
+          Left ErrorWithContext {err} -> liftIO $ expectationFailure $ "Expected RunProcessError but got " <> cs (Garnix.Prelude.show err)
+          _ -> liftIO $ expectationFailure $ "Expected Left RunProcessError but got " <> cs (Garnix.Prelude.show result)
 
     it "correctly escapes values" $ do
       1 <-
