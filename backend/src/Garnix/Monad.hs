@@ -349,18 +349,27 @@ reportName = \case
   ReportRun run -> run ^. name
   MetaCheck -> "All Garnix checks"
 
-newtype Reporter = Reporter {createNewRun :: ReportType -> M RunReporter}
+data Reporter = Reporter
+  { createNewRun :: ReportType -> M RunReporter,
+    resumeRun :: GhRunId -> ReportType -> M RunReporter
+  }
   deriving stock (Show)
 
 instance Semigroup Reporter where
   a <> b =
     Reporter
       { createNewRun = \reportType ->
-          (<>) <$> createNewRun a reportType <*> createNewRun b reportType
+          (<>) <$> createNewRun a reportType <*> createNewRun b reportType,
+        resumeRun = \ghRunId reportType ->
+          (<>) <$> resumeRun a ghRunId reportType <*> resumeRun b ghRunId reportType
       }
 
 instance Monoid Reporter where
-  mempty = Reporter {createNewRun = \_ -> pure mempty}
+  mempty =
+    Reporter
+      { createNewRun = \_ -> pure mempty,
+        resumeRun = \_ _ -> pure mempty
+      }
 
 data FodChecker = FodChecker
   { runReporter :: RunReporter,
