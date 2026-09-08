@@ -1554,12 +1554,12 @@ reportBuildResultDB build = do
     1 -> pure ()
     _ -> throw $ OtherError "Somehow updated more than 0 or 1 columns"
 
-upsertHeartbeat :: [Text] -> M ()
-upsertHeartbeat hosts =
+upsertServerHeartbeat :: [Text] -> M ()
+upsertServerHeartbeat hosts =
   forM_ (map T.toLower hosts) $ \host -> do
     pgQuery
       [pgSQL|
-    INSERT INTO heartbeat
+    INSERT INTO server_heartbeat
       (hostname, last_heartbeat)
       VALUES (${host}, NOW())
     ON CONFLICT (hostname) DO UPDATE set last_heartbeat = NOW()
@@ -1606,12 +1606,12 @@ heartbeatsCoverWindow window maxGap = do
       throw
         $ OtherError "heartbeatsCoverWindow: heartbeat_reporting is missing its singleton row"
 
-getRecentHeartbeats :: M [Text]
-getRecentHeartbeats =
+getRecentServerHeartbeats :: M [Text]
+getRecentServerHeartbeats =
   pgQuery
     [pgSQL|
   SELECT hostname
-    FROM heartbeat
+    FROM server_heartbeat
     WHERE NOW() - last_heartbeat < interval '12 hours'
     |]
 

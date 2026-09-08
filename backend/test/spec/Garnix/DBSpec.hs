@@ -58,12 +58,12 @@ spec = do
         void
           $ DB.pgQuery
             [pgSQL|
-              INSERT INTO heartbeat
+              INSERT INTO server_heartbeat
                 (hostname, last_heartbeat)
                 VALUES ('test', NOW())
             |]
         throw $ OtherError "testing"
-      hb <- DB.getRecentHeartbeats
+      hb <- DB.getRecentServerHeartbeats
       liftIO $ hb `shouldBe` []
 
     it "rolls transactions back due to SQL errors" $ do
@@ -71,13 +71,13 @@ spec = do
         void
           $ DB.pgQuery
             [pgSQL|
-        INSERT INTO heartbeat
+        INSERT INTO server_heartbeat
           (hostname, last_heartbeat)
           VALUES ('test', NOW())
           |]
         void $ DB.newUser (GhLogin "conflict") (Email "a@a") FreeSubscription True
         void $ DB.newUser (GhLogin "conflict") (Email "a@a") FreeSubscription True
-      hb <- DB.getRecentHeartbeats
+      hb <- DB.getRecentServerHeartbeats
       liftIO $ hb `shouldBe` []
 
   context "heartbeat reporting" $ inM $ beforeM_ resetHeartbeatReporting $ do

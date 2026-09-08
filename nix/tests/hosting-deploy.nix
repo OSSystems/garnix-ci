@@ -343,7 +343,7 @@ pkgs.testers.runNixOSTest {
           # -- has to work, not just the routing.
           backend.wait_until_succeeds(
               "sudo -u postgres psql garnix -tAX -c "
-              "\"SELECT count(*) FROM heartbeat "
+              "\"SELECT count(*) FROM server_heartbeat "
               "WHERE hostname = '${canonicalName}.${hostingDomain}'\" | grep -qx 1",
               # The middleware batches and flushes every 30s.
               timeout=120,

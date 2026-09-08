@@ -208,7 +208,7 @@ postHostsHeartbeat :: [Text] -> M NoContent
 postHostsHeartbeat hosts =
   NoContent <$ do
     DB.recordHeartbeatReport heartbeatReportGap
-    DB.upsertHeartbeat hosts
+    DB.upsertServerHeartbeat hosts
 
 -- * Guest stats
 
