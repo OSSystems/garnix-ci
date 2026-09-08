@@ -15,6 +15,8 @@ module Garnix.Hosting.Deploy
     stopServer,
     stopUnusedServers,
     idleHosts,
+    idleWindow,
+    heartbeatReportGap,
     cleanupUnreadyServers,
     checkDeployPlan,
     checkTiersWithinCap,
@@ -452,6 +454,15 @@ cleanupUnreadyServers = do
       )
   pure (sum cleaned)
 
+idleWindow :: Duration
+idleWindow = fromHours @Int 12
+
+idleWindowHours :: Text
+idleWindowHours = show @Int (floor (toSeconds idleWindow / 3600)) <> "h"
+
+heartbeatReportGap :: Duration
+heartbeatReportGap = fromMinutes @Int 5
+
 -- | Tear down PR deploys that have not been reached in a while. The gateway
 -- reports every hostname it serves; a candidate absent from that report for
 -- the whole heartbeat window is idle.
@@ -460,19 +471,18 @@ stopUnusedServers = do
   domain <- view #hostingDomain
   PrHostList candidates <- DBHosting.getShutdownCandidates
   unless (null candidates) $ do
-    heartbeats <- DB.getRecentHeartbeats
-    -- No heartbeats at all means nobody is reporting — a gateway that is down
-    -- or not configured — not that every server is idle. Tearing down live
-    -- deploys because the reporter is broken is far worse than leaving an
-    -- idle one running until it comes back.
-    if null heartbeats
+    covered <- DB.heartbeatsCoverWindow idleWindow heartbeatReportGap
+    if not covered
       then
         log Warning
           $ "stopUnusedServers: "
           <> show (length candidates)
-          <> " server(s) are old enough to reap, but no heartbeats have been"
-          <> " reported at all. Leaving them alone; is the gateway running?"
+          <> " server(s) are old enough to reap, but the gateway has not been"
+          <> " reporting for a full "
+          <> idleWindowHours
+          <> ". Leaving them alone; is the gateway running?"
       else do
+        heartbeats <- DB.getRecentHeartbeats
         traverse_ (stopServer . _hostServerId) (idleHosts domain heartbeats candidates)
 
 idleHosts :: Text -> [Text] -> [Host] -> [Host]

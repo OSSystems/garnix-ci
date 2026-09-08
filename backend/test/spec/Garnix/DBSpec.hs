@@ -8,7 +8,7 @@ import Data.Text qualified as T
 import Database.PostgreSQL.Typed
 import Database.PostgreSQL.Typed qualified as PSQL
 import Garnix.DB qualified as DB
-import Garnix.Duration (fromDays, fromHours, fromSeconds)
+import Garnix.Duration (fromDays, fromHours, fromMinutes, fromSeconds)
 import Garnix.Monad (M, throw)
 import Garnix.Nix.Types (DrvPath (..), StoreHash (..), StorePath (..))
 import Garnix.Prelude
@@ -79,6 +79,36 @@ spec = do
         void $ DB.newUser (GhLogin "conflict") (Email "a@a") FreeSubscription True
       hb <- DB.getRecentHeartbeats
       liftIO $ hb `shouldBe` []
+
+  context "heartbeat reporting" $ inM $ beforeM_ resetHeartbeatReporting $ do
+    let window = fromHours @Int 12
+        gap = fromMinutes @Int 5
+        covered = DB.heartbeatsCoverWindow window gap
+
+    it "claims no coverage before the gateway has reported at all" $ do
+      covered `shouldReturnM` False
+
+    it "claims no coverage from a report that only just arrived" $ do
+      DB.recordHeartbeatReport gap
+      covered `shouldReturnM` False
+
+    it "claims coverage once reporting has run for the whole window" $ do
+      DB.recordHeartbeatReport gap
+      backdateReportingStart
+      covered `shouldReturnM` True
+
+    it "drops coverage when the gateway goes quiet" $ do
+      DB.recordHeartbeatReport gap
+      backdateReportingStart
+      backdateLastReport
+      covered `shouldReturnM` False
+
+    it "restarts the window when reporting resumes after a gap" $ do
+      DB.recordHeartbeatReport gap
+      backdateReportingStart
+      backdateLastReport
+      DB.recordHeartbeatReport gap
+      covered `shouldReturnM` False
 
   context "getUserInternalToken" $ inM $ beforeM_ truncateDBM $ do
     it "gets the same token when called by multiple threads concurrently" $ do
@@ -349,3 +379,33 @@ spec = do
     it "fails with wrong passwords" $ do
       DB.getDBConnection ["foo", "bar"] `shouldThrow` (\(e :: PGError) -> "password authentication failed" `isInfixOf` cs (show e))
       pure ()
+
+resetHeartbeatReporting :: M ()
+resetHeartbeatReporting =
+  void
+    $ DB.pgExec
+      [pgSQL|
+        UPDATE heartbeat_reporting
+        SET reports_recorded_since = NULL, last_report_at = NULL
+        WHERE id
+      |]
+
+backdateReportingStart :: M ()
+backdateReportingStart =
+  void
+    $ DB.pgExec
+      [pgSQL|
+        UPDATE heartbeat_reporting
+        SET reports_recorded_since = NOW() - interval '13 hours'
+        WHERE id
+      |]
+
+backdateLastReport :: M ()
+backdateLastReport =
+  void
+    $ DB.pgExec
+      [pgSQL|
+        UPDATE heartbeat_reporting
+        SET last_report_at = NOW() - interval '1 hour'
+        WHERE id
+      |]

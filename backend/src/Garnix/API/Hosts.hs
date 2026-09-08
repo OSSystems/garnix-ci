@@ -32,7 +32,7 @@ import Garnix.Duration
 import Garnix.ExpiringCache
 import Garnix.GithubInterface.Types (organizationName)
 import Garnix.GithubUserToken
-import Garnix.Hosting.Deploy (stopServer)
+import Garnix.Hosting.Deploy (heartbeatReportGap, stopServer)
 import Garnix.Hosting.Helpers
 import Garnix.Hosting.Types
 import Garnix.Monad
@@ -205,7 +205,10 @@ getHostsForTraefik = do
         && isValidSubdomainString (getPackageName (_hostPackageName host))
 
 postHostsHeartbeat :: [Text] -> M NoContent
-postHostsHeartbeat hosts = NoContent <$ DB.upsertHeartbeat hosts
+postHostsHeartbeat hosts =
+  NoContent <$ do
+    DB.recordHeartbeatReport heartbeatReportGap
+    DB.upsertHeartbeat hosts
 
 -- * Guest stats
 
