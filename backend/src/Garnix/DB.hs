@@ -1565,6 +1565,47 @@ upsertHeartbeat hosts =
     ON CONFLICT (hostname) DO UPDATE set last_heartbeat = NOW()
       |]
 
+recordHeartbeatReport :: Duration -> M ()
+recordHeartbeatReport maxGap = do
+  let gapSeconds = toSeconds maxGap
+  void
+    $ pgExec
+      [pgSQL|
+        UPDATE heartbeat_reporting
+        SET reports_recorded_since =
+              CASE
+                WHEN last_report_at IS NULL
+                  OR last_report_at
+                       < NOW() - (${gapSeconds}::double precision * interval '1 second')
+                THEN NOW()
+                ELSE reports_recorded_since
+              END,
+            last_report_at = NOW()
+        WHERE id
+      |]
+
+heartbeatsCoverWindow :: Duration -> Duration -> M Bool
+heartbeatsCoverWindow window maxGap = do
+  let windowSeconds = toSeconds window
+      gapSeconds = toSeconds maxGap
+  result <-
+    pgQuery
+      [pgSQL|
+        SELECT COALESCE(
+          NOW() >= reports_recorded_since
+                     + (${windowSeconds}::double precision * interval '1 second')
+            AND last_report_at
+                  >= NOW() - (${gapSeconds}::double precision * interval '1 second'),
+          false)
+        FROM heartbeat_reporting
+        WHERE id
+      |]
+  case result of
+    [Just covered] -> pure covered
+    _ ->
+      throw
+        $ OtherError "heartbeatsCoverWindow: heartbeat_reporting is missing its singleton row"
+
 getRecentHeartbeats :: M [Text]
 getRecentHeartbeats =
   pgQuery
