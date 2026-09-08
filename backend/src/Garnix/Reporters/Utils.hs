@@ -3,6 +3,7 @@ module Garnix.Reporters.Utils
     runWithRunReporter,
     runWithRunReporterNoStdout,
     runWithRunReporter_,
+    recordRunCheckRun,
   )
 where
 
@@ -11,6 +12,7 @@ import Cradle qualified
 import Cradle.ProcessConfiguration (ProcessConfiguration (..), addHandle)
 import Data.Function (applyWhen)
 import Garnix.BuildLogs.Types (mkLogLine)
+import Garnix.DB qualified as DB
 import Garnix.Monad
 import Garnix.Prelude
 import Garnix.SafeUnix (safeCreatePipe)
@@ -22,6 +24,7 @@ import System.IO qualified
 withRunReporter :: Reporter -> ReportType -> (RunReporter -> M a) -> M a
 withRunReporter report reportType action = do
   runReporter <- createNewRun report reportType
+  recordRunCheckRun reportType runReporter
   catchEither (action runReporter) $ \e -> do
     let message = case e of
           Right e -> show $ pretty $ err e
@@ -58,3 +61,9 @@ runWithRunReporter' sendStdout runReporter config = do
 
 runWithRunReporter_ :: RunReporter -> Cradle.ProcessConfiguration -> M ()
 runWithRunReporter_ runReporter cmd = runWithRunReporter runReporter cmd
+
+recordRunCheckRun :: ReportType -> RunReporter -> M ()
+recordRunCheckRun reportType runReporter =
+  case (reportType, Garnix.Monad.ghRunId runReporter) of
+    (ReportRun run, Just runId) -> DB.setRunGithubId (run ^. id) runId
+    _ -> pure ()

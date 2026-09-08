@@ -1615,6 +1615,16 @@ getRecentServerHeartbeats =
     WHERE NOW() - last_heartbeat < interval '12 hours'
     |]
 
+setRunGithubId :: RunId -> GhRunId -> M ()
+setRunGithubId runId ghRunId =
+  void
+    $ pgExec
+      [pgSQL|
+        UPDATE runs
+        SET github_run_id = ${ghRunId}
+        WHERE id = ${runId}
+      |]
+
 getPrDeployDurationForOwner :: GhRepoOwner -> M Duration
 getPrDeployDurationForOwner owner = do
   res <-
