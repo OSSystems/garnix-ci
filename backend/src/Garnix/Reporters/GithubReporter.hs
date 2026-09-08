@@ -18,45 +18,52 @@ mkGithubReporter repoInfo commit =
         url <- getRelativeUrl reportType
         let initialReport = mkReport name url commit "" RunReportStatusInProgress
         ghRunId <- newBuildReport repoInfo initialReport
-        logsMVar <- newMVar (RunReportStatusInProgress, Nothing)
-        lastSentLogsMVar <- newMVar Nothing
-        let addNewline t = if "\n" `T.isSuffixOf` t then t else t <> "\n"
-        let appendLogs status logs = do
-              modifyMVar_ logsMVar $ \(curStatus, curLogs) -> do
-                pure (fromMaybe curStatus status, Just $ mconcat $ map addNewline $ catMaybes [curLogs, logs])
-        let sendLogs = do
-              (status, logs) <- readMVar logsMVar
-              lastSent <- readMVar lastSentLogsMVar
-              when (lastSent /= Just (status, logs)) $ do
-                modifyMVar_ lastSentLogsMVar $ const $ pure $ Just (status, logs)
-                let report = mkReport name url commit (fromMaybe "" logs) status
-                void $ ignoringAllErrors $ updateBuildReport ghRunId report repoInfo
-        debouncedSendLogs <- do
-          debounceDuration <- view #githubLogDebounceDuration
-          if debounceDuration == emptyDuration
-            then pure sendLogs
-            else do
-              env <- ask
-              liftIO
-                <$> liftIO
-                  ( mkDebounce
-                      defaultDebounceSettings
-                        { debounceAction = void $ runM env sendLogs,
-                          debounceFreq = toMicroseconds debounceDuration,
-                          debounceEdge = trailingEdge
-                        }
-                  )
-        pure
-          $ RunReporter
-            { reportLogs = \(LogLine package _phase log) -> do
-                appendLogs Nothing $ Just $ prefixLogLineWithPackageName package log
-                debouncedSendLogs,
-              reportComplete = \status -> do
-                appendLogs (Just status) Nothing
-                sendLogs,
-              ghRunId = Just ghRunId
-            }
+        reporterFor reportType ghRunId,
+      resumeRun = flip reporterFor
     }
+  where
+    reporterFor :: ReportType -> GhRunId -> M RunReporter
+    reporterFor reportType ghRunId = do
+      let name = reportName reportType
+      url <- getRelativeUrl reportType
+      logsMVar <- newMVar (RunReportStatusInProgress, Nothing)
+      lastSentLogsMVar <- newMVar Nothing
+      let addNewline t = if "\n" `T.isSuffixOf` t then t else t <> "\n"
+      let appendLogs status logs = do
+            modifyMVar_ logsMVar $ \(curStatus, curLogs) -> do
+              pure (fromMaybe curStatus status, Just $ mconcat $ map addNewline $ catMaybes [curLogs, logs])
+      let sendLogs = do
+            (status, logs) <- readMVar logsMVar
+            lastSent <- readMVar lastSentLogsMVar
+            when (lastSent /= Just (status, logs)) $ do
+              modifyMVar_ lastSentLogsMVar $ const $ pure $ Just (status, logs)
+              let report = mkReport name url commit (fromMaybe "" logs) status
+              void $ ignoringAllErrors $ updateBuildReport ghRunId report repoInfo
+      debouncedSendLogs <- do
+        debounceDuration <- view #githubLogDebounceDuration
+        if debounceDuration == emptyDuration
+          then pure sendLogs
+          else do
+            env <- ask
+            liftIO
+              <$> liftIO
+                ( mkDebounce
+                    defaultDebounceSettings
+                      { debounceAction = void $ runM env sendLogs,
+                        debounceFreq = toMicroseconds debounceDuration,
+                        debounceEdge = trailingEdge
+                      }
+                )
+      pure
+        $ RunReporter
+          { reportLogs = \(LogLine package _phase log) -> do
+              appendLogs Nothing $ Just $ prefixLogLineWithPackageName package log
+              debouncedSendLogs,
+            reportComplete = \status -> do
+              appendLogs (Just status) Nothing
+              sendLogs,
+            ghRunId = Just ghRunId
+          }
 
 prefixLogLineWithPackageName :: Maybe PackageName -> Text -> Text
 prefixLogLineWithPackageName mPkgName logLine = prefix <> logLine
