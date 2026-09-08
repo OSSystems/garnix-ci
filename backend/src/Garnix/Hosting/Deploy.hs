@@ -14,6 +14,7 @@ module Garnix.Hosting.Deploy
     redeployServer,
     stopServer,
     stopUnusedServers,
+    idleHosts,
     cleanupUnreadyServers,
     checkDeployPlan,
     checkTiersWithinCap,
@@ -472,8 +473,13 @@ stopUnusedServers = do
           <> " server(s) are old enough to reap, but no heartbeats have been"
           <> " reported at all. Leaving them alone; is the gateway running?"
       else do
-        let idle host = (hostToDomainName host <> "." <> domain) `notElem` heartbeats
-        traverse_ (stopServer . _hostServerId) (filter idle candidates)
+        traverse_ (stopServer . _hostServerId) (idleHosts domain heartbeats candidates)
+
+idleHosts :: Text -> [Text] -> [Host] -> [Host]
+idleHosts domain heartbeats = filter idle
+  where
+    idle host = T.toLower (hostToDomainName host <> "." <> domain) `notElem` reported
+    reported = map T.toLower heartbeats
 
 -- * Bringing one server up
 

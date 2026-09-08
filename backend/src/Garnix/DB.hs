@@ -9,6 +9,7 @@ import Data.Map qualified as Map
 import Data.Map.Strict (Map, fromList)
 import Data.Pool (withResource)
 import Data.Set qualified as Set
+import Data.Text qualified as T
 import Data.Text.IO (hPutStrLn)
 import Database.PostgreSQL.Typed (PGDatabase (pgDBPass), pgConnect, pgSQL)
 import Database.PostgreSQL.Typed qualified as PSQL
@@ -1555,7 +1556,7 @@ reportBuildResultDB build = do
 
 upsertHeartbeat :: [Text] -> M ()
 upsertHeartbeat hosts =
-  forM_ hosts $ \host -> do
+  forM_ (map T.toLower hosts) $ \host -> do
     pgQuery
       [pgSQL|
     INSERT INTO heartbeat
