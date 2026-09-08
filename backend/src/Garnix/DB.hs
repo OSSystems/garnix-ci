@@ -474,16 +474,24 @@ getCommit owner name commit =
       _ -> throw $ OtherError "Impossible: more than one result"
 
 newCommit :: GhRepoOwner -> GhRepoName -> CommitHash -> M ()
-newCommit owner name commit =
+newCommit owner name commit = do
+  evalHost <- view #hostname
+  evalInstance <- view #evalInstance
+  now <- liftIO getCurrentTime
   void
     $ pgExec
       [pgSQL|
         INSERT INTO commits
-          (repo_user, repo_name, git_commit, status, meta_check)
+          (repo_user, repo_name, git_commit, status, meta_check,
+           eval_host, eval_instance, started_at)
         VALUES
-            (${owner}, ${name}, ${commit}, 'evaluating', 'pending')
+            (${owner}, ${name}, ${commit}, 'evaluating', 'pending',
+             ${evalHost}, ${evalInstance}, ${now})
         ON CONFLICT (repo_user, repo_name, git_commit) DO UPDATE
-          SET meta_check = 'pending'
+          SET meta_check = 'pending',
+              eval_host = ${evalHost},
+              eval_instance = ${evalInstance},
+              started_at = ${now}
       |]
 
 setCommitStatus :: GhRepoOwner -> GhRepoName -> CommitHash -> CommitStatus -> M ()
@@ -721,13 +729,17 @@ newRun name commitInfo = do
   let commitHash = commitInfo ^. commit
   let branch = commitInfo ^. Garnix.Types.branch
   let reqUser = commitInfo ^. Garnix.Types.reqUser
+  evalHost <- view #hostname
+  evalInstance <- view #evalInstance
   result <-
     pgQuery
       [pgSQL|
         INSERT INTO runs
-          (name, repo_user, repo_name, git_commit, branch, status, req_user)
+          (name, repo_user, repo_name, git_commit, branch, status, req_user,
+           eval_host, eval_instance)
         VALUES
-          (${name}, ${repoOwner}, ${repoName}, ${commitHash}, ${branch}, NULL, ${reqUser})
+          (${name}, ${repoOwner}, ${repoName}, ${commitHash}, ${branch}, NULL, ${reqUser},
+           ${evalHost}, ${evalInstance})
         RETURNING
           id, name, repo_user, repo_name, git_commit, branch, status, req_user, start_time
       |]
@@ -1468,6 +1480,7 @@ getCommitSummary commit = do
 newBuildDB :: CommitInfo -> PackageInfo -> Text -> Bool -> M Build
 newBuildDB commitInfo packageInfo evalHost wantsIncrementalism = do
   now <- liftIO getCurrentTime
+  evalInstance <- view #evalInstance
   changes <-
     pgQueryPrism
       _Build
@@ -1486,6 +1499,7 @@ newBuildDB commitInfo packageInfo evalHost wantsIncrementalism = do
          start_time,
          wants_incrementalism,
          eval_host,
+         eval_instance,
          uploaded_to_cache
         )
     VALUES
@@ -1502,6 +1516,7 @@ newBuildDB commitInfo packageInfo evalHost wantsIncrementalism = do
          ${now},
          ${wantsIncrementalism},
          ${evalHost},
+         ${evalInstance},
          FALSE
         )
     ON CONFLICT DO NOTHING
@@ -1613,6 +1628,34 @@ getRecentServerHeartbeats =
   SELECT hostname
     FROM server_heartbeat
     WHERE NOW() - last_heartbeat < interval '12 hours'
+    |]
+
+-- * Eval ownership
+
+upsertEvalHeartbeat :: M ()
+upsertEvalHeartbeat = do
+  hostname <- view #hostname
+  instance_ <- view #evalInstance
+  void
+    $ pgExec
+      [pgSQL|
+        INSERT INTO eval_heartbeat
+          (hostname, instance, last_beat)
+        VALUES (${hostname}, ${instance_}, NOW())
+        ON CONFLICT (hostname) DO UPDATE
+          SET instance = ${instance_},
+              last_beat = NOW()
+      |]
+
+getLiveEvalInstances :: M [Text]
+getLiveEvalInstances = do
+  window <- view #evalHeartbeatWindow
+  let seconds = toSeconds window
+  pgQuery
+    [pgSQL|
+      SELECT instance
+      FROM eval_heartbeat
+      WHERE NOW() - last_beat < (${seconds}::double precision * interval '1 second')
     |]
 
 setRunGithubId :: RunId -> GhRunId -> M ()

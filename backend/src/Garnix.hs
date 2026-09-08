@@ -21,6 +21,8 @@ import Data.Set qualified as Set
 import Data.Text qualified as T
 import Data.Text.IO (hPutStrLn)
 import Data.Text.IO qualified as T
+import Data.UUID qualified as UUID
+import Data.UUID.V4 qualified as UUID
 import Database.PostgreSQL.Typed (pgDisconnect)
 import GHC.Conc (getNumProcessors)
 import Garnix.API
@@ -423,6 +425,7 @@ withEnv testFeatures buildLogsDir buildLogsReportingPort action = do
   nixEvalPool <- Garnix.Monad.Pool.newPool 50 metrics #evalQueueWaitTime #evalQueueLen
   s3UploadPool <- Garnix.Monad.Pool.newPool 100 metrics #s3QueueWaitTime #s3QueueLen
   Cradle.StdoutTrimmed hostname <- Cradle.run $ Cradle.cmd "hostname"
+  evalInstance <- (\uuid -> hostname <> "#" <> UUID.toText uuid) <$> UUID.nextRandom
   mocks <- envMocks testFeatures
   featureFlagConfig <- getFeatureFlagConfig
   fodCheckPool <- Garnix.Monad.Pool.newPool 20 metrics #fodCheckQueueWaitTime #fodCheckQueueLen
@@ -499,6 +502,10 @@ withEnv testFeatures buildLogsDir buildLogsReportingPort action = do
               metrics = metrics,
               emptyDir = emptyDir',
               hostname = hostname,
+              evalInstance,
+              evalHeartbeatInterval = fromSeconds @Int 30,
+              evalHeartbeatWindow = fromMinutes @Int 2,
+              evalSweepInterval = fromMinutes @Int 1,
               githubLogDebounceDuration = fromSeconds @Int 15,
               featureFlagConfig,
               fodCheckPool,
