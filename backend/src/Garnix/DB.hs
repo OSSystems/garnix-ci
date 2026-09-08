@@ -1658,6 +1658,156 @@ getLiveEvalInstances = do
       WHERE NOW() - last_beat < (${seconds}::double precision * interval '1 second')
     |]
 
+getOrphanedBuilds :: [Text] -> M [Build]
+getOrphanedBuilds liveInstances =
+  pgQuery
+    [pgSQL|
+      SELECT
+        id,
+        repo_user,
+        repo_name,
+        pr_from_fork,
+        branch,
+        repo_is_public,
+        git_commit,
+        package,
+        package_type,
+        system,
+        req_user,
+        status,
+        start_time,
+        end_time,
+        drv_path,
+        output_paths,
+        github_run_id,
+        persistence_name,
+        wants_incrementalism,
+        eval_host,
+        uploaded_to_cache,
+        already_built
+      FROM builds
+      WHERE end_time IS NULL
+        AND (eval_instance IS NULL
+             OR NOT (eval_instance = ANY(${liveInstances}::text[])))
+      ORDER BY start_time
+      LIMIT 200
+    |]
+    <&> map
+      ( \( id,
+           repoUser,
+           repoName,
+           prFromFork,
+           branch,
+           repoIsPublic,
+           gitCommit,
+           package,
+           packageType,
+           system,
+           reqUser,
+           status,
+           startTime,
+           endTime,
+           drvPath,
+           outputPaths,
+           githubRunId,
+           persistenceName,
+           wantsIncrementalism,
+           evalHost,
+           uploadedToCache,
+           alreadyBuilt
+           ) ->
+            Build
+              { _buildId = id,
+                _buildRepoUser = repoUser,
+                _buildRepoName = repoName,
+                _buildPrFromFork = prFromFork,
+                _buildBranch = branch,
+                _buildRepoIsPublic = repoIsPublic,
+                _buildGitCommit = gitCommit,
+                _buildPackage = package,
+                _buildPackageType = packageType,
+                _buildSystem = system,
+                _buildReqUser = reqUser,
+                _buildStatus = status,
+                _buildStartTime = startTime,
+                _buildEndTime = endTime,
+                _buildDrvPath = drvPath,
+                _buildOutputPaths = outputPaths,
+                _buildGithubRunId = githubRunId,
+                _buildPersistenceName = persistenceName,
+                _buildWantsIncrementalism = wantsIncrementalism,
+                _buildEvalHost = evalHost,
+                _buildUploadedToCache = uploadedToCache,
+                _buildAlreadyBuilt = alreadyBuilt
+              }
+      )
+
+getOrphanedRuns :: [Text] -> M [(Run, Maybe GhRunId)]
+getOrphanedRuns liveInstances =
+  pgQuery
+    [pgSQL|
+      SELECT id, name, repo_user, repo_name, git_commit, branch, status,
+             req_user, start_time, end_time, github_run_id
+      FROM runs
+      WHERE end_time IS NULL
+        AND (eval_instance IS NULL
+             OR NOT (eval_instance = ANY(${liveInstances}::text[])))
+      ORDER BY start_time
+      LIMIT 200
+    |]
+    <&> map
+      ( \(id, name, repoOwner, repoName, gitCommit, branch, status, reqUser, startTime, endTime, githubRunId) ->
+          ( Run
+              { _runId = id,
+                _runName = name,
+                _runRepoUser = repoOwner,
+                _runRepoName = repoName,
+                _runGitCommit = gitCommit,
+                _runBranch = branch,
+                _runStatus = status,
+                _runReqUser = reqUser,
+                _runStartTime = startTime,
+                _runEndTime = endTime
+              },
+            githubRunId
+          )
+      )
+
+getStuckMetaChecks :: [Text] -> M [(GhRepoOwner, GhRepoName, CommitHash)]
+getStuckMetaChecks liveInstances =
+  pgQuery
+    [pgSQL|
+      SELECT c.repo_user, c.repo_name, c.git_commit
+      FROM commits c
+      WHERE c.status = 'evaluated'
+        AND c.meta_check = 'pending'
+        AND (c.eval_instance IS NULL
+             OR NOT (c.eval_instance = ANY(${liveInstances}::text[])))
+        AND NOT EXISTS (
+          SELECT 1
+          FROM builds b
+          WHERE b.repo_user = c.repo_user
+            AND b.repo_name = c.repo_name
+            AND b.git_commit = c.git_commit
+            AND b.end_time IS NULL
+        )
+      ORDER BY c.started_at
+      LIMIT 200
+    |]
+
+getOrphanedEvaluations :: [Text] -> M [(GhRepoOwner, GhRepoName, CommitHash)]
+getOrphanedEvaluations liveInstances =
+  pgQuery
+    [pgSQL|
+      SELECT repo_user, repo_name, git_commit
+      FROM commits
+      WHERE status = 'evaluating'
+        AND (eval_instance IS NULL
+             OR NOT (eval_instance = ANY(${liveInstances}::text[])))
+      ORDER BY started_at
+      LIMIT 200
+    |]
+
 setRunGithubId :: RunId -> GhRunId -> M ()
 setRunGithubId runId ghRunId =
   void

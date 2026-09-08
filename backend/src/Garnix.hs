@@ -39,10 +39,12 @@ import Garnix.LocalProvisioner (localProvisionerInterface)
 import Garnix.Monad
 import Garnix.Monad.KeyedMutex (newKeyedMutex)
 import Garnix.Monad.Metrics (registerMetrics, serveMetrics)
+import Garnix.Monad.NoThrow (forkForever)
 import Garnix.Monad.Pool qualified
 import Garnix.NixConfig (defaultNixConfig, githubAccessTokenNixConfig)
 import Garnix.Prelude
 import Garnix.S3Cache (runCacheMaintenance)
+import Garnix.Sweep (heartbeat, sweepOrphans)
 import Garnix.Types
 import Garnix.UserLogs
 import GitHub.App.Auth (AppAuth (..))
@@ -573,6 +575,17 @@ runWith opts = do
         $ void
         $ runM env
         $ forever (maintainWarmPool *> threadDelay (fromMinutes @Int 1))
+
+      runM env heartbeat >>= \case
+        Right () -> pure ()
+        Left problem ->
+          hPutStrLn stderr $ "Failed to record this process as alive: " <> show problem
+
+      void $ runM env $ do
+        heartbeatInterval <- view #evalHeartbeatInterval
+        void $ forkForever heartbeatInterval heartbeat
+        sweepInterval <- view #evalSweepInterval
+        void $ forkForever sweepInterval sweepOrphans
 
       let settings =
             Warp.defaultSettings
