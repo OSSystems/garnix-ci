@@ -34,6 +34,7 @@ import Garnix.Monad.SubProcess (runSubProcess)
 import Garnix.Nix.Types qualified as Nix
 import Garnix.NixConfig (addNixConfigEnvironment)
 import Garnix.Prelude hiding (Alternative)
+import Garnix.Reporters.Utils (recordRunCheckRun)
 import Garnix.Types
 import Garnix.YamlConfig qualified as YamlConfig
 import System.Metrics.Prometheus.Metric.Histogram qualified as Prometheus
@@ -80,6 +81,7 @@ getFodChecker reporter commitInfo = do
         then do
           run <- DB.newRun "FOD checks" commitInfo
           runReporter <- createNewRun reporter (ReportRun run)
+          recordRunCheckRun (ReportRun run) runReporter
           Just <$> mkFodChecker runReporter
         else pure Nothing
     else do
