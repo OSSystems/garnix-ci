@@ -180,7 +180,7 @@ truncateDBMNoInsert = do
           users,
           builds,
           commits,
-          heartbeat,
+          server_heartbeat,
           access_tokens,
           github_user_credentials,
           cache_store_hashes,

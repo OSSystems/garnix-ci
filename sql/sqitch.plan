@@ -11,3 +11,4 @@ add_hosting_servers [init] 2026-09-01T00:00:00Z Samuel Silva <samuel.silva@ossys
 add_hosting_deploy [add_hosting_servers] 2026-09-02T00:00:00Z Samuel Silva <samuel.silva@ossystems.com.br> # Server exposure, domains, ssh users and resource stats
 deploy_pr_comments [init] 2026-09-04T00:00:00Z Samuel Silva <samuel@ossystems.com.br> # Track which pull request deploy comments have been posted: the deployed addresses once per pull request, and a deploy failure once per commit
 heartbeat_reporting [init] 2026-09-07T00:00:00Z Samuel Silva <samuel@ossystems.com.br> # Track how long the hosting gateway has been reporting the hostnames it serves, so the reaper does not read a heartbeat table that is merely young as proof that every deploy is idle
+rename_heartbeat_table [init] 2026-09-08T00:00:00Z Samuel Silva <samuel@ossystems.com.br> # Rename heartbeat to server_heartbeat, so the hosting gateway's signal is not confused with any other liveness signal

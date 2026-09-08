@@ -45,9 +45,6 @@ SELECT repo_user, repo_name
 SELECT created_at, config
     FROM feature_flags WHERE FALSE;
 
-SELECT hostname, last_heartbeat
-    FROM heartbeat WHERE FALSE;
-
 SELECT github_login, internal_token
     FROM internal_access_tokens WHERE FALSE;
 

@@ -482,7 +482,7 @@ stopUnusedServers = do
           <> idleWindowHours
           <> ". Leaving them alone; is the gateway running?"
       else do
-        heartbeats <- DB.getRecentHeartbeats
+        heartbeats <- DB.getRecentServerHeartbeats
         traverse_ (reapUnusedServer domain) (idleHosts domain heartbeats candidates)
 
 reapUnusedServer :: Text -> Host -> M ()
