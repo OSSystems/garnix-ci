@@ -348,6 +348,25 @@ spec = do
       matchesDeployment prDeploy (Yaml.OnPullRequest (ServerTier "i2x4"))
         `shouldBe` Just (ServerTier "i2x4", False)
 
+  describe "idleHosts" $ do
+    it "keeps a candidate the gateway reported serving" $ do
+      idleHosts "hosting.example" ["web.pull-42.widgets.acme.hosting.example"] [prCandidate]
+        `shouldBe` []
+
+    it "reaps a candidate the gateway never reported" $ do
+      idleHosts "hosting.example" ["other.hosting.example"] [prCandidate]
+        `shouldBe` [prCandidate]
+
+    it "keeps a candidate reported under a different case" $ do
+      idleHosts
+        "hosting.example"
+        ["web.pull-42.widgets.acme.hosting.example"]
+        [prCandidate {_hostRepoOwner = GhRepoOwner (GhLogin "AcMe")}]
+        `shouldBe` []
+
+    it "reaps everything when the gateway reported nothing" $ do
+      idleHosts "hosting.example" [] [prCandidate] `shouldBe` [prCandidate]
+
   describe "checkTiersWithinCap" $ do
     it "accepts anything when the instance sets no cap" $ do
       capError Nothing mainDeploy [declOnBranchTier "web" "main" "i64x256"]
@@ -613,3 +632,21 @@ deploySpecJson overrides =
           name `notElem` map fst overrides
       ]
     <> [(Aeson.Key.fromText name, value) | (name, value) <- overrides]
+
+prCandidate :: Host
+prCandidate =
+  Host
+    { _hostRepoOwner = GhRepoOwner (GhLogin "acme"),
+      _hostRepoName = GhRepoName "widgets",
+      _hostBranch = Branch "main",
+      _hostPackageName = PackageName "web",
+      _hostPullRequest = Just (GhPullRequestId 42),
+      _hostAddress = ServerAddress (Just "10.111.0.7") Nothing,
+      _hostDrvPath = Nothing,
+      _hostPersistenceName = Nothing,
+      _hostServerId = ServerId (review hashIdInt 1),
+      _hostInstanceId = Just (InstanceId "guest-1"),
+      _hostIsPrimary = False,
+      _hostDomains = [],
+      _hostHttpPorts = []
+    }
