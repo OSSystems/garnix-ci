@@ -117,6 +117,7 @@ library
       Garnix.S3Cache
       Garnix.SafeUnix
       Garnix.Sandbox
+      Garnix.Sweep
       Garnix.Types
       Garnix.Types.ExternalLenses
       Garnix.Types.Keys
@@ -766,6 +767,7 @@ test-suite spec
       Garnix.Reporters.UtilsSpec
       Garnix.S3CacheSpec
       Garnix.SandboxSpec
+      Garnix.SweepSpec
       Garnix.TestHelpers
       Garnix.TestHelpers.Common
       Garnix.TestHelpers.Deprecated
@@ -876,6 +878,7 @@ test-suite spec
       Garnix.S3Cache
       Garnix.SafeUnix
       Garnix.Sandbox
+      Garnix.Sweep
       Garnix.Types
       Garnix.Types.ExternalLenses
       Garnix.Types.Keys

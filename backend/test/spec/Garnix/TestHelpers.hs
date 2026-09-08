@@ -195,7 +195,8 @@ truncateDBMNoInsert = do
           verified_fods,
           servers,
           server_pool,
-          server_stats
+          server_stats,
+          runs
       |]
 
 truncateDBM :: M ()
