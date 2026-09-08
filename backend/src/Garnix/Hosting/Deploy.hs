@@ -483,7 +483,20 @@ stopUnusedServers = do
           <> ". Leaving them alone; is the gateway running?"
       else do
         heartbeats <- DB.getRecentHeartbeats
-        traverse_ (stopServer . _hostServerId) (idleHosts domain heartbeats candidates)
+        traverse_ (reapUnusedServer domain) (idleHosts domain heartbeats candidates)
+
+reapUnusedServer :: Text -> Host -> M ()
+reapUnusedServer domain host = do
+  log Informational
+    $ "stopUnusedServers: reaping "
+    <> hostToDomainName host
+    <> "."
+    <> domain
+    <> " (server "
+    <> showPretty (_hostServerId host)
+    <> "): the gateway reported no request reaching it in "
+    <> idleWindowHours
+  stopServer (_hostServerId host)
 
 idleHosts :: Text -> [Text] -> [Host] -> [Host]
 idleHosts domain heartbeats = filter idle
