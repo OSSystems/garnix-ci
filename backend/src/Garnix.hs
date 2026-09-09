@@ -286,6 +286,7 @@ withEnv testFeatures buildLogsDir buildLogsReportingPort action = do
   nixConfig <-
     lookupOptionalSecret "GITHUB_ACCESS_TOKEN" (secretFile "github_access_token")
       <&> maybe defaultNixConfig (\token -> githubAccessTokenNixConfig (GhToken token) <> defaultNixConfig)
+  allowedBuildOwners <- parseAllowedOwners . fmap cs <$> lookupEnv "GARNIX_ALLOWED_OWNERS"
   s3CacheEnabled <-
     lookupEnv "S3_CACHE_ENABLED" <&> \case
       Just v | T.toLower (cs v) == "false" -> False
@@ -464,6 +465,7 @@ withEnv testFeatures buildLogsDir buildLogsReportingPort action = do
               githubClientSecret = ghClientSecret,
               githubClientId = ghClientId,
               adminGithubLogin = adminGhLogin,
+              allowedBuildOwners = allowedBuildOwners,
               buildLogsReportingPort = buildLogsReportingPort,
               workingDir = curDir,
               nixXdgCacheDir = Nothing,

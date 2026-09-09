@@ -95,6 +95,9 @@ data Env = Env
     githubClientSecret :: Text,
     githubClientId :: Text,
     adminGithubLogin :: Maybe GhLogin,
+    -- | Self-hosted owner allowlist. Nothing = allow all (upstream default);
+    -- Just os = only these GitHub owners may build (GARNIX_ALLOWED_OWNERS).
+    allowedBuildOwners :: Maybe [GhLogin],
     buildLogsReportingPort :: Maybe Int,
     githubInterface :: GithubInterface,
     -- | A thread-safe version of `CWD`
@@ -852,3 +855,18 @@ safeGetAbsoluteFlakeDir (FlakeDir flakeDir) = do
     then pure result
     else do
       throw $ OtherError $ "'" <> cs flakeDir <> "' is not a path within the repo"
+
+-- | The @GARNIX_ALLOWED_OWNERS@ allowlist: a comma-separated list of GitHub
+-- owners. 'Nothing' — unset, empty, or only separators — keeps upstream's
+-- allow-all. Logins are normalized, since what an operator types here is not
+-- necessarily the casing GitHub sends.
+parseAllowedOwners :: Maybe Text -> Maybe [GhLogin]
+parseAllowedOwners raw =
+  case maybe [] (filter (not . T.null) . map T.strip . T.splitOn ",") raw of
+    [] -> Nothing
+    owners -> Just $ map (normalizeGhLogin . GhLogin) owners
+
+-- | 'Nothing' means no allowlist is configured, so every owner may build.
+isAllowedOwner :: Maybe [GhLogin] -> GhRepoOwner -> Bool
+isAllowedOwner Nothing _ = True
+isAllowedOwner (Just owners) owner = normalizeGhLogin (getGhRepoOwner owner) `elem` owners
