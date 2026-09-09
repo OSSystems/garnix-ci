@@ -32,6 +32,7 @@ module Garnix.YamlConfig
     getConfig,
     includeSection,
     incrementalizeBuildsSection,
+    instanceDefaultConfig,
     moduleSection,
     parseAttributeMatcher,
     secondPart,
@@ -101,7 +102,21 @@ getConfig = do
           case eDecoded of
             Left e -> throw $ DecodeConfigError . cs $ prettyPrintParseException e
             Right decoded -> pure decoded
-        else pure def
+        else instanceDefaultConfig
+
+-- | The config a repo with no @garnix.yaml@ builds with. @GARNIX_DEFAULT_CONFIG@
+-- points at a file in the same format, so an operator can change the default
+-- build set at deploy time without recompiling; unset falls back to the built-in
+-- default.
+instanceDefaultConfig :: (HasCallStack) => M GarnixConfig
+instanceDefaultConfig =
+  liftIO (lookupEnv "GARNIX_DEFAULT_CONFIG") >>= \case
+    Nothing -> pure def
+    Just path -> do
+      eDecoded <- liftIO $ decodeFileEither path
+      case eDecoded of
+        Left e -> throw $ DecodeConfigError $ "GARNIX_DEFAULT_CONFIG (" <> cs path <> "): " <> cs (prettyPrintParseException e)
+        Right decoded -> pure decoded
 
 decodeConfig :: ByteString -> Either String GarnixConfig
 decodeConfig = first prettyPrintParseException . decodeEither'
