@@ -262,6 +262,7 @@ withTestEnvironment tempDir action = do
         lookupOptionalSecret "GITHUB_ACCESS_TOKEN" (secretsDir <> "/github_access_token")
           <&> maybe defaultNixConfig (\token -> githubAccessTokenNixConfig (GhToken token) <> defaultNixConfig)
       deployMutex <- newKeyedMutex
+      nixBuildPool <- Garnix.Monad.Pool.newPool 40 metrics #nixBuildQueueWaitTime #nixBuildQueueLen
       withDefaultLogger $ \defaultLogger -> do
         ghInterface <- Deprecated.testGithubInterface tempDir buildRef
         let env =
@@ -328,7 +329,8 @@ withTestEnvironment tempDir action = do
                   hostingBudget = HostingBudget Nothing Nothing Nothing Nothing,
                   warmPoolTargets = mempty,
                   hostingSshKeys = [],
-                  guestSubnetPrefix = "10.111.0."
+                  guestSubnetPrefix = "10.111.0.",
+                  nixBuildPool
                 }
         action env
   where
