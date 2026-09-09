@@ -162,6 +162,20 @@ rec {
         ${lib.concatLines (lib.map checkNoUnqualifiedImports modulesMustBeQualified)}
         touch $out
       '';
+    check-immutable-flake-refs = pkgs.runCommand "check-immutable-flake-refs" { } ''
+      cd ${./.}
+      SHA_AS_REF=$(grep -rEn '\?ref=[0-9a-f]{40}' src test || true)
+      if [ -n "$SHA_AS_REF" ]; then
+        echo -e "A commit sha must be given as ?rev=, not ?ref=. Nix resolves ?ref= through api.github.com, which is rate limited:\n$SHA_AS_REF"
+        exit 1
+      fi
+      BRANCH_HEAD=$(grep -rEn 'github:[^"]+/(main|master)"' test/spec/Garnix || true)
+      if [ -n "$BRANCH_HEAD" ]; then
+        echo -e "Specs that run in CI must pin flake inputs to a commit sha, not a branch head:\n$BRANCH_HEAD"
+        exit 1
+      fi
+      touch $out
+    '';
   };
   shellHook = ''
     DB_DIR=$(git rev-parse --show-toplevel)/pg-tmp

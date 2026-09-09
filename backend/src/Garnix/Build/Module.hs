@@ -62,7 +62,7 @@ remoteWithFlake branch values = Checkout.withBeforeAction $ do
     generateNixFlakeLockFile :: M ()
     generateNixFlakeLockFile = do
       let modules = values ^. #modules
-      let garnixLibInput = ("garnix-lib", "github:garnix-io/garnix-lib?ref=d3f3a98a0baddb3bdc6e0d028d1b58251a1d86f5")
+      let garnixLibInput = ("garnix-lib", "github:garnix-io/garnix-lib?rev=d3f3a98a0baddb3bdc6e0d028d1b58251a1d86f5")
       let inputs =
             garnixLibInput
               : ( ( \m ->
@@ -71,7 +71,7 @@ remoteWithFlake branch values = Checkout.withBeforeAction $ do
                           <> getGhLogin (getGhRepoOwner $ m ^. #repo_user)
                           <> "/"
                           <> getGhRepoName (m ^. #repo_name)
-                          <> "?ref="
+                          <> "?rev="
                           <> getCommitHash (m ^. #git_commit)
                       )
                   )

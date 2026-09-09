@@ -518,7 +518,7 @@ spec = do
                 $ cs
                   [i|
                     {
-                      inputs.garnix-incrementalize.url = "github:garnix-io/incrementalize/main";
+                      inputs.garnix-incrementalize.url = "github:garnix-io/incrementalize/3b21460ce172091482946ea20ef3dcaa4fc0047f";
                       inputs.nixpkgs.url = "#{testNixpkgsUrl}";
                       outputs = { garnix-incrementalize, nixpkgs, ... } :
                         let pkgs = nixpkgs.legacyPackages.x86_64-linux;
