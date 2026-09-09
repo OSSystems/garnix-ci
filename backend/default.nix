@@ -62,7 +62,9 @@ let
     pkgs.psmisc # for `fuser` in specs
   ];
   garnixDevDependencies = [
-    (pkgs.haskell-language-server.override { supportedGhcVersions = [ "967" ]; })
+    (pkgs.haskell-language-server.override {
+      supportedGhcVersions = [ (builtins.replaceStrings [ "." ] [ "" ] pkgs.haskellPackages.ghc.version) ];
+    })
     (pkgs.haskellPackages.ghc.withPackages (p: p.garnix.getBuildInputs.haskellBuildInputs))
     pkgs.ghcid
     pkgs.haskellPackages.cabal-install
@@ -134,7 +136,7 @@ rec {
       '';
   };
   checks = {
-    hlint = pkgs.runCommand "hlint" { buildInputs = [ pkgs.haskell.packages.ghc967.hlint ]; } ''
+    hlint = pkgs.runCommand "hlint" { buildInputs = [ pkgs.haskellPackages.hlint ]; } ''
       cd ${./.}
       hlint src test
       touch $out
