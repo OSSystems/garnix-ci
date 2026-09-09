@@ -155,7 +155,12 @@ data Env = Env
     hostingSshKeys :: [FilePath],
     -- | Dotted prefix of the bridge subnet guests live on, e.g. @"10.111.0."@.
     -- A guest's unauthenticated stats push has to come from an address on it.
-    guestSubnetPrefix :: Text
+    guestSubnetPrefix :: Text,
+    -- | Bounds concurrent @nix build@ dispatch (keyed by repo owner, like the
+    -- eval pool). Without it every attribute of a flake fires @nix build@ at
+    -- once, oversubscribing memory and — because the build timeout wraps the
+    -- queue wait — making backlogged builds spuriously time out.
+    nixBuildPool :: Garnix.Monad.Pool.Pool GhRepoOwner
   }
   deriving stock (Generic)
 
