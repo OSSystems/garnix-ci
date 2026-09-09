@@ -486,6 +486,11 @@ withEnv testFeatures buildLogsDir buildLogsReportingPort action = do
       <*> pure maxTier
       <*> pure branchReserve
   warmPoolTargets <- warmPoolTargetsFromEnv
+  -- Caps concurrent realisation. Previously unbounded (every attr fired `nix
+  -- build` at once); the default keeps large instances effectively unthrottled
+  -- while small self-hosted ones set it near their builder's core count.
+  nixBuildPoolSize <- Garnix.Monad.Pool.poolSizeFromEnv "GARNIX_NIX_BUILD_POOL_SIZE" 50
+  nixBuildPool <- Garnix.Monad.Pool.newPool nixBuildPoolSize metrics #nixBuildQueueWaitTime #nixBuildQueueLen
   withDefaultLogger $ \defaultLogger -> do
     let env =
           Env
@@ -559,7 +564,8 @@ withEnv testFeatures buildLogsDir buildLogsReportingPort action = do
               hostingBudget,
               warmPoolTargets,
               hostingSshKeys,
-              guestSubnetPrefix
+              guestSubnetPrefix,
+              nixBuildPool
             }
     env <- pure $ env & #forges %~ (<> Map.fromList otherForges)
     action env

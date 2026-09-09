@@ -21,6 +21,7 @@ import Garnix.Limits qualified as Limits
 import Garnix.Monad
 import Garnix.Monad.Concurrency
 import Garnix.Monad.Metrics
+import Garnix.Monad.Pool (withPoolM)
 import Garnix.Monad.SubProcess
 import Garnix.Nix.Types (DrvPath)
 import Garnix.NixConfig (addNixConfigEnvironment)
@@ -296,9 +297,14 @@ runNixBuild runReporter cacheDir workingDir build drvPath = do
   -- that nothing gets garbage collected until the working dir is.
   uuid :: UUID <- randomIO
   buildTimeoutDuration <- liftIO Limits.buildTimeout
+  -- Acquire a build slot *outside* the timeout: a backlogged build waits here
+  -- untimed, and only starts its build-timeout clock once it can actually run.
+  -- Keyed by repo owner for the same round-robin fairness as the eval pool.
   mExitCode <-
-    withTextSpan ("phase", "build") $ do
-      withUtf8LinesStream processor $ \logHandle -> do
+    withPoolM nixBuildPool (build ^. repoUser)
+      $ withTextSpan ("phase", "build")
+      $ withUtf8LinesStream processor
+      $ \logHandle ->
         timeout buildTimeoutDuration
           $ (>>= run)
           $ cmd "comment"
