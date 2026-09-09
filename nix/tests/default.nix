@@ -179,6 +179,6 @@ in
   in runTest (if testFile ? testModule then testFile else { testModule = testFile; })
 ))
 //
-lib.optionalAttrs (pkgs.stdenv.isx86_64) (generatePerMachineTest pkgs x86MachineTests)
+lib.optionalAttrs (pkgs.stdenv.hostPlatform.isx86_64) (generatePerMachineTest pkgs x86MachineTests)
   //
-lib.optionalAttrs (pkgs.stdenv.isAarch64) (generatePerMachineTest pkgs aarch64MachineTests)
+lib.optionalAttrs (pkgs.stdenv.hostPlatform.isAarch64) (generatePerMachineTest pkgs aarch64MachineTests)

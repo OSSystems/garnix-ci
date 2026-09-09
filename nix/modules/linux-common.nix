@@ -111,7 +111,7 @@ in
     killRogueNixProcesses = lib.mkEnableOption "kill-rogue-nix-processes";
   };
 
-  config = lib.mkIf pkgs.stdenv.isLinux {
+  config = lib.mkIf pkgs.stdenv.hostPlatform.isLinux {
     # Limit the amount of generations kept in the bootloader config to avoid
     # filling up the boot partition.
     boot.loader = {

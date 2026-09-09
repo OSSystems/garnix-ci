@@ -140,7 +140,7 @@ in
       ];
     }
     (lib.optionalAttrs (!isDarwin) {
-      systemd.services.custom-gc = lib.mkIf pkgs.stdenv.isLinux {
+      systemd.services.custom-gc = lib.mkIf pkgs.stdenv.hostPlatform.isLinux {
         serviceConfig = {
           IOSchedulingClass = "idle";
           Type = "oneshot";
