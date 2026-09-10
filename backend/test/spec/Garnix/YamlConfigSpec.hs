@@ -12,6 +12,8 @@ import Garnix.TestHelpers.GithubInterface qualified as GH
 import Garnix.TestHelpers.Monad
 import Garnix.Types (Branch (..))
 import Garnix.YamlConfig
+import System.Environment (setEnv, unsetEnv)
+import System.IO.Temp (withSystemTempDirectory)
 import Test.Hspec
 
 spec :: Spec
@@ -318,6 +320,32 @@ spec = do
             [ Action "free" ActionTriggerPush FastStartup False,
               Action "wild" ActionTriggerPush SharedResources True
             ]
+
+    inM . aroundM_ suppressLogsWhenPassing . context "the instance default" $ do
+      it "falls back to the built-in default when GARNIX_DEFAULT_CONFIG is unset"
+        $ instanceDefaultConfig
+        `shouldReturnM` def
+
+      it "reads the file GARNIX_DEFAULT_CONFIG points at" $ do
+        let yaml =
+              unindent
+                [i|
+                  builds:
+                    - include:
+                        - "nixosConfigurations.*"
+                      exclude: []
+                |]
+        withSystemTempDirectory "garnix-default-config" $ \dir -> do
+          let path = dir </> "default.yaml"
+          liftIO $ writeFile path yaml
+          bracket_
+            (liftIO $ setEnv "GARNIX_DEFAULT_CONFIG" path)
+            (liftIO $ unsetEnv "GARNIX_DEFAULT_CONFIG")
+            $ do
+              config <- instanceDefaultConfig
+              liftIO $ do
+                Right config `shouldBe` decodeConfig (cs yaml)
+                config `shouldNotBe` def
 
     inM . aroundM_ suppressLogsWhenPassing . context "parsing from flake.nix" $ do
       it "uses default config when there's no yaml file and no config section in flake" $ GH.withFakeGithubInterface $ \ghState -> do
