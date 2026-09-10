@@ -99,6 +99,10 @@ handleRerun ev = do
 
 assertIsAllowedToBuild :: GhRepoOwner -> GhRepoName -> M ()
 assertIsAllowedToBuild owner repo = do
+  -- Self-hosted owner allowlist, checked before the denylist: when
+  -- GARNIX_ALLOWED_OWNERS is set only those owners may build.
+  allowed <- view #allowedBuildOwners
+  unless (isAllowedOwner allowed owner) $ throw IsDeniedAccess
   isDenied <- DB.isDenylisted owner repo
   when isDenied $ do
     throw IsDeniedAccess
