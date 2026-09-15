@@ -1,4 +1,4 @@
-module Garnix.Monad.Pool (Pool, newPool, withPoolM, withPool) where
+module Garnix.Monad.Pool (Pool, newPool, poolSizeFromEnv, parsePoolSize, withPoolM, withPool) where
 
 import Control.Concurrent.Lifted (MVar, modifyMVar, newEmptyMVar, newMVar, putMVar, takeMVar)
 import Data.Generics.Product (HasField')
@@ -8,6 +8,7 @@ import Garnix.Monad.Metrics
 import Garnix.Prelude
 import System.Metrics.Prometheus.Metric.Gauge (Gauge, set)
 import System.Metrics.Prometheus.Metric.Histogram (Histogram)
+import Text.Read (readMaybe)
 
 newtype FairQSem a
   = FairQSem (MVar (Queue a))
@@ -119,3 +120,17 @@ withPool (Pool qsem timerMetricLens lenMetricLens) key action = do
     release = do
       lenMetric <- view (#metrics . lenMetricLens)
       liftIO $ signalQSem lenMetric qsem
+
+-- | Pool size from an environment variable, falling back to @def@.
+poolSizeFromEnv :: (MonadIO m) => String -> Int -> m Int
+poolSizeFromEnv name def = parsePoolSize def <$> liftIO (lookupEnv name)
+
+-- | Anything that is not a positive integer falls back to @def@. A pool of zero
+-- would be a semaphore no acquire can ever pass, so an operator typo would hang
+-- every build with nothing in the log to say why.
+parsePoolSize :: Int -> Maybe String -> Int
+parsePoolSize def raw = fromMaybe def $ do
+  s <- raw
+  n <- readMaybe s
+  guard (n > 0)
+  pure n

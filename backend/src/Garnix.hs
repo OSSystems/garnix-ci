@@ -424,13 +424,19 @@ withEnv testFeatures buildLogsDir buildLogsReportingPort action = do
               10
         )
   metrics <- registerMetrics
-  nixEvalPool <- Garnix.Monad.Pool.newPool 50 metrics #evalQueueWaitTime #evalQueueLen
-  s3UploadPool <- Garnix.Monad.Pool.newPool 100 metrics #s3QueueWaitTime #s3QueueLen
+  -- Pool sizes are overridable via env vars so small self-hosted instances can
+  -- bound memory (each nix eval costs hundreds of MB; the SaaS defaults assume
+  -- large machines). Defaults match the historical hard-coded values.
+  nixEvalPoolSize <- Garnix.Monad.Pool.poolSizeFromEnv "GARNIX_NIX_EVAL_POOL_SIZE" 50
+  nixEvalPool <- Garnix.Monad.Pool.newPool nixEvalPoolSize metrics #evalQueueWaitTime #evalQueueLen
+  s3UploadPoolSize <- Garnix.Monad.Pool.poolSizeFromEnv "GARNIX_S3_UPLOAD_POOL_SIZE" 100
+  s3UploadPool <- Garnix.Monad.Pool.newPool s3UploadPoolSize metrics #s3QueueWaitTime #s3QueueLen
   Cradle.StdoutTrimmed hostname <- Cradle.run $ Cradle.cmd "hostname"
   evalInstance <- (\uuid -> hostname <> "#" <> UUID.toText uuid) <$> UUID.nextRandom
   mocks <- envMocks testFeatures
   featureFlagConfig <- getFeatureFlagConfig
-  fodCheckPool <- Garnix.Monad.Pool.newPool 20 metrics #fodCheckQueueWaitTime #fodCheckQueueLen
+  fodCheckPoolSize <- Garnix.Monad.Pool.poolSizeFromEnv "GARNIX_FOD_CHECK_POOL_SIZE" 20
+  fodCheckPool <- Garnix.Monad.Pool.newPool fodCheckPoolSize metrics #fodCheckQueueWaitTime #fodCheckQueueLen
   compressionBudget <- newCompressionBudget
   provisionerSocket <- lookupEnv "GARNIX_PROVISIONER_SOCKET"
   let provisioner =
@@ -454,6 +460,11 @@ withEnv testFeatures buildLogsDir buildLogsReportingPort action = do
       <*> pure maxTier
       <*> pure branchReserve
   warmPoolTargets <- warmPoolTargetsFromEnv
+  -- Caps concurrent realisation. Previously unbounded (every attr fired `nix
+  -- build` at once); the default keeps large instances effectively unthrottled
+  -- while small self-hosted ones set it near their builder's core count.
+  nixBuildPoolSize <- Garnix.Monad.Pool.poolSizeFromEnv "GARNIX_NIX_BUILD_POOL_SIZE" 50
+  nixBuildPool <- Garnix.Monad.Pool.newPool nixBuildPoolSize metrics #nixBuildQueueWaitTime #nixBuildQueueLen
   withDefaultLogger $ \defaultLogger -> do
     let env =
           Env
@@ -519,7 +530,8 @@ withEnv testFeatures buildLogsDir buildLogsReportingPort action = do
               hostingBudget,
               warmPoolTargets,
               hostingSshKeys,
-              guestSubnetPrefix
+              guestSubnetPrefix,
+              nixBuildPool
             }
     action env
 

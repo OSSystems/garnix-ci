@@ -55,6 +55,8 @@ data Metrics = Metrics
     fodCheckBatchSize :: Histogram,
     fodCheckQueueLen :: Gauge,
     fodCheckQueueWaitTime :: Histogram,
+    nixBuildQueueLen :: Gauge,
+    nixBuildQueueWaitTime :: Histogram,
     registry :: Registry
   }
   deriving (Generic)
@@ -309,6 +311,17 @@ registerMetrics = do
   fodCheckQueueWaitTime <-
     registerHistogram
       "garnix_server_fod_check_queue_wait_time"
+      mempty
+      [0.2, 0.5, 1, 5, 10, 30, 60, 120, 360, 600, 900, 1500, 3000, 10000]
+      registry
+  nixBuildQueueLen <-
+    registerGauge
+      "garnix_server_nix_build_queue_len"
+      mempty
+      registry
+  nixBuildQueueWaitTime <-
+    registerHistogram
+      "garnix_server_nix_build_queue_wait_time"
       mempty
       [0.2, 0.5, 1, 5, 10, 30, 60, 120, 360, 600, 900, 1500, 3000, 10000]
       registry
