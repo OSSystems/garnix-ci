@@ -22,6 +22,36 @@ import Test.Hspec.QuickCheck
 
 spec :: Spec
 spec = around_ silence $ do
+  describe "the build owner allowlist" $ do
+    describe "parseAllowedOwners" $ do
+      it "treats an unset, empty or separator-only variable as no allowlist" $ do
+        parseAllowedOwners Nothing `shouldBe` Nothing
+        parseAllowedOwners (Just "") `shouldBe` Nothing
+        parseAllowedOwners (Just " , ") `shouldBe` Nothing
+
+      it "splits on commas and trims each entry"
+        $ parseAllowedOwners (Just "one, two ,three")
+        `shouldBe` Just ["one", "two", "three"]
+
+      -- GitHub logins are case-insensitive, but what an operator types into the
+      -- deployment is not necessarily the casing GitHub sends on the webhook.
+      it "normalizes the casing an operator happened to type"
+        $ parseAllowedOwners (Just "KraDalby")
+        `shouldBe` Just ["kradalby"]
+
+    describe "isAllowedOwner" $ do
+      it "allows every owner when no allowlist is configured"
+        $ isAllowedOwner Nothing "anyone"
+        `shouldBe` True
+
+      it "allows a listed owner and denies an unlisted one" $ do
+        isAllowedOwner (parseAllowedOwners (Just "kradalby,myorg")) "myorg" `shouldBe` True
+        isAllowedOwner (parseAllowedOwners (Just "kradalby,myorg")) "someone-else" `shouldBe` False
+
+      it "matches regardless of the casing on either side" $ do
+        isAllowedOwner (parseAllowedOwners (Just "KraDalby")) "kradalby" `shouldBe` True
+        isAllowedOwner (parseAllowedOwners (Just "kradalby")) "KraDalby" `shouldBe` True
+
   describe "<?>" $ do
     modifyMaxSuccess (const 5) $ do
       prop "doesn't change the result of a success" $ \(value :: Int) -> runTestM $ do

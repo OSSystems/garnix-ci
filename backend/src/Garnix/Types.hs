@@ -753,6 +753,12 @@ newtype GhLogin = GhLogin {getGhLogin :: Text}
       IsString
     )
 
+-- | GitHub logins are case-insensitive, but 'GhLogin' compares as plain 'Text'.
+-- Fold both sides through this before matching a login against operator-supplied
+-- configuration, where the casing is whatever someone happened to type.
+normalizeGhLogin :: GhLogin -> GhLogin
+normalizeGhLogin = GhLogin . T.toLower . getGhLogin
+
 newtype GhRepoName = GhRepoName {getGhRepoName :: Text}
   deriving stock (Eq, Show, Generic)
   deriving newtype
