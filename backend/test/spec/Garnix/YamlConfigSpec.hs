@@ -319,6 +319,17 @@ spec = do
               Action "wild" ActionTriggerPush SharedResources True
             ]
 
+      it "parses success-triggered actions" $ do
+        let config =
+              cs
+                [i|
+                  actions:
+                    - on: success
+                      run: notify
+                |]
+        (_garnixConfigActions <$> decodeConfig config)
+          `shouldBe` Right [Action "notify" ActionTriggerSuccess FastStartup False]
+
     inM . aroundM_ suppressLogsWhenPassing . context "parsing from flake.nix" $ do
       it "uses default config when there's no yaml file and no config section in flake" $ GH.withFakeGithubInterface $ \ghState -> do
         let emptyFlake =

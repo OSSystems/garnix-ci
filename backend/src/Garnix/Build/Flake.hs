@@ -13,6 +13,7 @@ import Garnix.Build.Helpers
 import Garnix.Build.MetaCheck qualified as MetaCheck
 import Garnix.Build.Package (doBuild)
 import Garnix.Build.Reporting
+import Garnix.BuildLogs.Types (mkLogLine)
 import Garnix.DB qualified as DB
 import Garnix.GetAttributes
 import Garnix.Hosting.Deploy (rolloutNewServerVersion)
@@ -23,7 +24,7 @@ import Garnix.Monad
 import Garnix.Monad.Async (joinAll, joinAll_, resolve, spawn)
 import Garnix.Prelude
 import Garnix.Types as Types
-import Garnix.YamlConfig (Action, ExcludeBranches (..), GarnixConfig, IncrementalizeBuildsSection (..), commentOnFailure, flakeDir, incrementalizeBuildsSection)
+import Garnix.YamlConfig (Action, ActionTrigger (..), ExcludeBranches (..), GarnixConfig, IncrementalizeBuildsSection (..), commentOnFailure, flakeDir, incrementalizeBuildsSection, trigger)
 
 runBuildFlake :: (HasCallStack) => Reporter -> BuildKind -> CommitInfo -> Remote -> M ()
 runBuildFlake reporter buildKind commitInfo withCheckout = do
@@ -58,28 +59,46 @@ runBuildFlake reporter buildKind commitInfo withCheckout = do
             DB.setCommitStatus (commitInfo ^. repoInfo . ghRepoOwner) (commitInfo ^. repoInfo . ghRepoName) (commitInfo ^. commit) Evaluated
             reportBuildResult startingBuildRunReporter updatedBuild
 
+            -- Success-triggered actions must not start alongside the builds
+            -- they gate on; they run (or are concluded unrun) only once every
+            -- build's outcome is known.
+            let (successActions, pushActions) =
+                  partition (\(_, _, a) -> a ^. trigger == ActionTriggerSuccess) initialActions
+
             FodCheck.withFodChecker reporter commitInfo $ \fodChecker -> do
+              let spawnAction (initialBuild, runReporter, actionConfig) =
+                    spawn
+                      $ buildAndRunAction
+                        reporter
+                        fodChecker
+                        runReporter
+                        commitInfo
+                        buildKind
+                        (config ^. flakeDir)
+                        repoConfig
+                        initialBuild
+                        actionConfig
               buildPromises <- forM initialBuilds $ \(initialBuild, runReporter) -> do
                 spawn $ doBuild fodChecker runReporter buildKind (config ^. flakeDir) repoConfig initialBuild
-              actionPromises <- forM initialActions $ \(initialBuild, runReporter, actionConfig) -> do
-                spawn
-                  $ buildAndRunAction
-                    reporter
-                    fodChecker
-                    runReporter
-                    commitInfo
-                    buildKind
-                    (config ^. flakeDir)
-                    repoConfig
-                    initialBuild
-                    actionConfig
+              actionPromises <- forM pushActions spawnAction
               builds <- joinAll buildPromises >>= resolve
               joinAll_ actionPromises >>= resolve
 
               let allBuildsSucceeded = all (\build -> build ^. status == Just Success) builds
 
-              when allBuildsSucceeded $ do
-                Modules.publish reporter config commitInfo
+              if allBuildsSucceeded
+                then do
+                  successPromises <- forM successActions spawnAction
+                  Modules.publish reporter config commitInfo
+                  joinAll_ successPromises >>= resolve
+                else
+                  -- setupActions already registered each action's app-build
+                  -- check. Nothing will build it now, so conclude it here or it
+                  -- hangs queued forever. The action's own run check is never
+                  -- created, because the action never starts.
+                  forM_ successActions $ \(_, runReporter, _) -> do
+                    reportLogs runReporter (mkLogLine "Not run: not all builds succeeded.")
+                    reportComplete runReporter RunReportStatusCancelled
 
               deployments <- case (commitInfo ^. prFromFork, commitInfo ^. branch) of
                 (Nothing, Just branch') ->
