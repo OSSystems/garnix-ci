@@ -1,14 +1,18 @@
 module Garnix.UserLogsSpec where
 
+import Control.Concurrent (threadDelay)
 import Control.Lens
 import Data.Aeson
 import Data.ByteString.Lazy
+import Garnix.Async (timeout)
 import Garnix.BuildLogs.Types (LogLine (LogLine))
+import Garnix.Duration (fromMilliSeconds, fromSeconds, toMicroseconds)
 import Garnix.Monad
 import Garnix.Prelude
 import Garnix.TestHelpers
 import Garnix.Types
 import Garnix.UserLogs
+import Network.Wai.Handler.Warp (testWithApplication)
 import Test.Hspec
 
 -- When changing assertions for `metadata` and `query` you should also
@@ -115,14 +119,28 @@ portWithNoCollectorListening = 1
 
 spec :: Spec
 spec = describe "UserLogs" $ do
-  describe "storeBuildLogLine"
-    $ it "returns without throwing when the local collector is unreachable"
-    $ runTestM
-    $ do
-      build <- testBuild identity
-      withUnmock #storeLogLineMock
-        $ local (#buildLogsReportingPort ?~ portWithNoCollectorListening)
-        $ storeBuildLogLine build (LogLine (Just "some-package") Nothing "line written during a restart")
+  describe "storeBuildLogLine" $ do
+    it "returns without throwing when the local collector is unreachable"
+      $ runTestM
+      $ do
+        build <- testBuild identity
+        withUnmock #storeLogLineMock
+          $ local (#buildLogsReportingPort ?~ portWithNoCollectorListening)
+          $ storeBuildLogLine build (LogLine (Just "some-package") Nothing "line written during a restart")
+
+    it "gives up on a collector that accepts and never answers"
+      $ runTestM
+      $ do
+        build <- testBuild identity
+        let wedged _ _ = threadDelay (toMicroseconds $ fromSeconds @Int 600) >> error "unreachable"
+        liftBaseOp (testWithApplication (pure wedged)) $ \port -> do
+          returned <-
+            timeout (fromSeconds @Int 20)
+              $ withUnmock #storeLogLineMock
+              $ local (#buildLogsReportingPort ?~ port)
+              $ local (#buildLogsPostTimeout .~ fromMilliSeconds @Int 200)
+              $ storeBuildLogLine build (LogLine Nothing Nothing "line nobody will answer for")
+          liftIO $ returned `shouldBe` Just ()
 
   describe "queryOpenSearch"
     $ it "parses OpenSearch responses"

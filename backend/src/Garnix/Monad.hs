@@ -128,6 +128,7 @@ data Env = Env
     evalHeartbeatWindow :: Duration,
     evalSweepInterval :: Duration,
     githubLogDebounceDuration :: Duration,
+    buildLogsPostTimeout :: Duration,
     featureFlagConfig :: FeatureFlagConfig,
     fodCheckPool :: Garnix.Monad.Pool.Pool (),
     compressionBudget :: CompressionBudget,
