@@ -105,7 +105,7 @@ in
           type = lib.types.attrs;
           default = {
             flush = 5;
-            logLevel = "debug";
+            logLevel = "info";
             daemon = "false";
           };
         };
@@ -235,6 +235,10 @@ in
           };
         };
         extraFilters = {
+          "grep" = {
+            Match = "${journalTagPrefix}.*";
+            Exclude = "systemd_unit ^fluent-bit\\.service$";
+          };
           "lua" = {
             Match = "nginx";
             script = pkgs.writeText "nginx-lua-filter.lua" ''
