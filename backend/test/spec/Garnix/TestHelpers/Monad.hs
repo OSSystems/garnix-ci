@@ -318,6 +318,7 @@ withTestEnvironment tempDir action = do
                   evalHeartbeatWindow = fromMinutes 2,
                   evalSweepInterval = fromMinutes 1,
                   githubLogDebounceDuration = fromSeconds 0,
+                  buildLogsPostTimeout = fromSeconds @Int 10,
                   featureFlagConfig,
                   fodCheckPool,
                   provisioner = unconfiguredProvisioner,

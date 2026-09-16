@@ -18,12 +18,14 @@ import Data.Text qualified as T
 import Data.Time
 import Data.Time.Format.ISO8601
 import Garnix.BuildLogs.Types (LogLine (LogLine))
+import Garnix.Duration (toMicroseconds)
 import Garnix.Monad
 import Garnix.Prelude
 import Garnix.Types hiding (branch, commit, repoName, repoOwner, statusCode)
 import Garnix.Types qualified
 import Network.HTTP.Types (Status (statusCode), statusIsSuccessful)
 import Network.Wreq qualified as Wreq
+import System.Timeout qualified as System
 
 storeRunLogLine :: Run -> LogLine -> M ()
 storeRunLogLine run = storeLogLine (fromRun run) (FromRun $ run ^. id)
@@ -49,20 +51,26 @@ storeLogLine metadata = curry $ mockable #storeLogLineMock $ \(openSearchId, log
 
 postToCollector :: Int -> OpenSearchSerializedMessage -> M ()
 postToCollector reportingPort message = do
-  response <- withWreqOptions $ \options ->
-    Wreq.postWith
-      options
-      ("http://localhost:" <> (cs . show $ reportingPort))
-      (toJSON message)
-  unless (statusIsSuccessful $ response ^. Wreq.responseStatus)
-    $ reportDroppedLogLine
-    $ T.intercalate
-      " "
-      [ "received response with status code",
-        response ^. Wreq.responseStatus & show . statusCode,
-        "and body:",
-        response ^. Wreq.responseBody & cs
-      ]
+  limit <- view #buildLogsPostTimeout
+  result <- withWreqOptions $ \options ->
+    System.timeout (toMicroseconds limit)
+      $ Wreq.postWith
+        options
+        ("http://localhost:" <> (cs . show $ reportingPort))
+        (toJSON message)
+  case result of
+    Nothing ->
+      reportDroppedLogLine $ "timed out after " <> show limit
+    Just response ->
+      unless (statusIsSuccessful $ response ^. Wreq.responseStatus)
+        $ reportDroppedLogLine
+        $ T.intercalate
+          " "
+          [ "received response with status code",
+            response ^. Wreq.responseStatus & show . statusCode,
+            "and body:",
+            response ^. Wreq.responseBody & cs
+          ]
 
 reportDroppedLogLine :: Text -> M ()
 reportDroppedLogLine reason =

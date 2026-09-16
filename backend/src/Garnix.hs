@@ -509,6 +509,7 @@ withEnv testFeatures buildLogsDir buildLogsReportingPort action = do
               evalHeartbeatWindow = fromMinutes @Int 2,
               evalSweepInterval = fromMinutes @Int 1,
               githubLogDebounceDuration = fromSeconds @Int 15,
+              buildLogsPostTimeout = fromSeconds @Int 10,
               featureFlagConfig,
               fodCheckPool,
               provisioner,
