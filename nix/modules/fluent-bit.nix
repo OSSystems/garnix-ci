@@ -85,6 +85,11 @@ in
                 url = "https://github.com/fluent/fluent-bit/pull/8396.diff";
                 hash = "sha256-CmDb+HwF3zJmOuV1AbWuCwnX0CNjB0a5QiexPpvp/RY=";
               })
+              (pkgs.fetchpatch {
+                name = "fix-downstream-conn-teardown-uaf.diff";
+                url = "https://github.com/fluent/fluent-bit/pull/12044.diff";
+                hash = "sha256-SQ2Jkk1HJ8vlqBJ3qSZDXVT/HMTAPjZJuDEKDN5Jq0M=";
+              })
             ];
           })
         );
