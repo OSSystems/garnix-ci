@@ -52,7 +52,7 @@ let
     cfg.configuration.parsers);
   filterFiles = (lib.mapAttrsToList
     (name: values:
-      (settingsFormatIni.generate "filter.conf"
+      (settingsFormatIni.generate "filter-${name}.conf"
         {
           FILTER = {
             inherit name;
