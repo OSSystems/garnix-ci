@@ -270,8 +270,8 @@ spec = inM $ do
             INSERT INTO modules
               (repo_user, repo_name, git_commit, enabled, name, schema)
               VALUES
-              ('garnix-io', 'test-module', 'test-module-newer-commit', true , 'testModule', '"test schema"'),
-              ('garnix-io', 'test-module', 'test-module-older-commit', false, 'testModule', '"test schema"')
+              ('garnix-io', 'test-module', '0000000000000000000000000000000000000002', true , 'testModule', '"test schema"'),
+              ('garnix-io', 'test-module', '0000000000000000000000000000000000000001', false, 'testModule', '"test schema"')
           |]
       let moduleConfig =
             [aesonQQ|
@@ -280,7 +280,7 @@ spec = inM $ do
                 "repo_name": "",
                 "user_config": [{
                   "module_name": "testModule",
-                  "git_commit": "test-module-older-commit",
+                  "git_commit": "0000000000000000000000000000000000000001",
                   "values": {
                     "tag": "set",
                     "value": {
@@ -322,7 +322,7 @@ spec = inM $ do
                   "name": "testModule",
                   "repo_user": "garnix-io",
                   "repo_name": "test-module",
-                  "git_commit": "test-module-older-commit",
+                  "git_commit": "0000000000000000000000000000000000000001",
                   "schema": {},
                   "description": ""
                 }]
@@ -333,7 +333,7 @@ spec = inM $ do
       GH.withLocalRepo ghState "owner" "repo" identity defaultCommitInfo (const (pure ())) $ \commitInfo -> do
         result <- try $ Checkout.runWithCheckout remote commitInfo (const (pure ()))
         case result of
-          Left ErrorWithContext {err = RunProcessError {stdErr}} -> stdErr `shouldMatchRegexp` "error: unable to download 'https://api.github.com/repos/garnix-io/test-module/commits/test-module-older-commit'"
+          Left ErrorWithContext {err = RunProcessError {stdErr}} -> stdErr `shouldMatchRegexp` "error: unable to download 'https://api.github.com/repos/garnix-io/test-module/tarball/0000000000000000000000000000000000000001'"
           Left ErrorWithContext {err} -> liftIO $ expectationFailure $ "Expected RunProcessError but got " <> cs (Garnix.Prelude.show err)
           _ -> liftIO $ expectationFailure $ "Expected Left RunProcessError but got " <> cs (Garnix.Prelude.show result)
 
