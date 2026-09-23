@@ -3,37 +3,53 @@
   name = "garnix server (with separate database) tests";
 
   nodes = {
-    garnixServer = { config, lib, nodes, pkgs, ... }: {
-      networking.extraHosts = ''
-        ${nodes.garnixServer.networking.primaryIPAddress} garnix.io
-        ${nodes.garnixServer.networking.primaryIPAddress} app.garnix.io
-        ${nodes.db.networking.primaryIPAddress} ${nodes.db.garnix.database.fqdn}
-      '';
+    garnixServer =
+      {
+        config,
+        lib,
+        nodes,
+        pkgs,
+        ...
+      }:
+      {
+        networking.extraHosts = ''
+          ${nodes.garnixServer.networking.primaryIPAddress} garnix.io
+          ${nodes.garnixServer.networking.primaryIPAddress} app.garnix.io
+          ${nodes.db.networking.primaryIPAddress} ${nodes.db.garnix.database.fqdn}
+        '';
 
-      environment.systemPackages = [ pkgs.httpie ];
+        environment.systemPackages = [ pkgs.httpie ];
 
-      services.garnixServer = {
-        enable = true;
-        testFeatures = [ "DevApi" ];
-        provisionServerPool = false;
-      };
-      garnix.database = {
-        enable = false;
-      };
+        services.garnixServer = {
+          enable = true;
+          testFeatures = [ "DevApi" ];
+          provisionServerPool = false;
+        };
+        garnix.database = {
+          enable = false;
+        };
 
-    };
-    db = { config, lib, nodes, pkgs, ... }: {
-      garnix.database = {
-        enable = true;
-        allowedIPs = [
-          "${nodes.db.networking.primaryIPAddress}/32"
-          "${nodes.garnixServer.networking.primaryIPAddress}/32"
-          "${nodes.garnixServer.networking.primaryIPv6Address}/128"
-          "fe80::/10"
-        ];
-        exporter.enable = true;
       };
-    };
+    db =
+      {
+        config,
+        lib,
+        nodes,
+        pkgs,
+        ...
+      }:
+      {
+        garnix.database = {
+          enable = true;
+          allowedIPs = [
+            "${nodes.db.networking.primaryIPAddress}/32"
+            "${nodes.garnixServer.networking.primaryIPAddress}/32"
+            "${nodes.garnixServer.networking.primaryIPv6Address}/128"
+            "fe80::/10"
+          ];
+          exporter.enable = true;
+        };
+      };
   };
 
   testScript = { nodes, ... }: ''

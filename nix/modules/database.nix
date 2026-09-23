@@ -1,7 +1,8 @@
-{ config
-, lib
-, pkgs
-, ...
+{
+  config,
+  lib,
+  pkgs,
+  ...
 }:
 
 let
@@ -15,16 +16,21 @@ let
     pkgs.runCommand "generate-db-certs"
       {
         nativeBuildInputs = [ pkgs.minica ];
-      } ''
-      minica -ca-cert ${caCerts.cert} -ca-key ${caCerts.key} \
-        -domains ${cfg.fqdn}
-      install -Dm444 -t $out ${cfg.fqdn}/{key,cert}.pem
-    '';
-  setUpSslForPsql = certDir: lib.getExe (pkgs.writeScriptBin "set-up-ssl-for-psql" ''
-    cp ${certDir}/key.pem ${psqlSslPrivateKeyPath}
-    chown postgres:postgres ${psqlSslPrivateKeyPath}
-    chmod 600 ${psqlSslPrivateKeyPath}
-  '');
+      }
+      ''
+        minica -ca-cert ${caCerts.cert} -ca-key ${caCerts.key} \
+          -domains ${cfg.fqdn}
+        install -Dm444 -t $out ${cfg.fqdn}/{key,cert}.pem
+      '';
+  setUpSslForPsql =
+    certDir:
+    lib.getExe (
+      pkgs.writeScriptBin "set-up-ssl-for-psql" ''
+        cp ${certDir}/key.pem ${psqlSslPrivateKeyPath}
+        chown postgres:postgres ${psqlSslPrivateKeyPath}
+        chmod 600 ${psqlSslPrivateKeyPath}
+      ''
+    );
 in
 
 {
@@ -116,22 +122,23 @@ in
         GRANT ALL PRIVILEGES ON DATABASE ${cfg.dbName} TO ${cfg.dbUser};
         CREATE USER ${cfg.dbMonitoringUser};
       '';
-      authentication = lib.concatMapStringsSep "\n"
-        (ip: ''
-          hostssl ${cfg.dbName} ${cfg.dbUser} ${ip} md5
-          hostssl ${cfg.dbName} ${cfg.dbMonitoringUser} ${ip} md5
-        '')
-        cfg.allowedIPs;
+      authentication = lib.concatMapStringsSep "\n" (ip: ''
+        hostssl ${cfg.dbName} ${cfg.dbUser} ${ip} md5
+        hostssl ${cfg.dbName} ${cfg.dbMonitoringUser} ${ip} md5
+      '') cfg.allowedIPs;
     };
 
-    networking.firewall.extraCommands = lib.concatMapStringsSep "\n"
-      (ip:
-        if isIPv6 ip then ''
+    networking.firewall.extraCommands = lib.concatMapStringsSep "\n" (
+      ip:
+      if isIPv6 ip then
+        ''
           ip6tables -I INPUT -p tcp --dport ${toString cfg.dbPort} -s ${ip} -j ACCEPT
-        '' else ''
+        ''
+      else
+        ''
           iptables -I INPUT -p tcp --dport ${toString cfg.dbPort} -s ${ip} -j ACCEPT
-        '')
-      cfg.allowedIPs;
+        ''
+    ) cfg.allowedIPs;
 
     sops = {
       secrets = {
@@ -182,19 +189,21 @@ in
     systemd.services.postgresql = {
       preStart = ''
         ${setUpSslForPsql (
-          if config.garnix.devMode.enable
-            then devCerts
-            else config.security.acme.certs.${cfg.fqdn}.directory
+          if config.garnix.devMode.enable then devCerts else config.security.acme.certs.${cfg.fqdn}.directory
         )}
       '';
-    } // lib.optionalAttrs (!config.garnix.devMode.enable) {
+    }
+    // lib.optionalAttrs (!config.garnix.devMode.enable) {
       after = [ "acme-selfsigned-${cfg.fqdn}.service" ];
       before = [ "acme-${cfg.fqdn}.service" ];
       wants = [ "acme-finished-${cfg.fqdn}.target" ];
     };
 
     # Required for ACME challenge
-    networking.firewall.allowedTCPPorts = [ 80 443 ];
+    networking.firewall.allowedTCPPorts = [
+      80
+      443
+    ];
 
     # This is backed up by borg
     services.postgresqlBackup = {
@@ -214,7 +223,8 @@ in
     };
 
     services.prometheus.exporters.sql = lib.mkIf cfg.exporter.enable (
-      let dbConnectionString = "postgres://${cfg.dbMonitoringUser}@${cfg.fqdn}/${cfg.dbName}?port=${toString cfg.dbPort}&sslmode=${cfg.ssl.mode}&sslrootcert=${cfg.ssl.rootCert}";
+      let
+        dbConnectionString = "postgres://${cfg.dbMonitoringUser}@${cfg.fqdn}/${cfg.dbName}?port=${toString cfg.dbPort}&sslmode=${cfg.ssl.mode}&sslrootcert=${cfg.ssl.rootCert}";
       in
       {
         listenAddress = "127.0.0.1";
@@ -375,16 +385,19 @@ in
       recommendedOptimisation = true;
       proxyTimeout = "600s";
       virtualHosts = {
-        "${cfg.exporter.fqdn}" = lib.mkIf cfg.exporter.enable (config.garnix.devMode.withDevCerts {
-          forceSSL = ! config.garnix.devMode.enable;
-          enableACME = ! config.garnix.devMode.enable;
-          inherit (config.garnix.monitoring-client.nginx) basicAuthFile;
-          locations."/".proxyPass = "http://127.0.0.1:${toString config.services.prometheus.exporters.sql.port}";
-        });
-      } // lib.optionalAttrs (! config.garnix.devMode.enable) {
+        "${cfg.exporter.fqdn}" = lib.mkIf cfg.exporter.enable (
+          config.garnix.devMode.withDevCerts {
+            forceSSL = !config.garnix.devMode.enable;
+            enableACME = !config.garnix.devMode.enable;
+            inherit (config.garnix.monitoring-client.nginx) basicAuthFile;
+            locations."/".proxyPass =
+              "http://127.0.0.1:${toString config.services.prometheus.exporters.sql.port}";
+          }
+        );
+      }
+      // lib.optionalAttrs (!config.garnix.devMode.enable) {
         "${cfg.fqdn}" = {
-          locations."/.well-known/acme-challenge".root =
-            config.security.acme.certs.${cfg.fqdn}.webroot;
+          locations."/.well-known/acme-challenge".root = config.security.acme.certs.${cfg.fqdn}.webroot;
         };
       };
     };

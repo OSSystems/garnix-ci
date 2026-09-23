@@ -3,35 +3,54 @@
   name = "test opensearch node";
 
   nodes = {
-    server1 = { config, nodes, lib, ... }: {
-      garnix.opensearch = {
-        enable = true;
-        fqdn = config.garnix.devMode.certificates.domain;
-        dashboards.enable = true;
-        bindIP = nodes.server1.networking.primaryIPAddress;
-        isSingleNode = true;
+    server1 =
+      {
+        config,
+        nodes,
+        lib,
+        ...
+      }:
+      {
+        garnix.opensearch = {
+          enable = true;
+          fqdn = config.garnix.devMode.certificates.domain;
+          dashboards.enable = true;
+          bindIP = nodes.server1.networking.primaryIPAddress;
+          isSingleNode = true;
+        };
+        networking.extraHosts = "127.0.0.1 ${config.garnix.opensearch.fqdn}";
+        virtualisation = {
+          memorySize = 2048;
+          forwardPorts = [
+            {
+              from = "host";
+              host.port = 4443;
+              guest.port = 443;
+            }
+          ];
+        };
       };
-      networking.extraHosts = "127.0.0.1 ${config.garnix.opensearch.fqdn}";
-      virtualisation = {
-        memorySize = 2048;
-        forwardPorts = [
-          { from = "host"; host.port = 4443; guest.port = 443; }
-        ];
-      };
-    };
 
-    client = { config, lib, nodes, ... }: {
-      garnix.fluent-bit = {
-        enable = lib.mkForce true;
-        devModeOutputsToFile = false;
-        opensearch.fqdn = nodes.server1.garnix.opensearch.fqdn;
+    client =
+      {
+        config,
+        lib,
+        nodes,
+        ...
+      }:
+      {
+        garnix.fluent-bit = {
+          enable = lib.mkForce true;
+          devModeOutputsToFile = false;
+          opensearch.fqdn = nodes.server1.garnix.opensearch.fqdn;
+        };
+        networking.extraHosts = "${nodes.server1.networking.primaryIPAddress} ${nodes.server1.garnix.opensearch.fqdn}";
+        virtualisation.memorySize = 2048;
       };
-      networking.extraHosts = "${nodes.server1.networking.primaryIPAddress} ${nodes.server1.garnix.opensearch.fqdn}";
-      virtualisation.memorySize = 2048;
-    };
   };
 
-  testScript = { nodes, ... }:
+  testScript =
+    { nodes, ... }:
     ''
       start_all()
       server1.wait_for_unit("multi-user.target")

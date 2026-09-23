@@ -1,23 +1,24 @@
-{ mkDerivation
-, aeson
-, base
-, base16-bytestring
-, bytestring
-, cryptonite
-, fetchgit
-, github
-, github-webhooks
-, http-types
-, lib
-, memory
-, servant
-, servant-server
-, string-conversions
-, text
-, transformers
-, unordered-containers
-, wai
-, warp
+{
+  mkDerivation,
+  aeson,
+  base,
+  base16-bytestring,
+  bytestring,
+  cryptonite,
+  fetchgit,
+  github,
+  github-webhooks,
+  http-types,
+  lib,
+  memory,
+  servant,
+  servant-server,
+  string-conversions,
+  text,
+  transformers,
+  unordered-containers,
+  wai,
+  warp,
 }:
 mkDerivation {
   pname = "servant-github-webhook";

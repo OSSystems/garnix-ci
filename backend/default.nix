@@ -1,8 +1,9 @@
-{ pkgs
-, lib
-, system
-, flakeInputs
-, ...
+{
+  pkgs,
+  lib,
+  system,
+  flakeInputs,
+  ...
 }:
 let
   secretSetup = ''
@@ -29,7 +30,9 @@ let
     export TPG_SOCK=$PGHOST"/.s.PGSQL."$PGPORT
   '';
   testNixpkgsSetup = ''
-    export TEST_NIXPKGS_REF=${(builtins.fromJSON (builtins.readFile ../flake.lock)).nodes.nixpkgs.original.ref or ""}
+    export TEST_NIXPKGS_REF=${
+      (builtins.fromJSON (builtins.readFile ../flake.lock)).nodes.nixpkgs.original.ref or ""
+    }
   '';
   garnixRuntimeDependencies = [
     pkgs.util-linux
@@ -63,7 +66,9 @@ let
   ];
   garnixDevDependencies = [
     (pkgs.haskell-language-server.override {
-      supportedGhcVersions = [ (builtins.replaceStrings [ "." ] [ "" ] pkgs.haskellPackages.ghc.version) ];
+      supportedGhcVersions = [
+        (builtins.replaceStrings [ "." ] [ "" ] pkgs.haskellPackages.ghc.version)
+      ];
     })
     (pkgs.haskellPackages.ghc.withPackages (p: p.garnix.getBuildInputs.haskellBuildInputs))
     pkgs.ghcid
@@ -91,7 +96,8 @@ rec {
         '';
     garnixHaskellPackage =
       let
-        src = with lib.fileset;
+        src =
+          with lib.fileset;
           toSource {
             root = ./..;
             fileset =
@@ -105,35 +111,37 @@ rec {
                 ]);
           };
       in
-      pkgs.haskell.lib.overrideCabal
-        pkgs.haskellPackages.garnix
-        (old: {
-          buildDepends = (old.buildDepends or [ ]) ++ [ db ];
-          inherit src;
-          prePatch = ''
-            cd backend/
-          '';
-          preBuild = ''
-            ${old.preBuild or ""}
-            export HOME=$(pwd)
-            DB_DIR=$(pwd)/pg-tmp
-            ${dbSetup}
-            export EMPTY_DIR=${../nix/data/emptyDir}
-            db new
-            trap 'db clear' EXIT
-          '';
-          doCheck = false;
-        });
-    moduleGraph = pkgs.runCommand "moduleGraph.pdf"
-      {
-        buildInputs = [ pkgs.haskellPackages.graphmod pkgs.graphviz ];
-      }
-      ''
-        cp -r ${./.} backend
-        graphmod ./backend/exe/Server.hs -i./backend/src \
-          | tred \
-          | dot -Tpdf > $out
-      '';
+      pkgs.haskell.lib.overrideCabal pkgs.haskellPackages.garnix (old: {
+        buildDepends = (old.buildDepends or [ ]) ++ [ db ];
+        inherit src;
+        prePatch = ''
+          cd backend/
+        '';
+        preBuild = ''
+          ${old.preBuild or ""}
+          export HOME=$(pwd)
+          DB_DIR=$(pwd)/pg-tmp
+          ${dbSetup}
+          export EMPTY_DIR=${../nix/data/emptyDir}
+          db new
+          trap 'db clear' EXIT
+        '';
+        doCheck = false;
+      });
+    moduleGraph =
+      pkgs.runCommand "moduleGraph.pdf"
+        {
+          buildInputs = [
+            pkgs.haskellPackages.graphmod
+            pkgs.graphviz
+          ];
+        }
+        ''
+          cp -r ${./.} backend
+          graphmod ./backend/exe/Server.hs -i./backend/src \
+            | tred \
+            | dot -Tpdf > $out
+        '';
   };
   checks = {
     hlint = pkgs.runCommand "hlint" { buildInputs = [ pkgs.haskellPackages.hlint ]; } ''
@@ -159,11 +167,12 @@ rec {
       pkgs.runCommand "check-qualified-imports"
         {
           buildInputs = [ pkgs.ack ];
-        } ''
-        cd ${./.}
-        ${lib.concatLines (lib.map checkNoUnqualifiedImports modulesMustBeQualified)}
-        touch $out
-      '';
+        }
+        ''
+          cd ${./.}
+          ${lib.concatLines (lib.map checkNoUnqualifiedImports modulesMustBeQualified)}
+          touch $out
+        '';
     check-immutable-flake-refs = pkgs.runCommand "check-immutable-flake-refs" { } ''
       cd ${./.}
       SHA_AS_REF=$(grep -rEn '\?ref=[0-9a-f]{40}' src test || true)
@@ -214,51 +223,49 @@ rec {
       '';
     };
 
-    specs =
-      pkgs.writeShellApplication {
-        meta.description = "runs the backend test suite";
-        name = "backend-specs";
-        runtimeInputs =
-          (
-            garnixRuntimeDependencies ++
-            garnixTestDependencies ++
-            [
-              (pkgs.haskellPackages.ghc.withPackages (p: p.garnix.getBuildInputs.haskellBuildInputs))
-              pkgs.haskellPackages.cabal-install
-            ]
-          );
-        text = ''
-          tempDir=$(mktemp -d /tmp/garnix-specs.XXXXXXXX)
-          cd "$tempDir"
-          export HOME="$tempDir/home"
-          mkdir "$HOME"
-          DB_DIR="$tempDir/pg-tmp"
-          ${dbSetup}
-          db new
-          trap 'db clear; rm $tempDir -rf' EXIT
+    specs = pkgs.writeShellApplication {
+      meta.description = "runs the backend test suite";
+      name = "backend-specs";
+      runtimeInputs = (
+        garnixRuntimeDependencies
+        ++ garnixTestDependencies
+        ++ [
+          (pkgs.haskellPackages.ghc.withPackages (p: p.garnix.getBuildInputs.haskellBuildInputs))
+          pkgs.haskellPackages.cabal-install
+        ]
+      );
+      text = ''
+        tempDir=$(mktemp -d /tmp/garnix-specs.XXXXXXXX)
+        cd "$tempDir"
+        export HOME="$tempDir/home"
+        mkdir "$HOME"
+        DB_DIR="$tempDir/pg-tmp"
+        ${dbSetup}
+        db new
+        trap 'db clear; rm $tempDir -rf' EXIT
 
-          export EMPTY_DIR=${../nix/data/emptyDir}
-          ${testNixpkgsSetup}
+        export EMPTY_DIR=${../nix/data/emptyDir}
+        ${testNixpkgsSetup}
 
-          git config --global user.email "you@example.com"
-          git config --global user.name "Your Name"
-          git config --global init.defaultBranch main
+        git config --global user.email "you@example.com"
+        git config --global user.name "Your Name"
+        git config --global init.defaultBranch main
 
-          githubTokenFile="''${WATCHDOG_GITHUB_ACCESS_TOKEN_FILE:-/run/garnix-action-secrets/github_access_token}"
-          if [ -r "$githubTokenFile" ] && [ -s "$githubTokenFile" ]; then
-            mkdir -p ~/.config/nix
-            echo "access-tokens = github.com=$(cat "$githubTokenFile")" > ~/.config/nix/nix.conf
-          else
-            echo "warning: no GitHub token at $githubTokenFile; flake input resolution will use the anonymous 60 req/h budget and may fail with spurious 'is private or doesn't exist' errors" >&2
-          fi
+        githubTokenFile="''${WATCHDOG_GITHUB_ACCESS_TOKEN_FILE:-/run/garnix-action-secrets/github_access_token}"
+        if [ -r "$githubTokenFile" ] && [ -s "$githubTokenFile" ]; then
+          mkdir -p ~/.config/nix
+          echo "access-tokens = github.com=$(cat "$githubTokenFile")" > ~/.config/nix/nix.conf
+        else
+          echo "warning: no GitHub token at $githubTokenFile; flake input resolution will use the anonymous 60 req/h budget and may fail with spurious 'is private or doesn't exist' errors" >&2
+        fi
 
-          cp -r ${./..} src
-          chmod a+rwX -R src
-          chmod go-rwx src/backend/ssh-key-for-tests
-          cd src/backend
-          cabal configure --ghc-options="-O0"
-          cabal run spec -- --skip @skip-ci --fail-on=focused
-        '';
-      };
+        cp -r ${./..} src
+        chmod a+rwX -R src
+        chmod go-rwx src/backend/ssh-key-for-tests
+        cd src/backend
+        cabal configure --ghc-options="-O0"
+        cabal run spec -- --skip @skip-ci --fail-on=focused
+      '';
+    };
   };
 }

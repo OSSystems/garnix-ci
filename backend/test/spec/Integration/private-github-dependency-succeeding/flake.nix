@@ -4,16 +4,22 @@
     url = "github:garnix-testing-org/test-repo-private";
     flake = false;
   };
-  outputs = { self, nixpkgs, privateDep }: {
-    packages =
-      let
-        mk = sys:
-          let
-            pkgs = nixpkgs.legacyPackages.${sys};
-          in
-          {
-            default = pkgs.stdenv.mkDerivation
-              {
+  outputs =
+    {
+      self,
+      nixpkgs,
+      privateDep,
+    }:
+    {
+      packages =
+        let
+          mk =
+            sys:
+            let
+              pkgs = nixpkgs.legacyPackages.${sys};
+            in
+            {
+              default = pkgs.stdenv.mkDerivation {
                 name = "test-derivation";
                 src = ./.;
                 configurePhase = "";
@@ -24,12 +30,12 @@
                   echo accessed: $content
                 '';
               };
-          };
-      in
-      {
-        x86_64-linux = mk "x86_64-linux";
-        x86_64-darwin = mk "x86_64-darwin";
-        aarch64-darwin = mk "aarch64-darwin";
-      };
-  };
+            };
+        in
+        {
+          x86_64-linux = mk "x86_64-linux";
+          x86_64-darwin = mk "x86_64-darwin";
+          aarch64-darwin = mk "aarch64-darwin";
+        };
+    };
 }

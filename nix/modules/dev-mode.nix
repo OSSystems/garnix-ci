@@ -1,7 +1,8 @@
-{ config
-, lib
-, modulesPath
-, ...
+{
+  config,
+  lib,
+  modulesPath,
+  ...
 }:
 
 let
@@ -25,11 +26,14 @@ in
 
     withDevCerts = lib.mkOption {
       type = lib.types.functionTo lib.types.attrs;
-      default = vhost: vhost // lib.optionalAttrs config.garnix.devMode.enable {
-        enableACME = vhost.enableACME && ! config.garnix.devMode.enable;
-        sslCertificate = devCerts.${devCerts.domain}.cert;
-        sslCertificateKey = devCerts.${devCerts.domain}.key;
-      };
+      default =
+        vhost:
+        vhost
+        // lib.optionalAttrs config.garnix.devMode.enable {
+          enableACME = vhost.enableACME && !config.garnix.devMode.enable;
+          sslCertificate = devCerts.${devCerts.domain}.cert;
+          sslCertificateKey = devCerts.${devCerts.domain}.key;
+        };
       readOnly = true;
     };
   };

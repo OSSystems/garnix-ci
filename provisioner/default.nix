@@ -1,9 +1,10 @@
-{ lib
-, pkgs
-, self
-, system
-, flakeInputs
-, ...
+{
+  lib,
+  pkgs,
+  self,
+  system,
+  flakeInputs,
+  ...
 }:
 let
   mkGuestProfileConfig =
@@ -99,14 +100,10 @@ in
       '';
     guestProfileCompositeTests =
       assert compositeGuestProfileConfig.microvm.hypervisor == "qemu";
-      assert
-      compositeGuestProfileConfig.garnix.guest.sshPublicKey
-      == "ssh-ed25519 HOSTING hosting";
-      assert builtins.elem
-        compositeGuestProfileConfig.garnix.guest.sshPublicKey
+      assert compositeGuestProfileConfig.garnix.guest.sshPublicKey == "ssh-ed25519 HOSTING hosting";
+      assert builtins.elem compositeGuestProfileConfig.garnix.guest.sshPublicKey
         compositeGuestProfileConfig.users.users.garnix.openssh.authorizedKeys.keys;
-      assert builtins.elem
-        "nginx.service"
+      assert builtins.elem "nginx.service"
         compositeGuestProfileConfig.systemd.services.logrotate-checkconf.after;
       pkgs.runCommand "guest-profile-composite-tests" { } ''
         touch "$out"
@@ -134,8 +131,7 @@ in
       assert builtins.elem
         "C /var/lib/garnix/hosting_authorized_keys 0644 root root - /etc/ssh/garnix-hosting.pub"
         keyless.systemd.tmpfiles.rules;
-      assert lib.hasInfix "/var/lib/garnix/hosting_authorized_keys"
-        keyless.services.openssh.extraConfig;
+      assert lib.hasInfix "/var/lib/garnix/hosting_authorized_keys" keyless.services.openssh.extraConfig;
       pkgs.runCommand "guest-profile-works-without-hosting-key" { } ''
         touch "$out"
       '';
@@ -145,17 +141,17 @@ in
       assert !(builtins.hasAttr "statsReportUrl" guestProfileConfig.garnix.guest);
       assert !(builtins.hasAttr "provisionerId" guestProfileConfig.garnix.guest);
       assert
-      guestProfileConfig.systemd.timers.garnix-stats-reporter.unitConfig.ConditionPathExists
-      == "/var/lib/garnix/stats.env";
+        guestProfileConfig.systemd.timers.garnix-stats-reporter.unitConfig.ConditionPathExists
+        == "/var/lib/garnix/stats.env";
       assert
-      guestProfileConfig.systemd.services.garnix-stats-reporter.unitConfig.ConditionPathExists
-      == "/var/lib/garnix/stats.env";
+        guestProfileConfig.systemd.services.garnix-stats-reporter.unitConfig.ConditionPathExists
+        == "/var/lib/garnix/stats.env";
       assert
-      guestProfileConfig.systemd.services.garnix-stats-reporter.serviceConfig.EnvironmentFile
-      == "/var/lib/garnix/stats.env";
+        guestProfileConfig.systemd.services.garnix-stats-reporter.serviceConfig.EnvironmentFile
+        == "/var/lib/garnix/stats.env";
       assert !(builtins.hasAttr "garnix/stats.env" guestProfileConfig.environment.etc);
       assert
-      !(builtins.elem "C /var/lib/garnix/stats.env 0644 root root - /etc/garnix/stats.env" guestProfileConfig.systemd.tmpfiles.rules);
+        !(builtins.elem "C /var/lib/garnix/stats.env 0644 root root - /etc/garnix/stats.env" guestProfileConfig.systemd.tmpfiles.rules);
       pkgs.runCommand "guest-profile-stats-tests"
         {
           nativeBuildInputs = [

@@ -1,8 +1,9 @@
-{ config
-, lib
-, pkgs
-, flakePackages
-, ...
+{
+  config,
+  lib,
+  pkgs,
+  flakePackages,
+  ...
 }:
 let
   cfg = config.garnix.hosting-gateway;
@@ -67,7 +68,10 @@ in
   };
 
   config = lib.mkIf cfg.enable {
-    networking.firewall.allowedTCPPorts = [ 80 443 ];
+    networking.firewall.allowedTCPPorts = [
+      80
+      443
+    ];
 
     # Traefik forwards to the node exporter itself (below), so the separate
     # nginx vhost the monitoring client would otherwise set up would fight it
@@ -101,10 +105,13 @@ in
             (lib.mkIf routeNodeExporter {
               subjects = [ monitoringClient.fqdn ];
               issuers = [
-                ({
-                  module = "acme";
-                  email = config.security.acme.defaults.email;
-                } // cfg.extraCaddyAcmeConfig)
+                (
+                  {
+                    module = "acme";
+                    email = config.security.acme.defaults.email;
+                  }
+                  // cfg.extraCaddyAcmeConfig
+                )
               ];
               storage = {
                 module = "file_system";
@@ -116,10 +123,13 @@ in
             # until it is deployed.
             {
               issuers = [
-                ({
-                  module = "acme";
-                  email = config.security.acme.defaults.email;
-                } // cfg.extraCaddyAcmeConfig)
+                (
+                  {
+                    module = "acme";
+                    email = config.security.acme.defaults.email;
+                  }
+                  // cfg.extraCaddyAcmeConfig
+                )
               ];
               storage = {
                 module = "file_system";
@@ -138,12 +148,16 @@ in
         # actual routing.
         http.servers."tlstermination" = {
           listen = [ ":443" ];
-          routes = [{
-            handle = [{
-              handler = "reverse_proxy";
-              upstreams = [{ dial = "localhost:${toString traefikPort}"; }];
-            }];
-          }];
+          routes = [
+            {
+              handle = [
+                {
+                  handler = "reverse_proxy";
+                  upstreams = [ { dial = "localhost:${toString traefikPort}"; } ];
+                }
+              ];
+            }
+          ];
         };
       };
     };
@@ -182,9 +196,11 @@ in
             service = "node-exporter";
             middlewares = lib.optional useBasicAuth "node-exporter-basic-auth";
           };
-          services.node-exporter.loadBalancer.servers = [{
-            url = "http://localhost:${toString config.services.prometheus.exporters.node.port}";
-          }];
+          services.node-exporter.loadBalancer.servers = [
+            {
+              url = "http://localhost:${toString config.services.prometheus.exporters.node.port}";
+            }
+          ];
         };
       };
     };
@@ -195,20 +211,21 @@ in
         # Traefik only loads plugins from its own state directory, so the
         # middleware source has to be copied in before it starts.
         ExecStartPre = [
-          (lib.getExe (pkgs.writeShellApplication {
-            name = "init-traefik-plugins";
-            runtimeInputs = [ pkgs.coreutils ];
-            text = ''
-              PLUGINS_DIR=/var/lib/traefik/plugins-local/src/github.com/garnix-io/garnix
-              mkdir -p "$PLUGINS_DIR"
-              rm -rf "$PLUGINS_DIR/heartbeatmiddleware"
-              cp -r ${./heartbeatmiddleware} "$PLUGINS_DIR/heartbeatmiddleware"
-              chmod -R u+w "$PLUGINS_DIR/heartbeatmiddleware"
-            '';
-          }))
+          (lib.getExe (
+            pkgs.writeShellApplication {
+              name = "init-traefik-plugins";
+              runtimeInputs = [ pkgs.coreutils ];
+              text = ''
+                PLUGINS_DIR=/var/lib/traefik/plugins-local/src/github.com/garnix-io/garnix
+                mkdir -p "$PLUGINS_DIR"
+                rm -rf "$PLUGINS_DIR/heartbeatmiddleware"
+                cp -r ${./heartbeatmiddleware} "$PLUGINS_DIR/heartbeatmiddleware"
+                chmod -R u+w "$PLUGINS_DIR/heartbeatmiddleware"
+              '';
+            }
+          ))
         ];
-        LoadCredential =
-          lib.optional useBasicAuth "basicAuthPassword:${monitoringAuth.passwordFile}";
+        LoadCredential = lib.optional useBasicAuth "basicAuthPassword:${monitoringAuth.passwordFile}";
       };
 
       preStart = lib.mkIf useBasicAuth ''

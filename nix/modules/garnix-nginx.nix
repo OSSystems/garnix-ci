@@ -1,4 +1,9 @@
-{ config, lib, flakePackages, ... }:
+{
+  config,
+  lib,
+  flakePackages,
+  ...
+}:
 
 let
   cfg = config.services.garnixServer;
@@ -13,7 +18,10 @@ let
 in
 {
   config = lib.mkIf cfg.enable {
-    networking.firewall.allowedTCPPorts = [ 80 443 ];
+    networking.firewall.allowedTCPPorts = [
+      80
+      443
+    ];
 
     services.nginx = {
       enable = true;
@@ -34,7 +42,8 @@ in
         enableACME = !devMode;
         locations = {
           "/api".proxyPass = "http://127.0.0.1:${toString cfg.port}";
-        } // frontendLocations;
+        }
+        // frontendLocations;
       };
     };
   };

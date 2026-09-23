@@ -3,63 +3,71 @@
   name = "test fluent bit module";
 
   nodes = {
-    client = { config, lib, nodes, pkgs, ... }: {
-      garnix.monitoring-client.nginx.enable = false;
-      garnix.fluent-bit = {
-        enable = lib.mkForce true;
-        enableNginxLogParsing = true;
-        devModeOutputsToFile = false;
-        extraGroups = [ "nginx" ];
-        configuration = {
-          parsers = {
-            app = {
-              name = "app";
-              format = "json";
-              time_key = "time";
-              time_format = "%Y-%m-%d %H:%M:%S";
+    client =
+      {
+        config,
+        lib,
+        nodes,
+        pkgs,
+        ...
+      }:
+      {
+        garnix.monitoring-client.nginx.enable = false;
+        garnix.fluent-bit = {
+          enable = lib.mkForce true;
+          enableNginxLogParsing = true;
+          devModeOutputsToFile = false;
+          extraGroups = [ "nginx" ];
+          configuration = {
+            parsers = {
+              app = {
+                name = "app";
+                format = "json";
+                time_key = "time";
+                time_format = "%Y-%m-%d %H:%M:%S";
+              };
             };
-          };
-          pipelines = {
-            app = {
-              input = {
-                Name = "http";
-                Port = 8888;
-                Tag = "app";
+            pipelines = {
+              app = {
+                input = {
+                  Name = "http";
+                  Port = 8888;
+                  Tag = "app";
+                };
+                filter = {
+                  Name = "grep";
+                  Match = "app";
+                  Exclude = "category info";
+                };
+                output = {
+                  Name = "stdout";
+                  Format = "json";
+                  Match = "app";
+                };
               };
-              filter = {
-                Name = "grep";
-                Match = "app";
-                Exclude = "category info";
-              };
-              output = {
+              # disable the journal pipeline (tested in opensearch.nix)
+              journal.enable = false;
+              nginx.output = lib.mkForce {
                 Name = "stdout";
                 Format = "json";
-                Match = "app";
+                Match = "nginx";
               };
             };
-            # disable the journal pipeline (tested in opensearch.nix)
-            journal.enable = false;
-            nginx.output = lib.mkForce {
-              Name = "stdout";
-              Format = "json";
-              Match = "nginx";
+          };
+        };
+        services.nginx = {
+          enable = true;
+          virtualHosts."default" = {
+            locations."/" = {
+              root = pkgs.runCommand "testdir" { } ''
+                mkdir "$out"
+                echo hello world > "$out/hello.html"
+              '';
             };
           };
         };
+        virtualisation.memorySize = 2048;
       };
-      services.nginx = {
-        enable = true;
-        virtualHosts."default" = {
-          locations."/" = {
-            root = pkgs.runCommand "testdir" { } ''
-              mkdir "$out"
-              echo hello world > "$out/hello.html"
-            '';
-          };
-        };
-      };
-      virtualisation.memorySize = 2048;
-    };
   };
 
   testScript = { nodes, ... }: ''

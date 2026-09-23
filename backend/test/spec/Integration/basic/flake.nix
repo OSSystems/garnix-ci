@@ -5,7 +5,8 @@
 
     packages =
       let
-        mk = sys:
+        mk =
+          sys:
           let
             pkgs = nixpkgs.legacyPackages.${sys};
 
@@ -31,9 +32,10 @@
               '';
             };
 
-
           in
-          { inherit failing succeeding; };
+          {
+            inherit failing succeeding;
+          };
       in
       {
         x86_64-linux = mk "x86_64-linux";

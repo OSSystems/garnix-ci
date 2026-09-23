@@ -52,15 +52,15 @@
     inputs.nixpkgs.follows = "nixpkgs";
   };
 
-
   outputs =
-    flakeInputs@{ self
-    , nixpkgs
-    , flake-utils
-    , sops-nix
-    , cradle
-    , treefmt-nix
-    , ...
+    flakeInputs@{
+      self,
+      nixpkgs,
+      flake-utils,
+      sops-nix,
+      cradle,
+      treefmt-nix,
+      ...
     }:
     let
       overlays = [
@@ -69,11 +69,13 @@
             with outerPrev.haskell.lib;
             outerPrev.haskellPackages.override {
               overrides = final: prev: {
-                hashids = doJailbreak (prev.hashids.overrideAttrs (old: {
-                  meta = old.meta // {
-                    broken = false;
-                  };
-                }));
+                hashids = doJailbreak (
+                  prev.hashids.overrideAttrs (old: {
+                    meta = old.meta // {
+                      broken = false;
+                    };
+                  })
+                );
                 generic-random = prev.callPackage ./nix/packages/generic-random.nix { };
                 HDBC = prev.callPackage ./nix/packages/HDBC.nix { };
                 servant-github-webhook = prev.callPackage ./nix/packages/servant-github-webhook.nix { };
@@ -100,84 +102,90 @@
           opensearch = prev.opensearch.overrideAttrs (old: {
             # Workaround for packaging bug (deleting opensearch-cli breaks
             # opensearch-plugin/opensearch-keystore command)
-            installPhase = builtins.replaceStrings
-              [ "rm $out/bin/opensearch-cli\n" ]
-              [ "" ]
-              old.installPhase;
+            installPhase = builtins.replaceStrings [ "rm $out/bin/opensearch-cli\n" ] [ "" ] old.installPhase;
           });
         })
       ];
     in
-    flake-utils.lib.eachDefaultSystem
-      (
-        system:
-        let
-          pkgs = import nixpkgs { inherit system overlays; };
+    flake-utils.lib.eachDefaultSystem (
+      system:
+      let
+        pkgs = import nixpkgs { inherit system overlays; };
+        lib = nixpkgs.lib;
+        namespace =
+          prefix: attrSet:
+          lib.mapAttrs' (name: value: {
+            name = "${prefix}_${name}";
+            inherit value;
+          }) attrSet;
+        subDirInputs = {
+          inherit
+            system
+            pkgs
+            flakeInputs
+            self
+            ;
           lib = nixpkgs.lib;
-          namespace = prefix: attrSet: lib.mapAttrs' (name: value: { name = "${prefix}_${name}";inherit value; }) attrSet;
-          subDirInputs = {
-            inherit system pkgs flakeInputs self;
-            lib = nixpkgs.lib;
-          };
+        };
 
-          treefmt = import ./nix/treefmt.nix subDirInputs;
-          backend = import ./backend subDirInputs;
-          frontend = import ./frontend subDirInputs;
-          frontend-age-wasm = import ./frontend/age-wasm subDirInputs;
-          provisioner = import ./provisioner subDirInputs;
-          hosting-gateway = import ./hosting-gateway subDirInputs;
-        in
-        {
-          apps = lib.mapAttrs
-            (_: drv: {
-              type = "app";
-              program = lib.getExe drv;
-              meta.description = drv.meta.description;
-            })
-            (namespace "backend" backend.commands);
+        treefmt = import ./nix/treefmt.nix subDirInputs;
+        backend = import ./backend subDirInputs;
+        frontend = import ./frontend subDirInputs;
+        frontend-age-wasm = import ./frontend/age-wasm subDirInputs;
+        provisioner = import ./provisioner subDirInputs;
+        hosting-gateway = import ./hosting-gateway subDirInputs;
+      in
+      {
+        apps = lib.mapAttrs (_: drv: {
+          type = "app";
+          program = lib.getExe drv;
+          meta.description = drv.meta.description;
+        }) (namespace "backend" backend.commands);
 
-          checks =
-            namespace "backend" backend.checks //
-            namespace "frontend" frontend.checks //
-            namespace "frontend" (namespace "ageWasm" frontend-age-wasm.checks) //
-            namespace "provisioner" provisioner.checks //
-            namespace "hostingGateway" hosting-gateway.checks //
+        checks =
+          namespace "backend" backend.checks
+          // namespace "frontend" frontend.checks
+          // namespace "frontend" (namespace "ageWasm" frontend-age-wasm.checks)
+          // namespace "provisioner" provisioner.checks
+          // namespace "hostingGateway" hosting-gateway.checks
+          //
             # NixOS VM tests only build on Linux.
             lib.optionalAttrs pkgs.stdenv.isLinux {
               nixosTests_hostingDeploy = import ./nix/tests/hosting-deploy.nix subDirInputs;
             };
 
-          packages =
-            lib.mapAttrs' (name: value: { name = "hosting-gateway/${name}"; inherit value; })
-              hosting-gateway.packages //
-            namespace "backend" backend.packages //
-            namespace "frontend" frontend.packages //
-            namespace "frontend" (namespace "ageWasm" frontend-age-wasm.packages);
+        packages =
+          lib.mapAttrs' (name: value: {
+            name = "hosting-gateway/${name}";
+            inherit value;
+          }) hosting-gateway.packages
+          // namespace "backend" backend.packages
+          // namespace "frontend" frontend.packages
+          // namespace "frontend" (namespace "ageWasm" frontend-age-wasm.packages);
 
-          formatter = treefmt.wrapper;
+        formatter = treefmt.wrapper;
 
-          devShells.default = pkgs.mkShell {
-            shellHook = backend.shellHook;
-            buildInputs = [
-              pkgs.just
-              pkgs.nil
-              pkgs.nix
-              (pkgs.callPackage ./nix/packages/withSecrets.nix { })
-            ]
-            ++ backend.devShellInputs
-            ++ frontend.devShellInputs
-            ++ hosting-gateway.devShellInputs;
-          };
-        }
-      )
+        devShells.default = pkgs.mkShell {
+          shellHook = backend.shellHook;
+          buildInputs = [
+            pkgs.just
+            pkgs.nil
+            pkgs.nix
+            (pkgs.callPackage ./nix/packages/withSecrets.nix { })
+          ]
+          ++ backend.devShellInputs
+          ++ frontend.devShellInputs
+          ++ hosting-gateway.devShellInputs;
+        };
+      }
+    )
     // {
       nixosModules = {
         garnix = ./nix/modules/garnix-server.nix;
         default = ./nix/modules/garnix-server.nix;
         garnix-provisioner = {
           imports = [ ./nix/modules/microvm-provisioner.nix ];
-          garnix.local-provisioner.guestProfile =
-            nixpkgs.lib.mkDefault "${flakeInputs.garnix-guest-lib}/guest-profile.nix";
+          garnix.local-provisioner.guestProfile = nixpkgs.lib.mkDefault "${flakeInputs.garnix-guest-lib}/guest-profile.nix";
         };
         garnix-hosting-gateway = ./hosting-gateway/nixos-module.nix;
         garnix-guest = flakeInputs.garnix-guest-lib.nixosModules.garnix-guest;

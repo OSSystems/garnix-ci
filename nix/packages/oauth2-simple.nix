@@ -1,19 +1,20 @@
-{ mkDerivation
-, aeson
-, base
-, base58-bytestring
-, binary
-, bytestring
-, conduit
-, crypto-api
-, cryptohash-sha256
-, entropy
-, fetchgit
-, http-conduit
-, lib
-, text
-, time
-, unordered-containers
+{
+  mkDerivation,
+  aeson,
+  base,
+  base58-bytestring,
+  binary,
+  bytestring,
+  conduit,
+  crypto-api,
+  cryptohash-sha256,
+  entropy,
+  fetchgit,
+  http-conduit,
+  lib,
+  text,
+  time,
+  unordered-containers,
 }:
 mkDerivation {
   pname = "oauth2-simple";

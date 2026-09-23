@@ -11,8 +11,7 @@
         dep = pkgs.stdenv.mkDerivation {
           name = "failing-dep";
 
-          buildPhase = ''
-            '';
+          buildPhase = "";
 
           src = ./.;
 
@@ -26,7 +25,7 @@
 
         fixedOutputDep = pkgs.stdenv.mkDerivation {
           name = "failing-fixed-output-dep";
-          buildPhase = '''';
+          buildPhase = "";
           src = ./.;
           outputHashAlgo = "sha256";
           outputHashMode = "recursive";
@@ -55,7 +54,6 @@
           doCheck = true;
         };
       };
-
 
   };
 }
