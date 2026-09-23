@@ -4,7 +4,7 @@ let
     projectRootFile = "flake.nix";
     programs = {
       gofmt.enable = true;
-      nixpkgs-fmt.enable = true;
+      nixfmt.enable = true;
       shellcheck.enable = true;
       shfmt.enable = true;
       ormolu.enable = true;
@@ -17,6 +17,9 @@ let
         no-underscore = true;
       };
     };
+    settings.global.excludes = [
+      "backend/test/spec/Integration/bad-flake-nix/flake.nix"
+    ];
     settings.formatter.shellcheck = {
       excludes = [ ".envrc" ];
     };
