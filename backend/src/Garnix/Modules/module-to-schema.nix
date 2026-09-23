@@ -1,31 +1,52 @@
-{ nixpkgsLib }: module:
+{ nixpkgsLib }:
+module:
 let
   lib = nixpkgsLib;
 
   deepMerge = list: lib.foldl lib.recursiveUpdate { } list;
 
-  optionToSchema = option:
-    if option._type != "option"
-    then builtins.abort "not an option"
-    else {
-      typ = typeToSchema option.type;
-      description = if option ? description then option.description else null;
-      example = if option ? example then toString option.example else null;
-      default = if option ? default then defaultToNixValue option.default else null;
-      name = if option ? name then option.name else null;
-    };
+  optionToSchema =
+    option:
+    if option._type != "option" then
+      builtins.abort "not an option"
+    else
+      {
+        typ = typeToSchema option.type;
+        description = if option ? description then option.description else null;
+        example = if option ? example then toString option.example else null;
+        default = if option ? default then defaultToNixValue option.default else null;
+        name = if option ? name then option.name else null;
+      };
 
-  defaultToNixValue = value:
-    let type = builtins.typeOf value; in
+  defaultToNixValue =
+    value:
+    let
+      type = builtins.typeOf value;
+    in
     if type == "list" then
-      { tag = type; value = lib.map defaultToNixValue value; }
+      {
+        tag = type;
+        value = lib.map defaultToNixValue value;
+      }
     else if type == "null" then
       { tag = type; }
-    else if lib.elem type [ "string" "int" "bool" "path" ] then
-      { tag = type; inherit value; }
-    else builtins.abort ("unsupported default type: " + type + " (value: " + builtins.toJSON value + ")");
+    else if
+      lib.elem type [
+        "string"
+        "int"
+        "bool"
+        "path"
+      ]
+    then
+      {
+        tag = type;
+        inherit value;
+      }
+    else
+      builtins.abort ("unsupported default type: " + type + " (value: " + builtins.toJSON value + ")");
 
-  typeToSchema = type:
+  typeToSchema =
+    type:
     if type.name == "encryptedSecret" then
       { tag = "encryptedSecret"; }
     else if type.name == "path" then
@@ -73,21 +94,26 @@ let
     else
       builtins.abort ("unsupported option type: " + type.name);
 
-  moduleListToSchema = list: lib.mapAttrs
-    (key: value: optionToSchema value)
-    ((deepMerge (map moduleToSet list)).options or { });
+  moduleListToSchema =
+    list:
+    lib.mapAttrs (key: value: optionToSchema value) ((deepMerge (map moduleToSet list)).options or { });
 
-  moduleToSet = module:
-    if builtins.typeOf module == "set" then module
+  moduleToSet =
+    module:
+    if builtins.typeOf module == "set" then
+      module
     else if builtins.typeOf module == "lambda" then
       let
-        arguments = lib.mergeAttrsList
-          (map (name: { "${name}" = mkArgument name; }) requiredArguments);
+        arguments = lib.mergeAttrsList (map (name: { "${name}" = mkArgument name; }) requiredArguments);
         requiredArguments = lib.attrNames (builtins.functionArgs module);
-        mkArgument = name:
-          if name == "lib" then lib
-          else if name == "pkgs" then builtins.abort "pkgs"
-          else if name == "config" then { }
+        mkArgument =
+          name:
+          if name == "lib" then
+            lib
+          else if name == "pkgs" then
+            builtins.abort "pkgs"
+          else if name == "config" then
+            { }
           else
             builtins.abort ("module argument not supported: " + name);
       in

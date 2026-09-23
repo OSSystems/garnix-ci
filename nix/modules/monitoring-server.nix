@@ -1,8 +1,9 @@
-{ config
-, options
-, lib
-, pkgs
-, ...
+{
+  config,
+  options,
+  lib,
+  pkgs,
+  ...
 }:
 
 let
@@ -49,38 +50,52 @@ let
     }
   ];
 
-  proxiedJob = job: hosts: {
-    job_name = job.name;
-    scheme = "https";
-    static_configs = [{
-      targets = lib.mapAttrsToList
-        (_: h: h.fqdn + lib.optionalString (h.port != null) ":${toString h.port}")
-        hosts;
-    }];
-  } // basicAuth // lib.optionalAttrs (job ? proxiedPath) { metrics_path = job.proxiedPath; };
+  proxiedJob =
+    job: hosts:
+    {
+      job_name = job.name;
+      scheme = "https";
+      static_configs = [
+        {
+          targets = lib.mapAttrsToList (
+            _: h: h.fqdn + lib.optionalString (h.port != null) ":${toString h.port}"
+          ) hosts;
+        }
+      ];
+    }
+    // basicAuth
+    // lib.optionalAttrs (job ? proxiedPath) { metrics_path = job.proxiedPath; };
 
-  directJob = job: hosts: suffix: {
-    job_name = job.name + suffix;
-    scheme = "http";
-    static_configs = [{
-      targets = lib.mapAttrsToList (_: h: "${h.fqdn}:${toString (job.port h)}") hosts;
-    }];
-  } // lib.optionalAttrs (job ? directPath) { metrics_path = job.directPath; };
+  directJob =
+    job: hosts: suffix:
+    {
+      job_name = job.name + suffix;
+      scheme = "http";
+      static_configs = [
+        {
+          targets = lib.mapAttrsToList (_: h: "${h.fqdn}:${toString (job.port h)}") hosts;
+        }
+      ];
+    }
+    // lib.optionalAttrs (job ? directPath) { metrics_path = job.directPath; };
 
-  scrapeConfigsFor = job:
+  scrapeConfigsFor =
+    job:
     let
       proxied = lib.filterAttrs (_: h: h.proxied) job.hosts;
-      direct = lib.filterAttrs (_: h: ! h.proxied) job.hosts;
+      direct = lib.filterAttrs (_: h: !h.proxied) job.hosts;
     in
     lib.optional (proxied != { }) (proxiedJob job proxied)
-    ++ lib.optional (direct != { })
-      (directJob job direct (lib.optionalString (proxied != { }) "_unproxied"));
+    ++ lib.optional (direct != { }) (
+      directJob job direct (lib.optionalString (proxied != { }) "_unproxied")
+    );
 
   sqlJob = {
     job_name = "sql";
     scheme = "https";
-    static_configs = [{ targets = [ cfg.sqlExporter.target ]; }];
-  } // basicAuth;
+    static_configs = [ { targets = [ cfg.sqlExporter.target ]; } ];
+  }
+  // basicAuth;
 in
 {
   imports = [ ./monitoring.nix ];
@@ -178,122 +193,127 @@ in
     };
   };
 
-  config = lib.mkIf cfg.enable (lib.mkMerge [
-    {
-      assertions = [
-        {
-          assertion = cfg.grafana.secretKeyFile != null;
-          message = ''
-            garnix.monitoring-server.grafana.secretKeyFile must be set: grafana
-            no longer ships a default secret_key.
-          '';
-        }
-        {
-          assertion = cfg.sqlExporter.enable -> cfg.sqlExporter.target != null;
-          message = ''
-            garnix.monitoring-server.sqlExporter.target must be set when
-            sqlExporter.enable = true and the garnix database module is not
-            part of this configuration.
-          '';
-        }
-      ];
+  config = lib.mkIf cfg.enable (
+    lib.mkMerge [
+      {
+        assertions = [
+          {
+            assertion = cfg.grafana.secretKeyFile != null;
+            message = ''
+              garnix.monitoring-server.grafana.secretKeyFile must be set: grafana
+              no longer ships a default secret_key.
+            '';
+          }
+          {
+            assertion = cfg.sqlExporter.enable -> cfg.sqlExporter.target != null;
+            message = ''
+              garnix.monitoring-server.sqlExporter.target must be set when
+              sqlExporter.enable = true and the garnix database module is not
+              part of this configuration.
+            '';
+          }
+        ];
 
-      services.grafana = {
-        enable = true;
-        settings = {
-          date_formats.default_timezone = "utc";
-          server = {
-            http_addr = cfg.listenAddress;
-            http_port = cfg.grafana.port;
-            domain = cfg.fqdn;
-            root_url = cfg.grafana.rootUrl;
-          };
-        } // lib.optionalAttrs (cfg.grafana.secretKeyFile != null) {
-          security.secret_key = "$__file{${cfg.grafana.secretKeyFile}}";
-        };
-        provision = {
+        services.grafana = {
           enable = true;
+          settings = {
+            date_formats.default_timezone = "utc";
+            server = {
+              http_addr = cfg.listenAddress;
+              http_port = cfg.grafana.port;
+              domain = cfg.fqdn;
+              root_url = cfg.grafana.rootUrl;
+            };
+          }
+          // lib.optionalAttrs (cfg.grafana.secretKeyFile != null) {
+            security.secret_key = "$__file{${cfg.grafana.secretKeyFile}}";
+          };
+          provision = {
+            enable = true;
 
-          dashboards.settings.providers = [
-            {
-              name = "garnixServer";
-              options.path = pkgs.linkFarm "garnix-grafana-dashboards" [
-                {
-                  name = "node-exporter-full.json";
-                  path = ../data/grafana-node-exporter-full.json;
-                }
-              ];
-            }
-          ];
+            dashboards.settings.providers = [
+              {
+                name = "garnixServer";
+                options.path = pkgs.linkFarm "garnix-grafana-dashboards" [
+                  {
+                    name = "node-exporter-full.json";
+                    path = ../data/grafana-node-exporter-full.json;
+                  }
+                ];
+              }
+            ];
 
-          datasources.settings.datasources = [
-            {
-              name = "Prometheus";
-              type = "prometheus";
-              url = "http://${cfg.listenAddress}:${toString config.services.prometheus.port}";
-              jsonData = {
-                timeInterval = config.services.prometheus.globalConfig.scrape_interval;
-              };
-            }
-          ];
-        };
-      };
-
-      services.prometheus = {
-        enable = true;
-        inherit (cfg.prometheus) port;
-        inherit (cfg) listenAddress;
-        globalConfig = {
-          scrape_interval = "30s";
-          scrape_timeout = "10s";
-        };
-        retentionTime = "90d";
-        scrapeConfigs =
-          lib.concatMap scrapeConfigsFor jobs
-          ++ lib.optional cfg.sqlExporter.enable sqlJob
-          ++ cfg.extraScrapeConfigs;
-      };
-    }
-
-    (lib.optionalAttrs (options.garnix ? watchdog) {
-      garnix.watchdog.enable = cfg.watchdog.enable;
-    })
-
-    (lib.mkIf basicAuthEnabled {
-      systemd.services.prometheus = {
-        serviceConfig = {
-          PrivateTmp = true;
-          LoadCredential = [
-            "basicAuthPassword:${monitoring.basicAuth.passwordFile}"
-          ];
-        };
-        unitConfig.RequiresMountsFor = [ config.systemd.services.prometheus.serviceConfig.WorkingDirectory ];
-        preStart = ''
-          cp "$CREDENTIALS_DIRECTORY/basicAuthPassword" ${prometheus-basic-auth}
-        '';
-      };
-    })
-
-    (lib.mkIf cfg.nginx.enable {
-      services.nginx = {
-        enable = true;
-        recommendedProxySettings = true;
-        recommendedOptimisation = true;
-        proxyTimeout = "600s";
-        virtualHosts.${cfg.fqdn} = config.garnix.devMode.withDevCerts {
-          addSSL = true;
-          enableACME = cfg.nginx.acme.enable;
-          locations."/".proxyPass = grafanaUrl;
-          locations."/api/live" = {
-            proxyPass = grafanaUrl;
-            proxyWebsockets = true;
+            datasources.settings.datasources = [
+              {
+                name = "Prometheus";
+                type = "prometheus";
+                url = "http://${cfg.listenAddress}:${toString config.services.prometheus.port}";
+                jsonData = {
+                  timeInterval = config.services.prometheus.globalConfig.scrape_interval;
+                };
+              }
+            ];
           };
         };
-      };
-    })
 
-    (lib.mkIf cfg.nginx.acme.enable {
-      security.acme.certs.${cfg.fqdn} = { };
-    })
-  ]);
+        services.prometheus = {
+          enable = true;
+          inherit (cfg.prometheus) port;
+          inherit (cfg) listenAddress;
+          globalConfig = {
+            scrape_interval = "30s";
+            scrape_timeout = "10s";
+          };
+          retentionTime = "90d";
+          scrapeConfigs =
+            lib.concatMap scrapeConfigsFor jobs
+            ++ lib.optional cfg.sqlExporter.enable sqlJob
+            ++ cfg.extraScrapeConfigs;
+        };
+      }
+
+      (lib.optionalAttrs (options.garnix ? watchdog) {
+        garnix.watchdog.enable = cfg.watchdog.enable;
+      })
+
+      (lib.mkIf basicAuthEnabled {
+        systemd.services.prometheus = {
+          serviceConfig = {
+            PrivateTmp = true;
+            LoadCredential = [
+              "basicAuthPassword:${monitoring.basicAuth.passwordFile}"
+            ];
+          };
+          unitConfig.RequiresMountsFor = [
+            config.systemd.services.prometheus.serviceConfig.WorkingDirectory
+          ];
+          preStart = ''
+            cp "$CREDENTIALS_DIRECTORY/basicAuthPassword" ${prometheus-basic-auth}
+          '';
+        };
+      })
+
+      (lib.mkIf cfg.nginx.enable {
+        services.nginx = {
+          enable = true;
+          recommendedProxySettings = true;
+          recommendedOptimisation = true;
+          proxyTimeout = "600s";
+          virtualHosts.${cfg.fqdn} = config.garnix.devMode.withDevCerts {
+            addSSL = true;
+            enableACME = cfg.nginx.acme.enable;
+            locations."/".proxyPass = grafanaUrl;
+            locations."/api/live" = {
+              proxyPass = grafanaUrl;
+              proxyWebsockets = true;
+            };
+          };
+        };
+      })
+
+      (lib.mkIf cfg.nginx.acme.enable {
+        security.acme.certs.${cfg.fqdn} = { };
+      })
+    ]
+  );
 }

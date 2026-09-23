@@ -1,4 +1,10 @@
-{ config, lib, pkgs, flakeInputs, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  flakeInputs,
+  ...
+}:
 
 {
   options = {

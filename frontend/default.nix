@@ -1,9 +1,10 @@
-{ pkgs
-, lib
-, self
-, system
-, flakeInputs
-, ...
+{
+  pkgs,
+  lib,
+  self,
+  system,
+  flakeInputs,
+  ...
 }:
 let
   node_modules = pkgs.importNpmLock.buildNodeModules {
@@ -16,17 +17,21 @@ let
     echo Populating artifacts
     ln -nvsf ${self.packages.${system}."frontend_ageWasm_default"} src/age-wasm-compiled
   '';
-  src = with pkgs.lib.fileset;
+  src =
+    with pkgs.lib.fileset;
     toSource {
       root = ./.;
-      fileset = fileFilter (file: ! file.hasExt "nix") ./.;
+      fileset = fileFilter (file: !file.hasExt "nix") ./.;
     };
   nextApp = pkgs.stdenv.mkDerivation {
     name = "frontend";
     inherit src;
 
     NEXT_BUILD_ID = builtins.hashString "sha256" "${./.}";
-    outputs = [ "out" "assets" ];
+    outputs = [
+      "out"
+      "assets"
+    ];
 
     buildInputs = [ pkgs.nodejs ];
 
@@ -63,12 +68,11 @@ in
       ];
     };
   };
-  checks = lib.listToAttrs (lib.map
-    (name: {
-      inherit name;
-      value = pkgs.runCommand name
-        { buildInputs = [ pkgs.nodejs ]; }
-        ''
+  checks = lib.listToAttrs (
+    lib.map
+      (name: {
+        inherit name;
+        value = pkgs.runCommand name { buildInputs = [ pkgs.nodejs ]; } ''
           cp -r ${src} src
           cd src
           chmod -R +w .
@@ -77,8 +81,13 @@ in
           npm run ${name} --ci | tee /dev/null
           touch $out
         '';
-    })
-    [ "knip" "lint" "test" ]);
+      })
+      [
+        "knip"
+        "lint"
+        "test"
+      ]
+  );
   shellHook = populateArtifacts;
   devShellInputs = [
     pkgs.nodejs

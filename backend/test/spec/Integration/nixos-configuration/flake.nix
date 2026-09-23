@@ -5,7 +5,9 @@
   outputs = { self, nixpkgs }: {
 
     nixosModules = {
-      foo = { imports = [ ]; };
+      foo = {
+        imports = [ ];
+      };
     };
 
     nixosConfigurations = {

@@ -1,10 +1,11 @@
-{ lib
-, stdenv
-, makeWrapper
-, fetchurl
-, nodejs
-, coreutils
-, which
+{
+  lib,
+  stdenv,
+  makeWrapper,
+  fetchurl,
+  nodejs,
+  coreutils,
+  which,
 }:
 
 with lib;
@@ -33,7 +34,13 @@ stdenv.mkDerivation rec {
     rm -r $out/libexec/opensearch-dashboards/node
     for bin in $out/libexec/opensearch-dashboards/bin/opensearch-dashboards*; do
       makeWrapper $bin $out/bin/$(basename $bin) \
-        --prefix PATH : "${lib.makeBinPath [ nodejs coreutils which ]}"
+        --prefix PATH : "${
+          lib.makeBinPath [
+            nodejs
+            coreutils
+            which
+          ]
+        }"
       sed -i 's@NODE=.*@NODE=${nodejs}/bin/node@' $bin
     done
     rm -rf $out/libexec/opensearch-dashboards/plugins/securityDashboards

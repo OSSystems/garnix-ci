@@ -1,8 +1,9 @@
-{ config
-, options
-, lib
-, pkgs
-, ...
+{
+  config,
+  options,
+  lib,
+  pkgs,
+  ...
 }:
 
 let
@@ -10,16 +11,20 @@ let
   monitoring = config.garnix.monitoring;
   basicAuthEnabled = monitoring.basicAuth.passwordFile != null;
 
-  node = monitoring.monitoredHosts.${cfg.nodeId} or {
-    fqdn = cfg.nodeId;
-    scrapeNginx = false;
-    scrapeNginxLog = false;
-    scrapeGarnixServer = false;
-  };
+  node =
+    monitoring.monitoredHosts.${cfg.nodeId} or {
+      fqdn = cfg.nodeId;
+      scrapeNginx = false;
+      scrapeNginxLog = false;
+      scrapeGarnixServer = false;
+    };
 
-  protected = attrs: attrs // lib.optionalAttrs basicAuthEnabled {
-    inherit (cfg.nginx) basicAuthFile;
-  };
+  protected =
+    attrs:
+    attrs
+    // lib.optionalAttrs basicAuthEnabled {
+      inherit (cfg.nginx) basicAuthFile;
+    };
 in
 
 {
@@ -83,12 +88,18 @@ in
             }
           ];
 
-          networking.firewall.allowedTCPPorts = lib.optionals cfg.openFirewall [ 80 443 ];
+          networking.firewall.allowedTCPPorts = lib.optionals cfg.openFirewall [
+            80
+            443
+          ];
 
           services.prometheus.exporters = {
             node = {
               enable = true;
-              enabledCollectors = [ "systemd" "processes" ];
+              enabledCollectors = [
+                "systemd"
+                "processes"
+              ];
             };
             nginx.enable = node.scrapeNginx;
             nginxlog = {

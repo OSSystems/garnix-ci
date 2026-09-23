@@ -1,17 +1,18 @@
-{ mkDerivation
-, base
-, directory
-, doctest
-, fetchgit
-, filepath
-, hspec
-, interpolate
-, lib
-, markdown-unlit
-, mockery
-, QuickCheck
-, shake
-, silently
+{
+  mkDerivation,
+  base,
+  directory,
+  doctest,
+  fetchgit,
+  filepath,
+  hspec,
+  interpolate,
+  lib,
+  markdown-unlit,
+  mockery,
+  QuickCheck,
+  shake,
+  silently,
 }:
 mkDerivation {
   pname = "generics-eot";

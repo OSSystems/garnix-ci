@@ -1,4 +1,9 @@
-{ config, lib, flakePackages, ... }:
+{
+  config,
+  lib,
+  flakePackages,
+  ...
+}:
 
 let
   cfg = config.services.garnixServer;

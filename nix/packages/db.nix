@@ -1,6 +1,7 @@
-{ pkgs
-, migrate
-, postgres
+{
+  pkgs,
+  migrate,
+  postgres,
 }:
 with pkgs;
 writeShellScriptBin "db" ''

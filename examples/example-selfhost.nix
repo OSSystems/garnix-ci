@@ -1,17 +1,23 @@
-{ self, overlays, flakeInputs }:
+{
+  self,
+  overlays,
+  flakeInputs,
+}:
 let
-  mkSystem = module: flakeInputs.nixpkgs.lib.nixosSystem {
-    system = "x86_64-linux";
-    specialArgs = {
-      inherit flakeInputs;
-      flakePackages = self.packages.x86_64-linux;
+  mkSystem =
+    module:
+    flakeInputs.nixpkgs.lib.nixosSystem {
+      system = "x86_64-linux";
+      specialArgs = {
+        inherit flakeInputs;
+        flakePackages = self.packages.x86_64-linux;
+      };
+      modules = [
+        { nixpkgs.overlays = overlays; }
+        self.nixosModules.garnix
+        module
+      ];
     };
-    modules = [
-      { nixpkgs.overlays = overlays; }
-      self.nixosModules.garnix
-      module
-    ];
-  };
 
   # Minimum host plumbing. Replace with your real disk/boot setup.
   hostPlumbing = {

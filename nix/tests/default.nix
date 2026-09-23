@@ -2,58 +2,75 @@
 let
   inherit (pkgs) lib;
 
-  runTest = { testModule, overlays ? [ ] }: flake.inputs.nixpkgs.lib.nixos.runTest rec {
-    imports = [
-      testModule
-    ];
+  runTest =
+    {
+      testModule,
+      overlays ? [ ],
+    }:
+    flake.inputs.nixpkgs.lib.nixos.runTest rec {
+      imports = [
+        testModule
+      ];
 
-    hostPkgs = import flake.inputs.nixpkgs {
-      inherit (pkgs) system;
-      overlays = pkgs.overlays ++ overlays;
+      hostPkgs = import flake.inputs.nixpkgs {
+        inherit (pkgs) system;
+        overlays = pkgs.overlays ++ overlays;
+      };
+
+      defaults =
+        {
+          nodes,
+          lib,
+          config,
+          ...
+        }:
+        {
+          imports = [ flake.nixosModules.nixos ];
+          garnix.devMode.enable = true;
+
+          networking.usePredictableInterfaceNames = lib.mkForce false;
+          systemd.network.networks."10-uplink".matchConfig.Name = lib.mkForce "eth0";
+
+          # Remove caches that are added by default but cause time-outs in the tests.
+          # Since cache.nixos.org is added by nixpkgs at the default priority, we are
+          # obliged to use mkForce here.
+          # To add any caches in the tests itself, you should therefore use mkForce as well.
+          nix.settings.substituters = lib.mkForce [ ];
+
+          # All nodes get the exact same SSH host key, so let's generate
+          # entries for all of them in their global known hosts files so that
+          # they can all trust each other.
+          programs.ssh.knownHosts = lib.mkForce (
+            lib.mapAttrs (_: node: {
+              hostNames = [
+                node.networking.hostName
+                node.networking.primaryIPAddress
+              ];
+              publicKeyFile = ../data/ssh-key-for-local-dev-secrets.pub;
+            }) nodes
+          );
+          garnix.monitoring-client.enable = false;
+        };
+
+      _module.args = {
+        inherit (flake) nixosModules;
+      };
+
+      node.pkgs = hostPkgs;
     };
 
-    defaults = { nodes, lib, config, ... }: {
-      imports = [ flake.nixosModules.nixos ];
-      garnix.devMode.enable = true;
-
-      networking.usePredictableInterfaceNames = lib.mkForce false;
-      systemd.network.networks."10-uplink".matchConfig.Name = lib.mkForce "eth0";
-
-      # Remove caches that are added by default but cause time-outs in the tests.
-      # Since cache.nixos.org is added by nixpkgs at the default priority, we are
-      # obliged to use mkForce here.
-      # To add any caches in the tests itself, you should therefore use mkForce as well.
-      nix.settings.substituters = lib.mkForce [ ];
-
-      # All nodes get the exact same SSH host key, so let's generate
-      # entries for all of them in their global known hosts files so that
-      # they can all trust each other.
-      programs.ssh.knownHosts = lib.mkForce (lib.mapAttrs
-        (_: node: {
-          hostNames = [
-            node.networking.hostName
-            node.networking.primaryIPAddress
-          ];
-          publicKeyFile = ../data/ssh-key-for-local-dev-secrets.pub;
-        })
-        nodes
-      );
-      garnix.monitoring-client.enable = false;
-    };
-
-    _module.args = {
-      inherit (flake) nixosModules;
-    };
-
-    node.pkgs = hostPkgs;
-  };
-
-  generatePerMachineTest = pkgs: lib.mapAttrs' (name: { extraModules ? [ ], scriptFun ? _: "" }:
-    let
-      cleanName = lib.replaceStrings [ "-" ] [ "_" ] name;
-    in
-    lib.nameValuePair "perMachineTests-${cleanName}"
-      (runTest {
+  generatePerMachineTest =
+    pkgs:
+    lib.mapAttrs' (
+      name:
+      {
+        extraModules ? [ ],
+        scriptFun ? _: "",
+      }:
+      let
+        cleanName = lib.replaceStrings [ "-" ] [ "_" ] name;
+      in
+      lib.nameValuePair "perMachineTests-${cleanName}" (runTest {
         testModule = { lib, nixosModules, ... }: {
           name = cleanName;
           nodes.${cleanName} = { lib, ... }: {
@@ -70,21 +87,19 @@ let
             ${cleanName}.wait_for_unit("multi-user.target")
             ${scriptFun cleanName}
 
-            ${if cleanName == "garnix_server1"
-              then
-              ''
-                with subtest("periodic garbage collection enabled"):
-                  ${cleanName}.succeed("systemctl status 'custom-gc.timer'")
-              ''
-              else if nodes.${cleanName}.garnix.builder.enable
-              then
-              ''
-              ''
+            ${
+              if cleanName == "garnix_server1" then
+                ''
+                  with subtest("periodic garbage collection enabled"):
+                    ${cleanName}.succeed("systemctl status 'custom-gc.timer'")
+                ''
+              else if nodes.${cleanName}.garnix.builder.enable then
+                ""
               else
-              ''
-                with subtest("periodic garbage collection enabled"):
-                  ${cleanName}.succeed("systemctl status 'nix-gc.timer'")
-              ''
+                ''
+                  with subtest("periodic garbage collection enabled"):
+                    ${cleanName}.succeed("systemctl status 'nix-gc.timer'")
+                ''
             }
 
             (_, failed_units_str) = ${cleanName}.systemctl("list-units --failed --output=json")
@@ -93,7 +108,7 @@ let
           '';
         };
       })
-  );
+    );
 
   x86MachineTests = {
     garnix-server1 = {
@@ -174,11 +189,16 @@ let
     "garnixServer"
   ];
 in
-(lib.genAttrs testModules (name:
-  let testFile = import ./${name}.nix;
-  in runTest (if testFile ? testModule then testFile else { testModule = testFile; })
+(lib.genAttrs testModules (
+  name:
+  let
+    testFile = import ./${name}.nix;
+  in
+  runTest (if testFile ? testModule then testFile else { testModule = testFile; })
 ))
-//
-lib.optionalAttrs (pkgs.stdenv.hostPlatform.isx86_64) (generatePerMachineTest pkgs x86MachineTests)
-  //
-lib.optionalAttrs (pkgs.stdenv.hostPlatform.isAarch64) (generatePerMachineTest pkgs aarch64MachineTests)
+// lib.optionalAttrs (pkgs.stdenv.hostPlatform.isx86_64) (
+  generatePerMachineTest pkgs x86MachineTests
+)
+// lib.optionalAttrs (pkgs.stdenv.hostPlatform.isAarch64) (
+  generatePerMachineTest pkgs aarch64MachineTests
+)

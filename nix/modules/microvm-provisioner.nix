@@ -1,7 +1,8 @@
-{ config
-, lib
-, pkgs
-, ...
+{
+  config,
+  lib,
+  pkgs,
+  ...
 }:
 let
   cfg = config.garnix.local-provisioner;
@@ -360,7 +361,11 @@ in
           "garnix-provisionerd.service"
           "network-online.target"
         ];
-        path = [ pkgs.postgresql_18 pkgs.util-linux "/run/current-system/sw" ];
+        path = [
+          pkgs.postgresql_18
+          pkgs.util-linux
+          "/run/current-system/sw"
+        ];
         serviceConfig = {
           Type = "oneshot";
           RemainAfterExit = true;

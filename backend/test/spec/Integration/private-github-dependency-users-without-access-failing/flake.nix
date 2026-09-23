@@ -4,5 +4,11 @@
     url = "github:garnix-testing-org/minimal-collaborators-test";
     flake = false;
   };
-  outputs = { self, nixpkgs, privateDep }: { };
+  outputs =
+    {
+      self,
+      nixpkgs,
+      privateDep,
+    }:
+    { };
 }

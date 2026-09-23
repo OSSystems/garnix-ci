@@ -2,50 +2,49 @@
 let
   cfg = config.garnix.monitoring;
 
-  monitoredHostType = lib.types.submodule ({ name, ... }: {
-    options = {
-      fqdn = lib.mkOption {
-        type = lib.types.str;
-        default =
-          if cfg.domain == null
-          then name
-          else "prometheus-node-exporter.${name}.${cfg.domain}";
-        description = "The FQDN to reach the monitoring service";
+  monitoredHostType = lib.types.submodule (
+    { name, ... }: {
+      options = {
+        fqdn = lib.mkOption {
+          type = lib.types.str;
+          default = if cfg.domain == null then name else "prometheus-node-exporter.${name}.${cfg.domain}";
+          description = "The FQDN to reach the monitoring service";
+        };
+        proxied = lib.mkOption {
+          type = lib.types.bool;
+          default = true;
+          description = ''
+            Whether the exporters on this host are proxied by that host's nginx,
+            and so need https, basic auth, and the per-exporter metrics paths.
+            When false, the exporters are scraped directly over http.
+          '';
+        };
+        port = lib.mkOption {
+          type = lib.types.nullOr lib.types.int;
+          default = null;
+          description = ''
+            Port the node exporter is reachable on. When null, the node
+            exporter's own port is used.
+          '';
+        };
+        scrapeNginx = lib.mkOption {
+          type = lib.types.bool;
+          default = false;
+          description = "Whether to scrape the nginx exporter";
+        };
+        scrapeNginxLog = lib.mkOption {
+          type = lib.types.bool;
+          default = false;
+          description = "Whether to scrape the nginx log exporter";
+        };
+        scrapeGarnixServer = lib.mkOption {
+          type = lib.types.bool;
+          default = false;
+          description = "Whether to scrape the garnix server exporter";
+        };
       };
-      proxied = lib.mkOption {
-        type = lib.types.bool;
-        default = true;
-        description = ''
-          Whether the exporters on this host are proxied by that host's nginx,
-          and so need https, basic auth, and the per-exporter metrics paths.
-          When false, the exporters are scraped directly over http.
-        '';
-      };
-      port = lib.mkOption {
-        type = lib.types.nullOr lib.types.int;
-        default = null;
-        description = ''
-          Port the node exporter is reachable on. When null, the node
-          exporter's own port is used.
-        '';
-      };
-      scrapeNginx = lib.mkOption {
-        type = lib.types.bool;
-        default = false;
-        description = "Whether to scrape the nginx exporter";
-      };
-      scrapeNginxLog = lib.mkOption {
-        type = lib.types.bool;
-        default = false;
-        description = "Whether to scrape the nginx log exporter";
-      };
-      scrapeGarnixServer = lib.mkOption {
-        type = lib.types.bool;
-        default = false;
-        description = "Whether to scrape the garnix server exporter";
-      };
-    };
-  });
+    }
+  );
 in
 {
   options.garnix.monitoring = {

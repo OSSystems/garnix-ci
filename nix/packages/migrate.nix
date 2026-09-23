@@ -3,7 +3,10 @@
 pkgs.symlinkJoin {
   name = "migrate";
   buildInputs = [ pkgs.makeWrapper ];
-  paths = [ pkgs.sqitchPg ../../sql ];
+  paths = [
+    pkgs.sqitchPg
+    ../../sql
+  ];
   postBuild = ''
     wrapProgram "$out/bin/sqitch" \
       --run "cd $out" \

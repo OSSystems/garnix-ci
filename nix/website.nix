@@ -1,4 +1,8 @@
-{ self, overlays, flakeInputs }:
+{
+  self,
+  overlays,
+  flakeInputs,
+}:
 let
   system = "x86_64-linux";
 in
@@ -13,7 +17,13 @@ in
       { nixpkgs.overlays = overlays; }
       self.nixosModules.garnix-guest
       self.nixosModules.garnix
-      ({ pkgs, lib, config, ... }:
+      (
+        {
+          pkgs,
+          lib,
+          config,
+          ...
+        }:
         let
           mkSecret = name: content: pkgs.writeText "garnix-website-secret-${name}" content;
 
@@ -26,13 +36,13 @@ in
           opensearchCredentialFile = mkSecret "opensearch-credential" "demo-opensearch-password";
           jwtKeyFile = mkSecret "jwt-key" "ZGV2LWp3dC1rZXktMzItYnl0ZXMtcGFkZGluZyEhIQ==";
 
-          githubAppPkFile = pkgs.runCommand "garnix-website-secret-github-app-pk"
-            { nativeBuildInputs = [ pkgs.openssl ]; } ''
-            openssl genrsa -out $out 2048
-          '';
+          githubAppPkFile =
+            pkgs.runCommand "garnix-website-secret-github-app-pk" { nativeBuildInputs = [ pkgs.openssl ]; }
+              ''
+                openssl genrsa -out $out 2048
+              '';
 
-          ageKeyPair = pkgs.runCommand "garnix-website-age-keypair"
-            { nativeBuildInputs = [ pkgs.age ]; } ''
+          ageKeyPair = pkgs.runCommand "garnix-website-age-keypair" { nativeBuildInputs = [ pkgs.age ]; } ''
             mkdir -p $out
             age-keygen -o $out/key 2>$out/pub.raw
             grep -oE 'age1[a-z0-9]+' $out/pub.raw > $out/pub
@@ -55,7 +65,11 @@ in
             githubAppName = "garnix-ci";
             acmeEmail = null;
 
-            testFeatures = [ "DevApi" "OpenSearchMocks" "CacheUploadMocks" ];
+            testFeatures = [
+              "DevApi"
+              "OpenSearchMocks"
+              "CacheUploadMocks"
+            ];
 
             database = {
               host = "127.0.0.1";
@@ -91,10 +105,12 @@ in
           services.postgresql = {
             enable = true;
             ensureDatabases = [ "garnix" ];
-            ensureUsers = [{
-              name = "garnix";
-              ensureDBOwnership = true;
-            }];
+            ensureUsers = [
+              {
+                name = "garnix";
+                ensureDBOwnership = true;
+              }
+            ];
             authentication = lib.mkForce ''
               local   all       all                      trust
               host    all       all      127.0.0.1/32    md5
@@ -104,9 +120,15 @@ in
 
           systemd.services.garnix-website-pg-password = {
             description = "Set the garnix postgres password";
-            wantedBy = [ "multi-user.target" "garnixServer.service" ];
+            wantedBy = [
+              "multi-user.target"
+              "garnixServer.service"
+            ];
             before = [ "garnixServer.service" ];
-            after = [ "postgresql.service" "postgresql-setup.service" ];
+            after = [
+              "postgresql.service"
+              "postgresql-setup.service"
+            ];
             requires = [ "postgresql.service" ];
             serviceConfig = {
               Type = "oneshot";
@@ -134,7 +156,8 @@ in
                 --dbname garnix --file ${../sql/local-fixtures.sql}
             '';
           };
-        })
+        }
+      )
     ];
   };
 }

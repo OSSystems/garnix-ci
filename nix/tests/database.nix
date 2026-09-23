@@ -3,34 +3,42 @@
   name = "test database module";
 
   nodes = {
-    db = { config, lib, nodes, pkgs, ... }: {
-      garnix.database = {
-        enable = true;
-        allowedIPs = [
-          "${nodes.db.networking.primaryIPAddress}/32"
-          "${nodes.db.networking.primaryIPv6Address}/32"
-          "fe80::/10"
-        ];
-        exporter = {
+    db =
+      {
+        config,
+        lib,
+        nodes,
+        pkgs,
+        ...
+      }:
+      {
+        garnix.database = {
           enable = true;
+          allowedIPs = [
+            "${nodes.db.networking.primaryIPAddress}/32"
+            "${nodes.db.networking.primaryIPv6Address}/32"
+            "fe80::/10"
+          ];
+          exporter = {
+            enable = true;
+          };
         };
-      };
 
-      networking.extraHosts = ''
-        ${nodes.db.networking.primaryIPAddress} ${nodes.db.garnix.database.fqdn}
-      '';
+        networking.extraHosts = ''
+          ${nodes.db.networking.primaryIPAddress} ${nodes.db.garnix.database.fqdn}
+        '';
 
-      services.prometheus.exporters.sql = {
-        configuration.jobs.counts.queries = {
-          garnix_users = {
-            labels = [ "garnix_users" ];
-            help = "Total users";
-            values = [ "count" ];
-            query = "SELECT count(*) as count FROM pg_catalog.pg_user WHERE usename = 'garnix'";
+        services.prometheus.exporters.sql = {
+          configuration.jobs.counts.queries = {
+            garnix_users = {
+              labels = [ "garnix_users" ];
+              help = "Total users";
+              values = [ "count" ];
+              query = "SELECT count(*) as count FROM pg_catalog.pg_user WHERE usename = 'garnix'";
+            };
           };
         };
       };
-    };
   };
 
   testScript = { nodes, ... }: ''

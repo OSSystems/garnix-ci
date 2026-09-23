@@ -1,7 +1,8 @@
-{ config
-, lib
-, pkgs
-, ...
+{
+  config,
+  lib,
+  pkgs,
+  ...
 }:
 
 let
@@ -10,56 +11,63 @@ let
     mkKeyValue = k: v: "  ${k} ${toString v}";
   };
 
-  pipelineFiles = pkgs.linkFarm "pipelines.conf"
-    ((lib.mapAttrsToList
-      (_: pipeline:
-        let
-          pipelineName = "${pipeline.name}.conf";
-        in
-        {
-          name = pipelineName;
-          path =
-            settingsFormatIni.generate pipelineName (lib.attrsets.filterAttrs (_: value: value != { }) {
-              INPUT = pipeline.input;
-              FILTER = pipeline.filter;
-              OUTPUT =
-                # If we are in dev-mode, and we are set to output to a file in dev-mode,
-                # then we replace all outputs to files under /tmp
-                if config.garnix.devMode.enable && config.garnix.fluent-bit.devModeOutputsToFile then
-                  {
-                    inherit (pipeline.output) Match;
-                    Name = "file";
-                    # This ends up in /tmp/systemd-private-<hash>-garnixServer/tmp/fluent-bit-test-output/
-                    Path = "/tmp/fluent-bit-test-output";
-                    File = pipeline.output.Match;
-                    Mkdir = "On";
-                  }
-                else
-                  pipeline.output;
-            });
-        })
-      (lib.filterAttrs (_: pipeline: pipeline.enable) cfg.configuration.pipelines)) ++
-    (lib.map (f: { name = f.name; path = f; }) filterFiles));
-  parserFiles = (lib.mapAttrsToList
-    (name: values:
-      (settingsFormatIni.generate "parser.conf"
-        {
-          PARSER = {
-            inherit name;
-          } // values;
-        })
-    )
-    cfg.configuration.parsers);
-  filterFiles = (lib.mapAttrsToList
-    (name: values:
-      (settingsFormatIni.generate "filter-${name}.conf"
-        {
-          FILTER = {
-            inherit name;
-          } // values;
-        })
-    )
-    cfg.configuration.extraFilters);
+  pipelineFiles = pkgs.linkFarm "pipelines.conf" (
+    (lib.mapAttrsToList (
+      _: pipeline:
+      let
+        pipelineName = "${pipeline.name}.conf";
+      in
+      {
+        name = pipelineName;
+        path = settingsFormatIni.generate pipelineName (
+          lib.attrsets.filterAttrs (_: value: value != { }) {
+            INPUT = pipeline.input;
+            FILTER = pipeline.filter;
+            OUTPUT =
+              # If we are in dev-mode, and we are set to output to a file in dev-mode,
+              # then we replace all outputs to files under /tmp
+              if config.garnix.devMode.enable && config.garnix.fluent-bit.devModeOutputsToFile then
+                {
+                  inherit (pipeline.output) Match;
+                  Name = "file";
+                  # This ends up in /tmp/systemd-private-<hash>-garnixServer/tmp/fluent-bit-test-output/
+                  Path = "/tmp/fluent-bit-test-output";
+                  File = pipeline.output.Match;
+                  Mkdir = "On";
+                }
+              else
+                pipeline.output;
+          }
+        );
+      }
+    ) (lib.filterAttrs (_: pipeline: pipeline.enable) cfg.configuration.pipelines))
+    ++ (lib.map (f: {
+      name = f.name;
+      path = f;
+    }) filterFiles)
+  );
+  parserFiles = (
+    lib.mapAttrsToList (
+      name: values:
+      (settingsFormatIni.generate "parser.conf" {
+        PARSER = {
+          inherit name;
+        }
+        // values;
+      })
+    ) cfg.configuration.parsers
+  );
+  filterFiles = (
+    lib.mapAttrsToList (
+      name: values:
+      (settingsFormatIni.generate "filter-${name}.conf" {
+        FILTER = {
+          inherit name;
+        }
+        // values;
+      })
+    ) cfg.configuration.extraFilters
+  );
 in
 
 {
@@ -71,7 +79,8 @@ in
 
       # Some tests need the real outputs, so we include an escape hatch
       devModeOutputsToFile =
-        lib.mkEnableOption "replacing of fluent-bit outputs by file outputs in dev-mode" // {
+        lib.mkEnableOption "replacing of fluent-bit outputs by file outputs in dev-mode"
+        // {
           default = true;
         };
 
@@ -124,36 +133,48 @@ in
 
         pipelines =
           let
-            singleIniAtom = with lib.types; nullOr (oneOf [ bool int float str ]) // {
-              description = "INI atom (null, bool, int, float or string)";
-            };
+            singleIniAtom =
+              with lib.types;
+              nullOr (oneOf [
+                bool
+                int
+                float
+                str
+              ])
+              // {
+                description = "INI atom (null, bool, int, float or string)";
+              };
           in
           lib.mkOption {
             description = "Fluent-bit pipelines";
             default = { };
-            type = lib.types.attrsOf (lib.types.submodule ({ name, lib, ... }: {
-              options = {
-                enable = lib.mkEnableOption "the pipeline" // {
-                  default = true;
-                };
-                name = lib.mkOption {
-                  type = lib.types.str;
-                  default = name;
-                };
-                input = lib.mkOption {
-                  type = lib.types.attrsOf singleIniAtom;
-                  default = { };
-                };
-                filter = lib.mkOption {
-                  type = lib.types.attrsOf singleIniAtom;
-                  default = { };
-                };
-                output = lib.mkOption {
-                  type = lib.types.attrsOf singleIniAtom;
-                  default = { };
-                };
-              };
-            }));
+            type = lib.types.attrsOf (
+              lib.types.submodule (
+                { name, lib, ... }: {
+                  options = {
+                    enable = lib.mkEnableOption "the pipeline" // {
+                      default = true;
+                    };
+                    name = lib.mkOption {
+                      type = lib.types.str;
+                      default = name;
+                    };
+                    input = lib.mkOption {
+                      type = lib.types.attrsOf singleIniAtom;
+                      default = { };
+                    };
+                    filter = lib.mkOption {
+                      type = lib.types.attrsOf singleIniAtom;
+                      default = { };
+                    };
+                    output = lib.mkOption {
+                      type = lib.types.attrsOf singleIniAtom;
+                      default = { };
+                    };
+                  };
+                }
+              )
+            );
           };
       };
 
@@ -199,164 +220,169 @@ in
     };
   };
 
-  config = lib.mkMerge [{
-    garnix.fluent-bit.configuration =
-      let
-        journalTagPrefix = "systemd";
-        garnixServerJsonParserName = "garnixServer-json-parser";
-        nginxJsonParserName = "nginx-json-parser";
-        defaultOutput = {
-          Name = "opensearch";
-          Host = cfg.opensearch.fqdn;
-          Port = cfg.opensearch.port;
-          Tls = if cfg.opensearch.tls then "On" else "Off";
-          "Tls.verify" = if config.garnix.devMode.enable then "Off" else "On";
-          HTTP_User = cfg.opensearch.basicAuth.username;
-          HTTP_Passwd = ''''${OPENSEARCH_PASSWORD}'';
-          Logstash_Format = "On";
-          Logstash_Prefix = "garnix-system";
-          Logstash_DateFormat = "%Y.%m.%d";
-          Time_Key = "@timestamp";
-          Time_Key_Nanos = "On";
-          Replace_Dots = "On";
-          Suppress_Type_Name = "On";
-          Index = "fluent-bit";
-        };
-      in
-      {
-        parsers = {
-          "${garnixServerJsonParserName}" = {
-            Format = "json";
+  config = lib.mkMerge [
+    {
+      garnix.fluent-bit.configuration =
+        let
+          journalTagPrefix = "systemd";
+          garnixServerJsonParserName = "garnixServer-json-parser";
+          nginxJsonParserName = "nginx-json-parser";
+          defaultOutput = {
+            Name = "opensearch";
+            Host = cfg.opensearch.fqdn;
+            Port = cfg.opensearch.port;
+            Tls = if cfg.opensearch.tls then "On" else "Off";
+            "Tls.verify" = if config.garnix.devMode.enable then "Off" else "On";
+            HTTP_User = cfg.opensearch.basicAuth.username;
+            HTTP_Passwd = "\${OPENSEARCH_PASSWORD}";
+            Logstash_Format = "On";
+            Logstash_Prefix = "garnix-system";
+            Logstash_DateFormat = "%Y.%m.%d";
+            Time_Key = "@timestamp";
+            Time_Key_Nanos = "On";
+            Replace_Dots = "On";
+            Suppress_Type_Name = "On";
+            Index = "fluent-bit";
           };
-          "${nginxJsonParserName}" = {
-            Format = "json";
-            Time_Key = "time_iso8601";
-            Time_Format = "%Y-%m-%dT%H:%M:%S%z";
-          };
-        };
-        extraFilters = {
-          "grep" = {
-            Match = "${journalTagPrefix}.*";
-            Exclude = "systemd_unit ^fluent-bit\\.service$";
-          };
-          "lua" = {
-            Match = "nginx";
-            script = pkgs.writeText "nginx-lua-filter.lua" ''
-              function filter(tag, timestamp, record)
-                record["request_length"] = tonumber(record["request_length"])
-                record["request_time"] = tonumber(record["request_time"])
-                record["bytes_sent"] = tonumber(record["bytes_sent"])
-                record["body_bytes_sent"] = tonumber(record["body_bytes_sent"])
-                record["upstream_response_time"] = tonumber(record["upstream_response_time"])
-                if record["status"] == "200" and record["request_time"] ~= nil and record["request_time"] > 0 then
-                  record["throughput"] = record["bytes_sent"] / record["request_time"]
-                end
-                return 1, timestamp, record
-              end'';
-            call = "filter";
-          };
-        };
-        pipelines = {
-          journal = {
-            input = {
-              Name = "systemd";
-              Tag = "${journalTagPrefix}.*";
-              Read_From_Tail = "On";
-              DB = "journald_cursor.sqlite";
-              Lowercase = "On";
-              Strip_Underscores = "On";
+        in
+        {
+          parsers = {
+            "${garnixServerJsonParserName}" = {
+              Format = "json";
             };
-            filter = {
-              Name = "parser";
-              Match = "${journalTagPrefix}.garnixServer.service";
-              Parser = garnixServerJsonParserName;
-              Key_Name = "message";
-              Reserve_Data = "True";
+            "${nginxJsonParserName}" = {
+              Format = "json";
+              Time_Key = "time_iso8601";
+              Time_Format = "%Y-%m-%dT%H:%M:%S%z";
             };
-            output = defaultOutput // {
+          };
+          extraFilters = {
+            "grep" = {
               Match = "${journalTagPrefix}.*";
-              Logstash_Prefix = "garnix-system";
+              Exclude = "systemd_unit ^fluent-bit\\.service$";
+            };
+            "lua" = {
+              Match = "nginx";
+              script = pkgs.writeText "nginx-lua-filter.lua" ''
+                function filter(tag, timestamp, record)
+                  record["request_length"] = tonumber(record["request_length"])
+                  record["request_time"] = tonumber(record["request_time"])
+                  record["bytes_sent"] = tonumber(record["bytes_sent"])
+                  record["body_bytes_sent"] = tonumber(record["body_bytes_sent"])
+                  record["upstream_response_time"] = tonumber(record["upstream_response_time"])
+                  if record["status"] == "200" and record["request_time"] ~= nil and record["request_time"] > 0 then
+                    record["throughput"] = record["bytes_sent"] / record["request_time"]
+                  end
+                  return 1, timestamp, record
+                end'';
+              call = "filter";
             };
           };
-        } // lib.optionalAttrs cfg.enableNginxLogParsing {
-          nginx = {
-            input = {
-              Name = "tail";
-              Tag = "nginx";
-              DB = "nginx_cursor.sqlite";
-              Parser = nginxJsonParserName;
-              Path = "/var/log/nginx/json_access.log";
-              Refresh_Interval = "15";
-            };
-            filter = {
-              Name = "record_modifier";
-              Match = "nginx";
-              Record = ''server ''${HOSTNAME}'';
-            };
-            output = defaultOutput // {
-              Match = "nginx";
-              Logstash_Prefix = "nginx";
-            };
-          };
-        } // lib.optionalAttrs cfg.buildLogsPipeline.enable {
-          build-logs =
-            let
-              tag = "build-logs";
-            in
-            {
+          pipelines = {
+            journal = {
               input = {
-                Name = "http";
-                Tag = tag;
-                listen = "::1";
-                port = cfg.buildLogsPipeline.port;
+                Name = "systemd";
+                Tag = "${journalTagPrefix}.*";
+                Read_From_Tail = "On";
+                DB = "journald_cursor.sqlite";
+                Lowercase = "On";
+                Strip_Underscores = "On";
+              };
+              filter = {
+                Name = "parser";
+                Match = "${journalTagPrefix}.garnixServer.service";
+                Parser = garnixServerJsonParserName;
+                Key_Name = "message";
+                Reserve_Data = "True";
               };
               output = defaultOutput // {
-                Match = tag;
-                Logstash_Prefix = "garnix-build-logs";
+                Match = "${journalTagPrefix}.*";
+                Logstash_Prefix = "garnix-system";
               };
             };
+          }
+          // lib.optionalAttrs cfg.enableNginxLogParsing {
+            nginx = {
+              input = {
+                Name = "tail";
+                Tag = "nginx";
+                DB = "nginx_cursor.sqlite";
+                Parser = nginxJsonParserName;
+                Path = "/var/log/nginx/json_access.log";
+                Refresh_Interval = "15";
+              };
+              filter = {
+                Name = "record_modifier";
+                Match = "nginx";
+                Record = "server \${HOSTNAME}";
+              };
+              output = defaultOutput // {
+                Match = "nginx";
+                Logstash_Prefix = "nginx";
+              };
+            };
+          }
+          // lib.optionalAttrs cfg.buildLogsPipeline.enable {
+            build-logs =
+              let
+                tag = "build-logs";
+              in
+              {
+                input = {
+                  Name = "http";
+                  Tag = tag;
+                  listen = "::1";
+                  port = cfg.buildLogsPipeline.port;
+                };
+                output = defaultOutput // {
+                  Match = tag;
+                  Logstash_Prefix = "garnix-build-logs";
+                };
+              };
+          };
         };
-      };
 
-    systemd.services = {
-      fluent-bit =
-        let
-          fluentMainConfig = settingsFormatIni.generate "fluent-bit.conf"
-            {
+      systemd.services = {
+        fluent-bit =
+          let
+            fluentMainConfig = settingsFormatIni.generate "fluent-bit.conf" {
               SERVICE = cfg.configuration.service;
             };
-          pipelineConfig = pkgs.writeText "pipelines.conf" "@INCLUDE ${pipelineFiles}/*.conf";
-        in
-        lib.mkIf cfg.enable {
-          wantedBy = [ "multi-user.target" ];
-          after = [ "network.target" ] ++ lib.optionals (cfg.enableNginxLogParsing) [ "nginx.service" ];
-          description = "Fluent Bit log processor and forwarder";
-          serviceConfig = {
-            Nice = 10;
-            SupplementaryGroups = [
-              # allow to read the systemd journal
-              "systemd-journal"
-            ] ++ lib.optionals (cfg.enableNginxLogParsing) [ "nginx" ] ++ cfg.extraGroups;
-            StateDirectory = "fluent-bit";
-            DynamicUser = true;
-            LoadCredential = [ "opensearch_password:${cfg.opensearch.basicAuth.passwordFile}" ];
-            Restart = "always";
-            RestartSec = 10;
-            RestartSteps = 20;
-            RestartMaxDelaySec = "3min";
-            RestartMode = "direct";
-            LimitNOFILE = 8192;
+            pipelineConfig = pkgs.writeText "pipelines.conf" "@INCLUDE ${pipelineFiles}/*.conf";
+          in
+          lib.mkIf cfg.enable {
+            wantedBy = [ "multi-user.target" ];
+            after = [ "network.target" ] ++ lib.optionals (cfg.enableNginxLogParsing) [ "nginx.service" ];
+            description = "Fluent Bit log processor and forwarder";
+            serviceConfig = {
+              Nice = 10;
+              SupplementaryGroups = [
+                # allow to read the systemd journal
+                "systemd-journal"
+              ]
+              ++ lib.optionals (cfg.enableNginxLogParsing) [ "nginx" ]
+              ++ cfg.extraGroups;
+              StateDirectory = "fluent-bit";
+              DynamicUser = true;
+              LoadCredential = [ "opensearch_password:${cfg.opensearch.basicAuth.passwordFile}" ];
+              Restart = "always";
+              RestartSec = 10;
+              RestartSteps = 20;
+              RestartMaxDelaySec = "3min";
+              RestartMode = "direct";
+              LimitNOFILE = 8192;
+            };
+            script = ''
+              export OPENSEARCH_PASSWORD=$(cat $CREDENTIALS_DIRECTORY/opensearch_password)
+                ${lib.getExe cfg.package} --workdir ''${STATE_DIRECTORY} --config=${fluentMainConfig} --config=${pipelineConfig} --parser=${cfg.package}/etc/fluent-bit/parsers.conf''
+            + " "
+            + lib.concatMapStringsSep " " (p: "--parser=" + p) parserFiles;
+            reload = ''
+              ${pkgs.coreutils}/bin/kill -HUP $MAINPID
+            '';
           };
-          script = ''
-            export OPENSEARCH_PASSWORD=$(cat $CREDENTIALS_DIRECTORY/opensearch_password)
-              ${lib.getExe cfg.package} --workdir ''${STATE_DIRECTORY} --config=${fluentMainConfig} --config=${pipelineConfig} --parser=${cfg.package}/etc/fluent-bit/parsers.conf''
-          + " " + lib.concatMapStringsSep " " (p: "--parser=" + p) parserFiles;
-          reload = ''
-            ${pkgs.coreutils}/bin/kill -HUP $MAINPID
-          '';
-        };
-    };
-  }
+      };
+    }
     (lib.mkIf (cfg.enableNginxLogParsing) {
       services.nginx.commonHttpConfig = ''
         log_format json escape=json
@@ -397,5 +423,6 @@ in
         access_log /var/log/nginx/json_access.log json;
       '';
       services.logrotate.settings.nginx.rotate = 3;
-    })];
+    })
+  ];
 }

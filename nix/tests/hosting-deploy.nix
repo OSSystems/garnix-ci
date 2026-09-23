@@ -9,7 +9,13 @@
 # server here is a seeded database row pointing at a plain web server. The
 # provisioning path itself (acquireServer, copyClosure, switch-to-configuration)
 # is still only exercised on a real host.
-{ pkgs, system, self, flakeInputs, ... }:
+{
+  pkgs,
+  system,
+  self,
+  flakeInputs,
+  ...
+}:
 let
   hostingDomain = "hosting.test";
   backendHostname = "garnix.test";
@@ -30,17 +36,19 @@ let
 
   jwtKeyFile = mkSecret "jwt-key" "ZGV2LWp3dC1rZXktMzItYnl0ZXMtcGFkZGluZyEhIQ==";
 
-  githubAppPkFile = pkgs.runCommand "garnix-hosting-test-github-app-pk"
-    { nativeBuildInputs = [ pkgs.openssl ]; } ''
-    openssl genrsa -out $out 2048
-  '';
+  githubAppPkFile =
+    pkgs.runCommand "garnix-hosting-test-github-app-pk" { nativeBuildInputs = [ pkgs.openssl ]; }
+      ''
+        openssl genrsa -out $out 2048
+      '';
 
-  ageKeyPair = pkgs.runCommand "garnix-hosting-test-age-keypair"
-    { nativeBuildInputs = [ pkgs.age ]; } ''
-    mkdir -p $out
-    age-keygen -o $out/key 2>$out/pub.raw
-    grep -oE 'age1[a-z0-9]+' $out/pub.raw > $out/pub
-  '';
+  ageKeyPair =
+    pkgs.runCommand "garnix-hosting-test-age-keypair" { nativeBuildInputs = [ pkgs.age ]; }
+      ''
+        mkdir -p $out
+        age-keygen -o $out/key 2>$out/pub.raw
+        grep -oE 'age1[a-z0-9]+' $out/pub.raw > $out/pub
+      '';
 in
 pkgs.testers.runNixOSTest {
   name = "garnix-hosting-deploy";
@@ -125,10 +133,12 @@ pkgs.testers.runNixOSTest {
         # rejects with "unsupported authentication type: 10".
         settings.password_encryption = "md5";
         ensureDatabases = [ "garnix" ];
-        ensureUsers = [{
-          name = "garnix";
-          ensureDBOwnership = true;
-        }];
+        ensureUsers = [
+          {
+            name = "garnix";
+            ensureDBOwnership = true;
+          }
+        ];
         authentication = lib.mkForce ''
           local   all       all                      trust
           host    all       all      127.0.0.1/32    md5
@@ -139,9 +149,15 @@ pkgs.testers.runNixOSTest {
       # postgresql's initialScript runs before ensureUsers, so the password
       # has to be set afterwards.
       systemd.services.garnix-test-pg-password = {
-        wantedBy = [ "multi-user.target" "garnixServer.service" ];
+        wantedBy = [
+          "multi-user.target"
+          "garnixServer.service"
+        ];
         before = [ "garnixServer.service" ];
-        after = [ "postgresql.service" "postgresql-setup.service" ];
+        after = [
+          "postgresql.service"
+          "postgresql-setup.service"
+        ];
         requires = [ "postgresql.service" ];
         serviceConfig = {
           Type = "oneshot";
@@ -194,23 +210,37 @@ pkgs.testers.runNixOSTest {
       networking.extraHosts = ''
         ${nodes.backend.networking.primaryIPAddress} ${backendHostname}
       '';
-      networking.firewall.allowedTCPPorts = [ 80 8080 ];
+      networking.firewall.allowedTCPPorts = [
+        80
+        8080
+      ];
       services.nginx = {
         enable = true;
         virtualHosts."guest" = {
           default = true;
-          listen = [{ addr = "0.0.0.0"; port = 80; }];
+          listen = [
+            {
+              addr = "0.0.0.0";
+              port = 80;
+            }
+          ];
           locations."/".return = "200 '${guestBody}'";
         };
         virtualHosts."guest-api" = {
-          listen = [{ addr = "0.0.0.0"; port = 8080; }];
+          listen = [
+            {
+              addr = "0.0.0.0";
+              port = 8080;
+            }
+          ];
           locations."/".return = "200 '${apiBody}'";
         };
       };
     };
   };
 
-  testScript = { nodes, ... }:
+  testScript =
+    { nodes, ... }:
     let
       guestIp = nodes.guest.networking.primaryIPAddress;
     in

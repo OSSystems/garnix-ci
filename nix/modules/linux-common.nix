@@ -1,14 +1,18 @@
 # Things that we want on every (linux) server
-{ config
-, lib
-, pkgs
-, ...
+{
+  config,
+  lib,
+  pkgs,
+  ...
 }:
 let
   ## Users that should be able to ssh into machines.
   kill-nix-daemon-process-without-client = pkgs.writeShellApplication {
     name = "kill-nix-daemon-process-without-client";
-    runtimeInputs = [ pkgs.procps pkgs.coreutils-full ];
+    runtimeInputs = [
+      pkgs.procps
+      pkgs.coreutils-full
+    ];
     text = ''
       set -x
       for PID in $(pgrep -f "nix-daemon [0-9]+" || true);
@@ -28,7 +32,10 @@ let
   };
   kill-reparented-nix-daemon-clients = pkgs.writeShellApplication {
     name = "kill-reparented-nix-daemon-clients";
-    runtimeInputs = [ pkgs.procps pkgs.coreutils-full ];
+    runtimeInputs = [
+      pkgs.procps
+      pkgs.coreutils-full
+    ];
     text = ''
       set -x
       for PID in $(pgrep -f "nix-daemon [0-9]+" || true);
@@ -48,7 +55,10 @@ let
   };
   check-long-running-nix-daemon-process = pkgs.writeShellApplication {
     name = "check-long-running-nix-daemon-process";
-    runtimeInputs = [ pkgs.procps pkgs.coreutils-full ];
+    runtimeInputs = [
+      pkgs.procps
+      pkgs.coreutils-full
+    ];
     text = ''
       NOW=$(date +%s)
       MAX_EXECUTION_TIME=$((3*60*60))
@@ -86,21 +96,23 @@ in
     ipv4 = lib.mkOption {
       description = "Static ipv4 configuration. If set to null, then DHCP will be used which is not supported for hetzner dedicated machines";
       default = null;
-      type = lib.types.nullOr (lib.types.submodule {
-        options = {
-          address = lib.mkOption {
-            type = lib.types.str;
-          };
+      type = lib.types.nullOr (
+        lib.types.submodule {
+          options = {
+            address = lib.mkOption {
+              type = lib.types.str;
+            };
 
-          gateway = lib.mkOption {
-            type = lib.types.str;
-          };
+            gateway = lib.mkOption {
+              type = lib.types.str;
+            };
 
-          iface = lib.mkOption {
-            type = lib.types.str;
+            iface = lib.mkOption {
+              type = lib.types.str;
+            };
           };
-        };
-      });
+        }
+      );
     };
 
     ipv6Address = lib.mkOption {
@@ -209,10 +221,7 @@ in
       # Not all domains support DNSSEC yet.
       # Even when set to allow-downgrade, requests for such domains fail.
       dnssec = "false";
-      dnsovertls =
-        if config.garnix.devMode.enable
-        then "false"
-        else "true";
+      dnsovertls = if config.garnix.devMode.enable then "false" else "true";
     };
 
     services.openssh = {
@@ -251,7 +260,11 @@ in
 
     programs.mosh.enable = true;
     # For mosh
-    networking.firewall.allowedUDPPorts = [ 60001 60002 60003 ];
+    networking.firewall.allowedUDPPorts = [
+      60001
+      60002
+      60003
+    ];
 
     programs.zsh.enable = true;
     programs.fish.enable = true;

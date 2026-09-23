@@ -1,4 +1,10 @@
-{ lib, config, flakePackages, ... }: {
+{
+  lib,
+  config,
+  flakePackages,
+  ...
+}:
+{
   options.garnix.watchdog = {
     enable = lib.mkEnableOption "watchdog daemon";
     port = lib.mkOption {
@@ -45,9 +51,11 @@
           job_name = "watchdog";
           scheme = "http";
           metrics_path = "/";
-          static_configs = [{
-            targets = [ "localhost:${toString config.garnix.watchdog.port}" ];
-          }];
+          static_configs = [
+            {
+              targets = [ "localhost:${toString config.garnix.watchdog.port}" ];
+            }
+          ];
         }
       ];
     };

@@ -1,9 +1,10 @@
-{ config
-, lib
-, pkgs
-, flakePackages
-, flakeInputs
-, ...
+{
+  config,
+  lib,
+  pkgs,
+  flakePackages,
+  flakeInputs,
+  ...
 }:
 
 let
@@ -14,52 +15,54 @@ let
     enabled = config.garnix.fluent-bit.enable && config.garnix.fluent-bit.buildLogsPipeline.enable;
   };
 
-  remoteBuilderType = lib.types.submodule ({ ... }: {
-    options = {
-      name = lib.mkOption {
-        type = lib.types.str;
-        description = "SSH alias for the builder (used in /etc/ssh/ssh_config).";
+  remoteBuilderType = lib.types.submodule (
+    { ... }: {
+      options = {
+        name = lib.mkOption {
+          type = lib.types.str;
+          description = "SSH alias for the builder (used in /etc/ssh/ssh_config).";
+        };
+        hostname = lib.mkOption {
+          type = lib.types.str;
+          description = "DNS name or IP of the builder.";
+        };
+        user = lib.mkOption {
+          type = lib.types.str;
+          default = "nix-ssh";
+          description = "SSH user on the remote builder.";
+        };
+        sshKeyPath = lib.mkOption {
+          type = lib.types.nullOr lib.types.str;
+          default = null;
+          description = ''
+            Per-host override for the SSH private key.
+            Falls back to remoteBuilders.sshKeyPath.
+            The file must exist at this path on the host running garnix.
+          '';
+        };
+        systems = lib.mkOption {
+          type = lib.types.listOf lib.types.str;
+          description = "Nix system tuples this builder handles (e.g. [\"x86_64-linux\"]).";
+        };
+        maxJobs = lib.mkOption {
+          type = lib.types.int;
+          default = 1;
+        };
+        speedFactor = lib.mkOption {
+          type = lib.types.int;
+          default = 1;
+        };
+        supportedFeatures = lib.mkOption {
+          type = lib.types.listOf lib.types.str;
+          default = [ ];
+        };
+        mandatoryFeatures = lib.mkOption {
+          type = lib.types.listOf lib.types.str;
+          default = [ ];
+        };
       };
-      hostname = lib.mkOption {
-        type = lib.types.str;
-        description = "DNS name or IP of the builder.";
-      };
-      user = lib.mkOption {
-        type = lib.types.str;
-        default = "nix-ssh";
-        description = "SSH user on the remote builder.";
-      };
-      sshKeyPath = lib.mkOption {
-        type = lib.types.nullOr lib.types.str;
-        default = null;
-        description = ''
-          Per-host override for the SSH private key.
-          Falls back to remoteBuilders.sshKeyPath.
-          The file must exist at this path on the host running garnix.
-        '';
-      };
-      systems = lib.mkOption {
-        type = lib.types.listOf lib.types.str;
-        description = "Nix system tuples this builder handles (e.g. [\"x86_64-linux\"]).";
-      };
-      maxJobs = lib.mkOption {
-        type = lib.types.int;
-        default = 1;
-      };
-      speedFactor = lib.mkOption {
-        type = lib.types.int;
-        default = 1;
-      };
-      supportedFeatures = lib.mkOption {
-        type = lib.types.listOf lib.types.str;
-        default = [ ];
-      };
-      mandatoryFeatures = lib.mkOption {
-        type = lib.types.listOf lib.types.str;
-        default = [ ];
-      };
-    };
-  });
+    }
+  );
 
   logsDir = pkgs.writeShellScriptBin "logsDir" ''
     if [ -d /var/lib/garnix/logs ]; then
@@ -117,14 +120,12 @@ let
     "S3_CACHE_GC_DRY_RUN=${if cfg.s3Cache.gc.dryRun then "true" else "false"}"
   ];
 
-  remoteBuilderSshConfig = lib.concatMapStringsSep "\n"
-    (h: ''
-      Host ${h.name}
-         Hostname ${h.hostname}
-         User ${h.user}
-         IdentityFile ${if h.sshKeyPath != null then h.sshKeyPath else cfg.remoteBuilders.sshKeyPath}
-    '')
-    cfg.remoteBuilders.hosts;
+  remoteBuilderSshConfig = lib.concatMapStringsSep "\n" (h: ''
+    Host ${h.name}
+       Hostname ${h.hostname}
+       User ${h.user}
+       IdentityFile ${if h.sshKeyPath != null then h.sshKeyPath else cfg.remoteBuilders.sshKeyPath}
+  '') cfg.remoteBuilders.hosts;
 
   # Backend SSHes to the action host as user action-runner with BatchMode=yes
   # and does not pass StrictHostKeyChecking, so it relies on the system ssh
@@ -287,7 +288,9 @@ in
       warmPool = lib.mkOption {
         type = lib.types.attrsOf lib.types.ints.positive;
         default = { };
-        example = { "i2x4" = 2; };
+        example = {
+          "i2x4" = 2;
+        };
         description = ''
           How many guests of each machine size to keep booted and waiting, so a
           deploy claims one instead of waiting minutes for a VM to come up.
@@ -392,7 +395,13 @@ in
     };
 
     testFeatures = lib.mkOption {
-      type = lib.types.listOf (lib.types.enum [ "DevApi" "OpenSearchMocks" "CacheUploadMocks" ]);
+      type = lib.types.listOf (
+        lib.types.enum [
+          "DevApi"
+          "OpenSearchMocks"
+          "CacheUploadMocks"
+        ]
+      );
       default = [ ];
     };
 
@@ -568,7 +577,10 @@ in
       sharedResourcesUsers = lib.mkOption {
         type = lib.types.listOf lib.types.str;
         default = [ ];
-        example = [ "my-org" "some-user" ];
+        example = [
+          "my-org"
+          "some-user"
+        ];
         description = ''
           GitHub owner logins (orgs or users) allowed to run actions with
           sandboxType = "shared-resources". Matched case-insensitively against
@@ -611,7 +623,14 @@ in
         message = "services.garnixServer.opensearch.host must be set (used by fluent-bit).";
       }
       {
-        assertion = !cfg.s3Cache.enable || (cfg.s3Cache.host != "" && cfg.s3Cache.publicBucket != "" && cfg.s3Cache.privateBucket != "" && cfg.s3Cache.publicBaseUrl != "");
+        assertion =
+          !cfg.s3Cache.enable
+          || (
+            cfg.s3Cache.host != ""
+            && cfg.s3Cache.publicBucket != ""
+            && cfg.s3Cache.privateBucket != ""
+            && cfg.s3Cache.publicBaseUrl != ""
+          );
         message = "services.garnixServer.s3Cache.{host,publicBucket,privateBucket,publicBaseUrl} must be set when s3Cache.enable = true.";
       }
       {
@@ -643,22 +662,22 @@ in
         trusted-users = cfg.trustedUsers;
       };
       extraOptions = ''
-        max-jobs = ${if cfg.remoteBuilders.hosts == [ ] || config.garnix.devMode.enable then "auto" else "0"}
+        max-jobs = ${
+          if cfg.remoteBuilders.hosts == [ ] || config.garnix.devMode.enable then "auto" else "0"
+        }
         keep-build-log = true
       '';
-      buildMachines = lib.map
-        (h: {
-          hostName = h.name;
-          sshUser = h.user;
-          sshKey = if h.sshKeyPath != null then h.sshKeyPath else cfg.remoteBuilders.sshKeyPath;
-          protocol = "ssh-ng";
-          systems = h.systems;
-          maxJobs = h.maxJobs;
-          speedFactor = h.speedFactor;
-          supportedFeatures = h.supportedFeatures;
-          mandatoryFeatures = h.mandatoryFeatures;
-        })
-        cfg.remoteBuilders.hosts;
+      buildMachines = lib.map (h: {
+        hostName = h.name;
+        sshUser = h.user;
+        sshKey = if h.sshKeyPath != null then h.sshKeyPath else cfg.remoteBuilders.sshKeyPath;
+        protocol = "ssh-ng";
+        systems = h.systems;
+        maxJobs = h.maxJobs;
+        speedFactor = h.speedFactor;
+        supportedFeatures = h.supportedFeatures;
+        mandatoryFeatures = h.mandatoryFeatures;
+      }) cfg.remoteBuilders.hosts;
       distributedBuilds = cfg.remoteBuilders.hosts != [ ] && !config.garnix.devMode.enable;
       daemonIOSchedPriority = 4;
     };
@@ -704,10 +723,15 @@ in
         flakeInputs.comment.packages.${stdenv.hostPlatform.system}.default
       ];
       wantedBy = [ "multi-user.target" ];
-      wants = [ "network-online.target" ]
-        ++ lib.optional buildLogsCollector.enabled buildLogsCollector.unit;
-      after = [ "network-online.target" "garnix-secrets-stage.service" ]
-        ++ lib.optional buildLogsCollector.enabled buildLogsCollector.unit;
+      wants = [
+        "network-online.target"
+      ]
+      ++ lib.optional buildLogsCollector.enabled buildLogsCollector.unit;
+      after = [
+        "network-online.target"
+        "garnix-secrets-stage.service"
+      ]
+      ++ lib.optional buildLogsCollector.enabled buildLogsCollector.unit;
       requires = [ "garnix-secrets-stage.service" ];
       serviceConfig = {
         Type = "notify";
@@ -739,37 +763,53 @@ in
           "GARNIX_SECRETS_DIR=${cfg.secrets.dir}"
           "OPENSEARCH_URL=${cfg.opensearch.url}"
           "S3_CACHE_ENABLED=${if cfg.s3Cache.enable then "true" else "false"}"
-        ] ++ lib.optional (cfg.sessionLifetimeSeconds != null)
-          "GARNIX_SESSION_LIFETIME=${toString cfg.sessionLifetimeSeconds}"
-        ++ lib.optional (cfg.evalMemory.defaultGigabytes != null)
-          "GARNIX_DEFAULT_EVAL_MEMORY_GB=${toString cfg.evalMemory.defaultGigabytes}"
-        ++ lib.optional (cfg.evalMemory.perRepository != { })
-          "GARNIX_REPO_EVAL_MEMORY=${lib.concatStringsSep "," (lib.mapAttrsToList (slug: gigabytes: "${slug}=${toString gigabytes}") cfg.evalMemory.perRepository)}"
-        ++ lib.optional (cfg.provisionerSocket != null)
-          "GARNIX_PROVISIONER_SOCKET=${cfg.provisionerSocket}"
-        ++ lib.optional (cfg.hosting.domain != null)
-          "GARNIX_HOSTING_DOMAIN=${cfg.hosting.domain}"
-        ++ lib.optional (cfg.hosting.statsReportUrl != null)
-          "GARNIX_STATS_REPORT_URL=${cfg.hosting.statsReportUrl}"
-        ++ lib.optional (cfg.hosting.sshKeys != [ ])
-          "GARNIX_HOSTING_SSH_KEYS=${lib.concatStringsSep ":" cfg.hosting.sshKeys}"
-        ++ lib.optional (cfg.hosting.vcpuBudget != null)
-          "GARNIX_HOSTING_VCPU_BUDGET=${cfg.hosting.vcpuBudget}"
-        ++ lib.optional (cfg.hosting.memoryBudget != null)
-          "GARNIX_HOSTING_MEMORY_BUDGET=${cfg.hosting.memoryBudget}"
-        ++ lib.optional (cfg.hosting.maxTier != null)
-          "GARNIX_HOSTING_MAX_TIER=${cfg.hosting.maxTier}"
-        ++ lib.optional (cfg.hosting.branchReserve != null)
-          "GARNIX_HOSTING_BRANCH_RESERVE=${cfg.hosting.branchReserve}"
-        ++ lib.optional (cfg.hosting.warmPool != { })
-          "GARNIX_HOSTING_WARM_POOL=${lib.concatStringsSep "," (lib.mapAttrsToList (tier: count: "${tier}=${toString count}") cfg.hosting.warmPool)}"
+        ]
+        ++ lib.optional (
+          cfg.sessionLifetimeSeconds != null
+        ) "GARNIX_SESSION_LIFETIME=${toString cfg.sessionLifetimeSeconds}"
+        ++ lib.optional (
+          cfg.evalMemory.defaultGigabytes != null
+        ) "GARNIX_DEFAULT_EVAL_MEMORY_GB=${toString cfg.evalMemory.defaultGigabytes}"
+        ++
+          lib.optional (cfg.evalMemory.perRepository != { })
+            "GARNIX_REPO_EVAL_MEMORY=${
+              lib.concatStringsSep "," (
+                lib.mapAttrsToList (slug: gigabytes: "${slug}=${toString gigabytes}") cfg.evalMemory.perRepository
+              )
+            }"
+        ++ lib.optional (cfg.provisionerSocket != null) "GARNIX_PROVISIONER_SOCKET=${cfg.provisionerSocket}"
+        ++ lib.optional (cfg.hosting.domain != null) "GARNIX_HOSTING_DOMAIN=${cfg.hosting.domain}"
+        ++ lib.optional (
+          cfg.hosting.statsReportUrl != null
+        ) "GARNIX_STATS_REPORT_URL=${cfg.hosting.statsReportUrl}"
+        ++ lib.optional (
+          cfg.hosting.sshKeys != [ ]
+        ) "GARNIX_HOSTING_SSH_KEYS=${lib.concatStringsSep ":" cfg.hosting.sshKeys}"
+        ++ lib.optional (
+          cfg.hosting.vcpuBudget != null
+        ) "GARNIX_HOSTING_VCPU_BUDGET=${cfg.hosting.vcpuBudget}"
+        ++ lib.optional (
+          cfg.hosting.memoryBudget != null
+        ) "GARNIX_HOSTING_MEMORY_BUDGET=${cfg.hosting.memoryBudget}"
+        ++ lib.optional (cfg.hosting.maxTier != null) "GARNIX_HOSTING_MAX_TIER=${cfg.hosting.maxTier}"
+        ++ lib.optional (
+          cfg.hosting.branchReserve != null
+        ) "GARNIX_HOSTING_BRANCH_RESERVE=${cfg.hosting.branchReserve}"
+        ++
+          lib.optional (cfg.hosting.warmPool != { })
+            "GARNIX_HOSTING_WARM_POOL=${
+              lib.concatStringsSep "," (
+                lib.mapAttrsToList (tier: count: "${tier}=${toString count}") cfg.hosting.warmPool
+              )
+            }"
         ++ [ "GARNIX_GUEST_SUBNET_PREFIX=${cfg.hosting.guestSubnetPrefix}" ]
         ++ lib.optionals (cfg.database.ssl.mode != "disable") [
           # postgresql-typed reads TPG_TLS via lookupEnv — presence enables
           # TLS regardless of value. Only emit when ssl is actually on.
           "TPG_TLS=true"
           "TPG_TLS_MODE=full"
-        ] ++ s3CacheEnv;
+        ]
+        ++ s3CacheEnv;
         SupplementaryGroups = [ config.users.groups.keys.name ];
         ExecStartPre = [
           "${dbCheckIsReady}/bin/dbCheckIsReady"
@@ -778,7 +818,9 @@ in
         ];
         ExecStart = ''
           ${lib.getBin flakePackages."backend_garnix"}/bin/server \
-              ${lib.concatStringsSep " " (builtins.map (testFeature: "--enable ${testFeature}") cfg.testFeatures)} \
+              ${
+                lib.concatStringsSep " " (builtins.map (testFeature: "--enable ${testFeature}") cfg.testFeatures)
+              } \
               --port ${toString cfg.port} \
               --monitoring-port ${toString cfg.monitoringPort} \
               --metrics-port ${toString cfg.metricsPort} \

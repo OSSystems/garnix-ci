@@ -1,20 +1,21 @@
 # We use our fork until https://github.com/cuedo/github-webhooks/pull/92 has
 # been merged.
-{ mkDerivation
-, aeson
-, base
-, base16-bytestring
-, bytestring
-, cryptonite
-, deepseq
-, deepseq-generics
-, hspec
-, memory
-, text
-, time
-, vector
-, fetchgit
-, lib
+{
+  mkDerivation,
+  aeson,
+  base,
+  base16-bytestring,
+  bytestring,
+  cryptonite,
+  deepseq,
+  deepseq-generics,
+  hspec,
+  memory,
+  text,
+  time,
+  vector,
+  fetchgit,
+  lib,
 }:
 mkDerivation {
   pname = "github-webhooks";
@@ -37,7 +38,14 @@ mkDerivation {
     time
     vector
   ];
-  testHaskellDepends = [ aeson base bytestring hspec text vector ];
+  testHaskellDepends = [
+    aeson
+    base
+    bytestring
+    hspec
+    text
+    vector
+  ];
   description = "Aeson instances for GitHub Webhook payloads";
   license = lib.licenses.mit;
 }
