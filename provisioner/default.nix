@@ -1,9 +1,9 @@
 {
+  self,
   lib,
   pkgs,
-  self,
-  system,
   flakeInputs,
+  system,
   ...
 }:
 let
@@ -20,8 +20,12 @@ let
           };
           config = lib.mkMerge [
             {
-              garnix.guest.sshPublicKey = "ssh-ed25519 HOSTING hosting";
-              garnix.guest.terminalCaPublicKey = "ssh-ed25519 TERMINAL terminal";
+              garnix = {
+                guest = {
+                  sshPublicKey = "ssh-ed25519 HOSTING hosting";
+                  terminalCaPublicKey = "ssh-ed25519 TERMINAL terminal";
+                };
+              };
               system.stateVersion = "25.11";
             }
             guestConfig

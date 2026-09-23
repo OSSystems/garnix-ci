@@ -217,15 +217,15 @@ in
       };
 
       firewall = {
-        interfaces.${cfg.bridge}.allowedUDPPorts = [ 67 ];
-
-        interfaces.${cfg.uplinkInterface}.allowedTCPPortRanges = [
-          {
-            from = cfg.exposePortRange.from;
-            to = cfg.exposePortRange.to;
-          }
-        ];
-
+        interfaces = {
+          ${cfg.bridge}.allowedUDPPorts = [ 67 ];
+          ${cfg.uplinkInterface}.allowedTCPPortRanges = [
+            {
+              from = cfg.exposePortRange.from;
+              to = cfg.exposePortRange.to;
+            }
+          ];
+        };
         extraCommands = ''
           iptables  -D FORWARD -i ${cfg.bridge} -o ${cfg.bridge} -j DROP 2>/dev/null || true
           iptables  -I FORWARD -i ${cfg.bridge} -o ${cfg.bridge} -j DROP
@@ -260,13 +260,14 @@ in
         '';
       };
     };
-
-    boot.kernelModules = [ "br_netfilter" ];
-    boot.kernel.sysctl = {
-      "net.bridge.bridge-nf-call-iptables" = 1;
-      "net.bridge.bridge-nf-call-ip6tables" = 1;
-      "net.ipv6.conf.${cfg.bridge}.accept_ra" = 0;
-      "net.ipv4.ip_local_port_range" = "${toString (cfg.exposePortRange.to + 1)} 60999";
+    boot = {
+      kernelModules = [ "br_netfilter" ];
+      kernel.sysctl = {
+        "net.bridge.bridge-nf-call-iptables" = 1;
+        "net.bridge.bridge-nf-call-ip6tables" = 1;
+        "net.ipv6.conf.${cfg.bridge}.accept_ra" = 0;
+        "net.ipv4.ip_local_port_range" = "${toString (cfg.exposePortRange.to + 1)} 60999";
+      };
     };
     assertions = [
       {
@@ -274,129 +275,125 @@ in
         message = "garnix.local-provisioner.exposePortRange.to must stay below 60000 so an ephemeral port range remains above it.";
       }
     ];
-
     systemd = {
-      services."microvm-tap-interfaces@".serviceConfig.ExecStartPost = [
-        "${pkgs.writeShellScript "garnix-tap-isolate" ''
-          set -euo pipefail
-          case "$1" in
-            garnix-*) ;;
-            *) exit 0 ;;
-          esac
-          tap="gx''${1#garnix-}"
-          ${pkgs.iproute2}/bin/ip link set dev "$tap" master ${cfg.bridge}
-          ${pkgs.iproute2}/bin/ip link set dev "$tap" type bridge_slave isolated on
-        ''} %i"
-      ];
-
+      services = {
+        "microvm-tap-interfaces@".serviceConfig.ExecStartPost = [
+          "${pkgs.writeShellScript "garnix-tap-isolate" ''
+            set -euo pipefail
+            case "$1" in
+              garnix-*) ;;
+              *) exit 0 ;;
+            esac
+            tap="gx''${1#garnix-}"
+            ${pkgs.iproute2}/bin/ip link set dev "$tap" master ${cfg.bridge}
+            ${pkgs.iproute2}/bin/ip link set dev "$tap" type bridge_slave isolated on
+          ''} %i"
+        ];
+        garnix-provisionerd = {
+          description = "garnix local microVM provisioner";
+          wantedBy = [ "multi-user.target" ];
+          after = [
+            "network.target"
+            "dnsmasq.service"
+            "firewall.service"
+          ];
+          path = [
+            pkgs.nix
+            pkgs.openssh
+            pkgs.iptables
+            "/run/current-system/sw"
+          ];
+          environment = provisionerEnv;
+          serviceConfig = {
+            ExecStartPre = pkgs.writeShellScript "garnix-provisioner-pubkey" ''
+              set -euo pipefail
+              ${pkgs.openssh}/bin/ssh-keygen -y -f ${cfg.sshPrivateKeyPath} > ${pubkeyPath}
+              chmod 0644 ${pubkeyPath}
+              if ${pkgs.openssh}/bin/ssh-keygen -y -f ${cfg.terminalCaPrivateKeyPath} > ${terminalCaPubkeyPath} 2>/dev/null; then
+                :
+              else
+                cp ${pubkeyPath} ${terminalCaPubkeyPath}
+              fi
+              chmod 0644 ${terminalCaPubkeyPath}
+            '';
+            ExecStart = "${pkgs.python3}/bin/python3 ${../../provisioner/provisionerd.py}";
+            RuntimeDirectory = "garnix-provisioner";
+            Restart = "always";
+            RestartSec = 5;
+          };
+          unitConfig.StartLimitIntervalSec = 0;
+        };
+        garnix-exposure-restore = {
+          description = "Re-apply garnix guest port exposure after a firewall reload";
+          wantedBy = [ "multi-user.target" ];
+          after = [
+            "firewall.service"
+            "garnix-provisionerd.service"
+          ];
+          partOf = [ "firewall.service" ];
+          path = [ pkgs.iptables ];
+          environment = provisionerEnv;
+          serviceConfig = {
+            Type = "oneshot";
+            RemainAfterExit = true;
+            ExecStart = "${pkgs.python3}/bin/python3 ${../../provisioner/provisionerd.py} --reconcile";
+          };
+        };
+        garnix-guest-autostart = lib.mkIf cfg.autostartGuests {
+          description = "Start live deployed garnix guests after a host reboot";
+          wantedBy = [ "multi-user.target" ];
+          wants = [
+            "postgresql.service"
+            "garnix-provisionerd.service"
+            "network-online.target"
+          ];
+          after = [
+            "postgresql.service"
+            "garnix-provisionerd.service"
+            "network-online.target"
+          ];
+          path = [
+            pkgs.postgresql_18
+            pkgs.util-linux
+            "/run/current-system/sw"
+          ];
+          serviceConfig = {
+            Type = "oneshot";
+            RemainAfterExit = true;
+          };
+          script = ''
+            set -uo pipefail
+            echo "garnix-guest-autostart: querying live deployed servers"
+            ids="$(runuser -u postgres -- psql -X -q -t -A \
+              -p ${toString config.garnix.database.dbPort} \
+              -d ${config.garnix.database.dbName} \
+              -c "SELECT provisioner_id FROM servers WHERE ready_at IS NOT NULL AND ended_at IS NULL;")"
+            status=$?
+            if [ "$status" -ne 0 ]; then
+              echo "garnix-guest-autostart: psql query failed (exit $status); cannot determine which guests to start" >&2
+              exit 1
+            fi
+            if [ -z "$ids" ]; then
+              echo "garnix-guest-autostart: no live deployed servers in the DB; nothing to start"
+              exit 0
+            fi
+            for id in $ids; do
+              if systemctl start "microvm@garnix-$id.service"; then
+                echo "garnix-guest-autostart: started microvm@garnix-$id.service"
+              else
+                echo "garnix-guest-autostart: microvm@garnix-$id.service failed to start (spec dir may be missing) - continuing" >&2
+              fi
+            done
+          '';
+        };
+      };
       tmpfiles.rules = [
         "d ${stateDir} 0755 root root -"
         "d ${stateDir}/specs 0755 root root -"
         "d ${stateDir}/exposed 0755 root root -"
         "f ${stateDir}/dnsmasq-hosts 0644 root root -"
       ];
-
-      services.garnix-provisionerd = {
-        description = "garnix local microVM provisioner";
-        wantedBy = [ "multi-user.target" ];
-        after = [
-          "network.target"
-          "dnsmasq.service"
-          "firewall.service"
-        ];
-        path = [
-          pkgs.nix
-          pkgs.openssh
-          pkgs.iptables
-          "/run/current-system/sw"
-        ];
-        environment = provisionerEnv;
-        serviceConfig = {
-          ExecStartPre = pkgs.writeShellScript "garnix-provisioner-pubkey" ''
-            set -euo pipefail
-            ${pkgs.openssh}/bin/ssh-keygen -y -f ${cfg.sshPrivateKeyPath} > ${pubkeyPath}
-            chmod 0644 ${pubkeyPath}
-            if ${pkgs.openssh}/bin/ssh-keygen -y -f ${cfg.terminalCaPrivateKeyPath} > ${terminalCaPubkeyPath} 2>/dev/null; then
-              :
-            else
-              cp ${pubkeyPath} ${terminalCaPubkeyPath}
-            fi
-            chmod 0644 ${terminalCaPubkeyPath}
-          '';
-          ExecStart = "${pkgs.python3}/bin/python3 ${../../provisioner/provisionerd.py}";
-          RuntimeDirectory = "garnix-provisioner";
-          Restart = "always";
-          RestartSec = 5;
-        };
-        unitConfig.StartLimitIntervalSec = 0;
-      };
-
-      services.garnix-exposure-restore = {
-        description = "Re-apply garnix guest port exposure after a firewall reload";
-        wantedBy = [ "multi-user.target" ];
-        after = [
-          "firewall.service"
-          "garnix-provisionerd.service"
-        ];
-        partOf = [ "firewall.service" ];
-        path = [ pkgs.iptables ];
-        environment = provisionerEnv;
-        serviceConfig = {
-          Type = "oneshot";
-          RemainAfterExit = true;
-          ExecStart = "${pkgs.python3}/bin/python3 ${../../provisioner/provisionerd.py} --reconcile";
-        };
-      };
-
-      services.garnix-guest-autostart = lib.mkIf cfg.autostartGuests {
-        description = "Start live deployed garnix guests after a host reboot";
-        wantedBy = [ "multi-user.target" ];
-        wants = [
-          "postgresql.service"
-          "garnix-provisionerd.service"
-          "network-online.target"
-        ];
-        after = [
-          "postgresql.service"
-          "garnix-provisionerd.service"
-          "network-online.target"
-        ];
-        path = [
-          pkgs.postgresql_18
-          pkgs.util-linux
-          "/run/current-system/sw"
-        ];
-        serviceConfig = {
-          Type = "oneshot";
-          RemainAfterExit = true;
-        };
-        script = ''
-          set -uo pipefail
-          echo "garnix-guest-autostart: querying live deployed servers"
-          ids="$(runuser -u postgres -- psql -X -q -t -A \
-            -p ${toString config.garnix.database.dbPort} \
-            -d ${config.garnix.database.dbName} \
-            -c "SELECT provisioner_id FROM servers WHERE ready_at IS NOT NULL AND ended_at IS NULL;")"
-          status=$?
-          if [ "$status" -ne 0 ]; then
-            echo "garnix-guest-autostart: psql query failed (exit $status); cannot determine which guests to start" >&2
-            exit 1
-          fi
-          if [ -z "$ids" ]; then
-            echo "garnix-guest-autostart: no live deployed servers in the DB; nothing to start"
-            exit 0
-          fi
-          for id in $ids; do
-            if systemctl start "microvm@garnix-$id.service"; then
-              echo "garnix-guest-autostart: started microvm@garnix-$id.service"
-            else
-              echo "garnix-guest-autostart: microvm@garnix-$id.service failed to start (spec dir may be missing) - continuing" >&2
-            fi
-          done
-        '';
-      };
     };
-
     services.dnsmasq = {
       enable = true;
       resolveLocalQueries = false;

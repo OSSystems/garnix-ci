@@ -1,9 +1,9 @@
 {
-  mkDerivation,
-  base,
-  deepseq,
   lib,
   QuickCheck,
+  base,
+  deepseq,
+  mkDerivation,
 }:
 mkDerivation {
   pname = "generic-random";

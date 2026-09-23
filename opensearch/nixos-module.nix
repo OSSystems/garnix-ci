@@ -121,21 +121,84 @@ in
   config = lib.mkIf cfg.enable (
     lib.mkMerge [
       {
-        networking.firewall.allowedTCPPorts = lib.optionals cfg.nginx.openFirewall [
-          80
-          443
-        ];
-
+        networking = {
+          firewall = {
+            allowedTCPPorts = lib.optionals cfg.nginx.openFirewall [
+              80
+              443
+            ];
+            extraCommands = lib.concatLines (
+              map (ip: "iptables -I INPUT -p tcp -s ${ip} -j ACCEPT") cfg.nodesIPs
+            );
+          };
+        };
         sops.secrets = {
           opensearch-garnix = { };
         };
+        systemd = {
+          tmpfiles.rules = [
+            "d /opensearch/node 0700 opensearch - - -"
+            "d /opensearch/dashboards 0700 opensearch - - -"
+            "d /opensearch/snapshots 0700 opensearch - - -"
+          ];
+          services = {
+            opensearch = {
+              serviceConfig = {
+                LimitMEMLOCK = "infinity";
+                LimitMEMLOCKSoft = "infinity";
+              };
+            };
+            opensearch-dashboards =
+              let
+                opensearchDashboardConfig = (pkgs.formats.json { }).generate "opensearch-dashboards.json" (
+                  (lib.filterAttrsRecursive (_: value: value != null && value != [ ]) ({
+                    server = {
+                      host = "::";
+                      port = 5601;
+                      basePath = "/dashboards";
+                      rewriteBasePath = true;
+                    };
 
-        systemd.tmpfiles.rules = [
-          "d /opensearch/node 0700 opensearch - - -"
-          "d /opensearch/dashboards 0700 opensearch - - -"
-          "d /opensearch/snapshots 0700 opensearch - - -"
-        ];
+                    opensearchDashboards = {
+                      index = ".opensearch_dashboard";
+                      defaultAppId = "discover";
+                    };
 
+                    opensearch = {
+                      hosts = [ "http://[::1]:9200" ];
+                      ssl.verificationMode = "none";
+                      requestHeadersWhitelist = [
+                        "authorization"
+                        "securitytenant"
+                      ];
+                    };
+                  }))
+                );
+              in
+              lib.mkIf cfg.dashboards.enable {
+                wantedBy = [ "multi-user.target" ];
+                after = [
+                  "network.target"
+                  "opensearch.service"
+                ];
+                description = "OpenSearch Dashboards";
+                serviceConfig = {
+                  DynamicUser = false;
+                  StateDirectory = "opensearch-dashboards";
+                  User = "opensearch";
+                  Group = "opensearch";
+                  Environment = [
+                    "DISABLE_SECURITY_DASHBOARDS_PLUGIN=true"
+                  ];
+                };
+                script = ''
+                  ${lib.getExe cfg.dashboards.package} \
+                    --config ${opensearchDashboardConfig} \
+                    --path.data "/opensearch/dashboards" \
+                '';
+              };
+          };
+        };
         users = {
           groups.opensearch.gid = 3000;
           users.opensearch = {
@@ -145,7 +208,6 @@ in
             isSystemUser = true;
           };
         };
-
         services = {
           opensearch = {
             enable = true;
@@ -205,69 +267,6 @@ in
             ];
           };
         };
-
-        systemd.services = {
-          opensearch = {
-            serviceConfig = {
-              LimitMEMLOCK = "infinity";
-              LimitMEMLOCKSoft = "infinity";
-            };
-          };
-          opensearch-dashboards =
-            let
-              opensearchDashboardConfig = (pkgs.formats.json { }).generate "opensearch-dashboards.json" (
-                (lib.filterAttrsRecursive (_: value: value != null && value != [ ]) ({
-                  server = {
-                    host = "::";
-                    port = 5601;
-                    basePath = "/dashboards";
-                    rewriteBasePath = true;
-                  };
-
-                  opensearchDashboards = {
-                    index = ".opensearch_dashboard";
-                    defaultAppId = "discover";
-                  };
-
-                  opensearch = {
-                    hosts = [ "http://[::1]:9200" ];
-                    ssl.verificationMode = "none";
-                    requestHeadersWhitelist = [
-                      "authorization"
-                      "securitytenant"
-                    ];
-                  };
-                }))
-              );
-            in
-            lib.mkIf cfg.dashboards.enable {
-              wantedBy = [ "multi-user.target" ];
-              after = [
-                "network.target"
-                "opensearch.service"
-              ];
-              description = "OpenSearch Dashboards";
-              serviceConfig = {
-                DynamicUser = false;
-                StateDirectory = "opensearch-dashboards";
-                User = "opensearch";
-                Group = "opensearch";
-                Environment = [
-                  "DISABLE_SECURITY_DASHBOARDS_PLUGIN=true"
-                ];
-              };
-              script = ''
-                ${lib.getExe cfg.dashboards.package} \
-                  --config ${opensearchDashboardConfig} \
-                  --path.data "/opensearch/dashboards" \
-              '';
-            };
-        };
-
-        networking.firewall.extraCommands = lib.concatLines (
-          map (ip: "iptables -I INPUT -p tcp -s ${ip} -j ACCEPT") cfg.nodesIPs
-        );
-
         virtualisation.vmVariant = {
           networking.extraHosts = "127.0.0.1 ${cfg.fqdn}";
           virtualisation = {
@@ -289,13 +288,15 @@ in
           virtualHosts.${cfg.fqdn} = config.garnix.devMode.withDevCerts {
             forceSSL = cfg.nginx.acme.enable;
             enableACME = cfg.nginx.acme.enable;
-            locations."/" = {
-              inherit basicAuthFile;
-              proxyPass = "http://[::1]:9200";
-            };
-            locations."/dashboards" = {
-              inherit basicAuthFile;
-              proxyPass = "http://[::1]:5601";
+            locations = {
+              "/" = {
+                inherit basicAuthFile;
+                proxyPass = "http://[::1]:9200";
+              };
+              "/dashboards" = {
+                inherit basicAuthFile;
+                proxyPass = "http://[::1]:5601";
+              };
             };
           };
         };

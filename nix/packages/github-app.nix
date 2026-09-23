@@ -1,5 +1,5 @@
 {
-  mkDerivation,
+  lib,
   aeson,
   base,
   binary,
@@ -14,7 +14,7 @@
   http-client-tls,
   http-types,
   jwt,
-  lib,
+  mkDerivation,
   mtl,
   safe-exceptions,
   tagged,

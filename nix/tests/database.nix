@@ -7,8 +7,8 @@
       {
         config,
         lib,
-        nodes,
         pkgs,
+        nodes,
         ...
       }:
       {

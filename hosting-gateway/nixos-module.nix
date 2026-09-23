@@ -72,166 +72,169 @@ in
       80
       443
     ];
-
     # Traefik forwards to the node exporter itself (below), so the separate
     # nginx vhost the monitoring client would otherwise set up would fight it
     # for port 443.
     garnix.monitoring-client.nginx.enable = lib.mkIf routeNodeExporter false;
-
-    # Caddy asks this service whether a domain it has been asked for a
-    # certificate for is one we actually serve. See
-    # https://caddyserver.com/docs/json/apps/tls/automation/on_demand/permission/http/
-    systemd.services.caddyOnDemandResolver = {
-      description = "Answers Caddy's on-demand TLS certificate questions";
-      wantedBy = [ "multi-user.target" ];
-      after = [ "network-online.target" ];
-      wants = [ "network-online.target" ];
-      serviceConfig = {
-        Type = "simple";
-        ExecStart = lib.getExe flakePackages."hosting-gateway/onDemandResolver";
-      };
-      environment.PORT = toString onDemandResolverPort;
-      environment.GARNIX_ORIGIN = cfg.garnixOrigin;
-      environment.GARNIX_HOSTING_DOMAIN = cfg.hostingDomain;
-    };
-
-    services.caddy = {
-      enable = true;
-      settings.apps = {
-        tls.automation = {
-          policies = [
-            # The monitoring host's own name is known up front, so it gets a
-            # certificate without going through the on-demand path.
-            (lib.mkIf routeNodeExporter {
-              subjects = [ monitoringClient.fqdn ];
-              issuers = [
-                (
-                  {
-                    module = "acme";
-                    email = config.security.acme.defaults.email;
-                  }
-                  // cfg.extraCaddyAcmeConfig
-                )
-              ];
-              storage = {
-                module = "file_system";
-                root = "/var/lib/caddy";
-              };
-              on_demand = false;
-            })
-            # Everything else is a deployed server, whose name is not known
-            # until it is deployed.
-            {
-              issuers = [
-                (
-                  {
-                    module = "acme";
-                    email = config.security.acme.defaults.email;
-                  }
-                  // cfg.extraCaddyAcmeConfig
-                )
-              ];
-              storage = {
-                module = "file_system";
-                root = "/var/lib/caddy";
-              };
-              on_demand = true;
-            }
-          ];
-          on_demand.permission = {
-            module = "http";
-            endpoint = "http://localhost:${toString onDemandResolverPort}/";
+    systemd = {
+      services = {
+        # Caddy asks this service whether a domain it has been asked for a
+        # certificate for is one we actually serve. See
+        # https://caddyserver.com/docs/json/apps/tls/automation/on_demand/permission/http/
+        caddyOnDemandResolver = {
+          description = "Answers Caddy's on-demand TLS certificate questions";
+          wantedBy = [ "multi-user.target" ];
+          after = [ "network-online.target" ];
+          wants = [ "network-online.target" ];
+          serviceConfig = {
+            Type = "simple";
+            ExecStart = lib.getExe flakePackages."hosting-gateway/onDemandResolver";
+          };
+          environment = {
+            PORT = toString onDemandResolverPort;
+            GARNIX_ORIGIN = cfg.garnixOrigin;
+            GARNIX_HOSTING_DOMAIN = cfg.hostingDomain;
           };
         };
-
-        # Caddy terminates TLS and hands everything to Traefik, which owns the
-        # actual routing.
-        http.servers."tlstermination" = {
-          listen = [ ":443" ];
-          routes = [
-            {
-              handle = [
-                {
-                  handler = "reverse_proxy";
-                  upstreams = [ { dial = "localhost:${toString traefikPort}"; } ];
+        traefik = {
+          serviceConfig = {
+            RuntimeDirectoryMode = "0750";
+            # Traefik only loads plugins from its own state directory, so the
+            # middleware source has to be copied in before it starts.
+            ExecStartPre = [
+              (lib.getExe (
+                pkgs.writeShellApplication {
+                  name = "init-traefik-plugins";
+                  runtimeInputs = [ pkgs.coreutils ];
+                  text = ''
+                    PLUGINS_DIR=/var/lib/traefik/plugins-local/src/github.com/garnix-io/garnix
+                    mkdir -p "$PLUGINS_DIR"
+                    rm -rf "$PLUGINS_DIR/heartbeatmiddleware"
+                    cp -r ${./heartbeatmiddleware} "$PLUGINS_DIR/heartbeatmiddleware"
+                    chmod -R u+w "$PLUGINS_DIR/heartbeatmiddleware"
+                  '';
                 }
-              ];
-            }
-          ];
+              ))
+            ];
+            LoadCredential = lib.optional useBasicAuth "basicAuthPassword:${monitoringAuth.passwordFile}";
+          };
+
+          preStart = lib.mkIf useBasicAuth ''
+            ${pkgs.apacheHttpd}/bin/htpasswd -icm ${basicAuthFile} ${monitoringAuth.username} \
+              < "$CREDENTIALS_DIRECTORY/basicAuthPassword"
+          '';
         };
       };
     };
-
-    services.traefik = {
-      enable = true;
-      staticConfigOptions = {
-        entryPoints.http = {
-          address = ":${toString traefikPort}";
-          # Caddy is the only thing that can reach this port, so its
-          # X-Forwarded-* headers are the trustworthy ones.
-          forwardedHeaders.insecure = true;
-        };
-        providers.http = {
-          endpoint = cfg.serverMappingEndpoint;
-          pollInterval = "${toString cfg.pollInterval}s";
-        };
-        # Declared custom domains are CNAMEs pointing at a garnix name, so the
-        # router has to follow one hop to match them.
-        hostResolver = {
-          cnameFlattening = true;
-          resolvDepth = 2;
-        };
-        experimental.localPlugins.heartbeatmiddleware = {
-          moduleName = "github.com/garnix-io/garnix/heartbeatmiddleware";
-        };
-      };
-
-      dynamicConfigOptions = lib.mkIf routeNodeExporter {
-        http = {
-          middlewares = lib.mkIf useBasicAuth {
-            node-exporter-basic-auth.basicAuth.usersFile = basicAuthFile;
+    services = {
+      caddy = {
+        enable = true;
+        settings.apps = {
+          tls.automation = {
+            policies = [
+              # The monitoring host's own name is known up front, so it gets a
+              # certificate without going through the on-demand path.
+              (lib.mkIf routeNodeExporter {
+                subjects = [ monitoringClient.fqdn ];
+                issuers = [
+                  (
+                    {
+                      module = "acme";
+                      email = config.security.acme.defaults.email;
+                    }
+                    // cfg.extraCaddyAcmeConfig
+                  )
+                ];
+                storage = {
+                  module = "file_system";
+                  root = "/var/lib/caddy";
+                };
+                on_demand = false;
+              })
+              # Everything else is a deployed server, whose name is not known
+              # until it is deployed.
+              {
+                issuers = [
+                  (
+                    {
+                      module = "acme";
+                      email = config.security.acme.defaults.email;
+                    }
+                    // cfg.extraCaddyAcmeConfig
+                  )
+                ];
+                storage = {
+                  module = "file_system";
+                  root = "/var/lib/caddy";
+                };
+                on_demand = true;
+              }
+            ];
+            on_demand.permission = {
+              module = "http";
+              endpoint = "http://localhost:${toString onDemandResolverPort}/";
+            };
           };
-          routers.node-exporter-router = {
-            rule = "Host(`${monitoringClient.fqdn}`)";
-            service = "node-exporter";
-            middlewares = lib.optional useBasicAuth "node-exporter-basic-auth";
+
+          # Caddy terminates TLS and hands everything to Traefik, which owns the
+          # actual routing.
+          http.servers.tlstermination = {
+            listen = [ ":443" ];
+            routes = [
+              {
+                handle = [
+                  {
+                    handler = "reverse_proxy";
+                    upstreams = [ { dial = "localhost:${toString traefikPort}"; } ];
+                  }
+                ];
+              }
+            ];
           };
-          services.node-exporter.loadBalancer.servers = [
-            {
-              url = "http://localhost:${toString config.services.prometheus.exporters.node.port}";
-            }
-          ];
         };
       };
-    };
+      traefik = {
+        enable = true;
+        staticConfigOptions = {
+          entryPoints.http = {
+            address = ":${toString traefikPort}";
+            # Caddy is the only thing that can reach this port, so its
+            # X-Forwarded-* headers are the trustworthy ones.
+            forwardedHeaders.insecure = true;
+          };
+          providers.http = {
+            endpoint = cfg.serverMappingEndpoint;
+            pollInterval = "${toString cfg.pollInterval}s";
+          };
+          # Declared custom domains are CNAMEs pointing at a garnix name, so the
+          # router has to follow one hop to match them.
+          hostResolver = {
+            cnameFlattening = true;
+            resolvDepth = 2;
+          };
+          experimental.localPlugins.heartbeatmiddleware = {
+            moduleName = "github.com/garnix-io/garnix/heartbeatmiddleware";
+          };
+        };
 
-    systemd.services.traefik = {
-      serviceConfig = {
-        RuntimeDirectoryMode = "0750";
-        # Traefik only loads plugins from its own state directory, so the
-        # middleware source has to be copied in before it starts.
-        ExecStartPre = [
-          (lib.getExe (
-            pkgs.writeShellApplication {
-              name = "init-traefik-plugins";
-              runtimeInputs = [ pkgs.coreutils ];
-              text = ''
-                PLUGINS_DIR=/var/lib/traefik/plugins-local/src/github.com/garnix-io/garnix
-                mkdir -p "$PLUGINS_DIR"
-                rm -rf "$PLUGINS_DIR/heartbeatmiddleware"
-                cp -r ${./heartbeatmiddleware} "$PLUGINS_DIR/heartbeatmiddleware"
-                chmod -R u+w "$PLUGINS_DIR/heartbeatmiddleware"
-              '';
-            }
-          ))
-        ];
-        LoadCredential = lib.optional useBasicAuth "basicAuthPassword:${monitoringAuth.passwordFile}";
+        dynamicConfigOptions = lib.mkIf routeNodeExporter {
+          http = {
+            middlewares = lib.mkIf useBasicAuth {
+              node-exporter-basic-auth.basicAuth.usersFile = basicAuthFile;
+            };
+            routers.node-exporter-router = {
+              rule = "Host(`${monitoringClient.fqdn}`)";
+              service = "node-exporter";
+              middlewares = lib.optional useBasicAuth "node-exporter-basic-auth";
+            };
+            services.node-exporter.loadBalancer.servers = [
+              {
+                url = "http://localhost:${toString config.services.prometheus.exporters.node.port}";
+              }
+            ];
+          };
+        };
       };
-
-      preStart = lib.mkIf useBasicAuth ''
-        ${pkgs.apacheHttpd}/bin/htpasswd -icm ${basicAuthFile} ${monitoringAuth.username} \
-          < "$CREDENTIALS_DIRECTORY/basicAuthPassword"
-      '';
     };
   };
 }

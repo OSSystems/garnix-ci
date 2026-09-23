@@ -6,8 +6,8 @@
     server1 =
       {
         config,
-        nodes,
         lib,
+        nodes,
         ...
       }:
       {

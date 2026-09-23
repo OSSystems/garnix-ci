@@ -7,8 +7,8 @@
       {
         config,
         lib,
-        nodes,
         pkgs,
+        nodes,
         ...
       }:
       {
@@ -34,8 +34,8 @@
       {
         config,
         lib,
-        nodes,
         pkgs,
+        nodes,
         ...
       }:
       {

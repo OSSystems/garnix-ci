@@ -10,10 +10,10 @@
 # provisioning path itself (acquireServer, copyClosure, switch-to-configuration)
 # is still only exercised on a real host.
 {
-  pkgs,
-  system,
   self,
+  pkgs,
   flakeInputs,
+  system,
   ...
 }:
 let
@@ -61,91 +61,90 @@ pkgs.testers.runNixOSTest {
   nodes = {
     backend = { config, lib, ... }: {
       imports = [ self.nixosModules.garnix ];
-
       networking.extraHosts = ''
         127.0.0.1 ${backendHostname}
       '';
-
-      garnix.devMode.enable = true;
-      garnix.monitoring-client.enable = false;
-
+      garnix = {
+        devMode.enable = true;
+        monitoring-client.enable = false;
+      };
       # sqitch refuses to run without one ("Cannot determine local time
       # zone"), and a NixOS test node has none by default.
       time.timeZone = "UTC";
-
-      virtualisation.memorySize = 3072;
-      virtualisation.diskSize = 4096;
-
-      services.garnixServer = {
-        enable = true;
-        hostname = backendHostname;
-        url = "http://${backendHostname}";
-        adminGithubLogin = "test";
-        githubAppName = "test";
-        acmeEmail = null;
-        # Nothing here drives the web UI, and building it would dominate the
-        # test's build time.
-        frontend.enable = false;
-
-        hosting = {
-          domain = hostingDomain;
-          statsReportUrl = "http://${backendHostname}/api/hosts/stats";
-          # Every node in a NixOS test shares 192.168.1.0/24, so this is the
-          # "bridge" as far as the stats guard is concerned.
-          guestSubnetPrefix = "192.168.1.";
-        };
-
-        database = {
-          host = "127.0.0.1";
-          port = 5432;
-          user = "garnix";
-          name = "garnix";
-          ssl.mode = "disable";
-        };
-
-        opensearch = {
-          url = "http://127.0.0.1:9999/_msearch";
-          host = "127.0.0.1";
-          username = "garnix";
-        };
-
-        s3Cache.enable = false;
-        remoteBuilders.hosts = [ ];
-
-        secrets = {
-          databasePasswordPath = toString (mkSecret "database-password" "postgres");
-          githubWebhookSecretPath = toString (mkSecret "github-webhook-secret" "dev");
-          githubClientSecretPath = toString (mkSecret "github-client-secret" "dev");
-          githubClientIdPath = toString (mkSecret "github-client-id" "dev");
-          githubAppIdPath = toString (mkSecret "github-app-id" "12345");
-          githubAppPkPath = toString githubAppPkFile;
-          opensearchCredentialPath = toString (mkSecret "opensearch-credential" "dev");
-          jwtKeyPath = toString jwtKeyFile;
-          repoSecretsKeyPath = "${ageKeyPair}/key";
-          repoSecretsPubKeyPath = "${ageKeyPair}/pub";
-        };
+      virtualisation = {
+        memorySize = 3072;
+        diskSize = 4096;
       };
+      services = {
+        garnixServer = {
+          enable = true;
+          hostname = backendHostname;
+          url = "http://${backendHostname}";
+          adminGithubLogin = "test";
+          githubAppName = "test";
+          acmeEmail = null;
+          # Nothing here drives the web UI, and building it would dominate the
+          # test's build time.
+          frontend.enable = false;
 
-      services.postgresql = {
-        enable = true;
-        # postgresql-typed speaks md5 but not SCRAM, and modern postgres
-        # hashes new passwords with SCRAM by default, which the backend then
-        # rejects with "unsupported authentication type: 10".
-        settings.password_encryption = "md5";
-        ensureDatabases = [ "garnix" ];
-        ensureUsers = [
-          {
+          hosting = {
+            domain = hostingDomain;
+            statsReportUrl = "http://${backendHostname}/api/hosts/stats";
+            # Every node in a NixOS test shares 192.168.1.0/24, so this is the
+            # "bridge" as far as the stats guard is concerned.
+            guestSubnetPrefix = "192.168.1.";
+          };
+
+          database = {
+            host = "127.0.0.1";
+            port = 5432;
+            user = "garnix";
             name = "garnix";
-            ensureDBOwnership = true;
-          }
-        ];
-        authentication = lib.mkForce ''
-          local   all       all                      trust
-          host    all       all      127.0.0.1/32    md5
-          host    all       all      ::1/128         md5
-        '';
-      };
+            ssl.mode = "disable";
+          };
 
+          opensearch = {
+            url = "http://127.0.0.1:9999/_msearch";
+            host = "127.0.0.1";
+            username = "garnix";
+          };
+
+          s3Cache.enable = false;
+          remoteBuilders.hosts = [ ];
+
+          secrets = {
+            databasePasswordPath = toString (mkSecret "database-password" "postgres");
+            githubWebhookSecretPath = toString (mkSecret "github-webhook-secret" "dev");
+            githubClientSecretPath = toString (mkSecret "github-client-secret" "dev");
+            githubClientIdPath = toString (mkSecret "github-client-id" "dev");
+            githubAppIdPath = toString (mkSecret "github-app-id" "12345");
+            githubAppPkPath = toString githubAppPkFile;
+            opensearchCredentialPath = toString (mkSecret "opensearch-credential" "dev");
+            jwtKeyPath = toString jwtKeyFile;
+            repoSecretsKeyPath = "${ageKeyPair}/key";
+            repoSecretsPubKeyPath = "${ageKeyPair}/pub";
+          };
+        };
+        postgresql = {
+          enable = true;
+          # postgresql-typed speaks md5 but not SCRAM, and modern postgres
+          # hashes new passwords with SCRAM by default, which the backend then
+          # rejects with "unsupported authentication type: 10".
+          settings.password_encryption = "md5";
+          ensureDatabases = [ "garnix" ];
+          ensureUsers = [
+            {
+              name = "garnix";
+              ensureDBOwnership = true;
+            }
+          ];
+          authentication = lib.mkForce ''
+            local   all       all                      trust
+            host    all       all      127.0.0.1/32    md5
+            host    all       all      ::1/128         md5
+          '';
+        };
+      };
       # postgresql's initialScript runs before ensureUsers, so the password
       # has to be set afterwards.
       systemd.services.garnix-test-pg-password = {
@@ -171,69 +170,76 @@ pkgs.testers.runNixOSTest {
       };
     };
 
-    gateway = { nodes, lib, ... }: {
+    gateway = { lib, nodes, ... }: {
       imports = [
         self.nixosModules.garnix-hosting-gateway
         ../modules/monitoring-client.nix
         ../modules/monitoring.nix
       ];
-
-      networking.extraHosts = ''
-        ${nodes.backend.networking.primaryIPAddress} ${backendHostname}
-      '';
-
-      garnix.monitoring-client.enable = false;
-
-      # Traefik's cnameFlattening resolves the request's Host on every
-      # request. There is no DNS in a NixOS test, and the default resolver
-      # address black-holes, costing 30s a request; pointing at a closed port
-      # makes the lookup fail immediately instead.
-      networking.nameservers = lib.mkForce [ "127.0.0.1" ];
-
-      security.acme.defaults.email = "ops@example.test";
-      security.acme.acceptTerms = true;
-
-      garnix.hosting-gateway = {
-        enable = true;
-        serverMappingEndpoint = "http://${backendHostname}/api/hosts/traefik";
-        hostingDomain = hostingDomain;
-        garnixOrigin = "http://${backendHostname}";
-        # The test would otherwise spend most of its time waiting for the
-        # default poll interval.
-        pollInterval = 2;
+      networking = {
+        extraHosts = ''
+          ${nodes.backend.networking.primaryIPAddress} ${backendHostname}
+        '';
+        # Traefik's cnameFlattening resolves the request's Host on every
+        # request. There is no DNS in a NixOS test, and the default resolver
+        # address black-holes, costing 30s a request; pointing at a closed port
+        # makes the lookup fail immediately instead.
+        nameservers = lib.mkForce [ "127.0.0.1" ];
+      };
+      garnix = {
+        monitoring-client.enable = false;
+        hosting-gateway = {
+          enable = true;
+          serverMappingEndpoint = "http://${backendHostname}/api/hosts/traefik";
+          hostingDomain = hostingDomain;
+          garnixOrigin = "http://${backendHostname}";
+          # The test would otherwise spend most of its time waiting for the
+          # default poll interval.
+          pollInterval = 2;
+        };
+      };
+      security = {
+        acme = {
+          defaults.email = "ops@example.test";
+          acceptTerms = true;
+        };
       };
     };
 
     # Stands in for a deployed microVM: something at an address, answering on
     # the guest port and on a declared named port.
     guest = { nodes, ... }: {
-      networking.extraHosts = ''
-        ${nodes.backend.networking.primaryIPAddress} ${backendHostname}
-      '';
-      networking.firewall.allowedTCPPorts = [
-        80
-        8080
-      ];
+      networking = {
+        extraHosts = ''
+          ${nodes.backend.networking.primaryIPAddress} ${backendHostname}
+        '';
+        firewall.allowedTCPPorts = [
+          80
+          8080
+        ];
+      };
       services.nginx = {
         enable = true;
-        virtualHosts."guest" = {
-          default = true;
-          listen = [
-            {
-              addr = "0.0.0.0";
-              port = 80;
-            }
-          ];
-          locations."/".return = "200 '${guestBody}'";
-        };
-        virtualHosts."guest-api" = {
-          listen = [
-            {
-              addr = "0.0.0.0";
-              port = 8080;
-            }
-          ];
-          locations."/".return = "200 '${apiBody}'";
+        virtualHosts = {
+          guest = {
+            default = true;
+            listen = [
+              {
+                addr = "0.0.0.0";
+                port = 80;
+              }
+            ];
+            locations."/".return = "200 '${guestBody}'";
+          };
+          guest-api = {
+            listen = [
+              {
+                addr = "0.0.0.0";
+                port = 8080;
+              }
+            ];
+            locations."/".return = "200 '${apiBody}'";
+          };
         };
       };
     };

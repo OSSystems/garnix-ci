@@ -1,5 +1,6 @@
 {
-  mkDerivation,
+  lib,
+  QuickCheck,
   base,
   directory,
   doctest,
@@ -7,10 +8,9 @@
   filepath,
   hspec,
   interpolate,
-  lib,
   markdown-unlit,
+  mkDerivation,
   mockery,
-  QuickCheck,
   shake,
   silently,
 }:

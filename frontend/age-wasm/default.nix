@@ -1,4 +1,4 @@
-{ pkgs, lib, ... }: rec {
+{ lib, pkgs, ... }: rec {
   packages = {
     default =
       let

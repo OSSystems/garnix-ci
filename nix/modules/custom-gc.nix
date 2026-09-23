@@ -149,19 +149,21 @@ in
         ];
       }
       (lib.optionalAttrs (!isDarwin) {
-        systemd.services.custom-gc = lib.mkIf pkgs.stdenv.hostPlatform.isLinux {
-          serviceConfig = {
-            IOSchedulingClass = "idle";
-            Type = "oneshot";
-            User = "root";
+        systemd = {
+          services.custom-gc = lib.mkIf pkgs.stdenv.hostPlatform.isLinux {
+            serviceConfig = {
+              IOSchedulingClass = "idle";
+              Type = "oneshot";
+              User = "root";
+            };
+            script = lib.getExe customGCScript;
           };
-          script = lib.getExe customGCScript;
-        };
-        systemd.timers.custom-gc = lib.mkIf cfg.enableTimer {
-          wantedBy = [ "timers.target" ];
-          timerConfig = {
-            OnCalendar = "hourly";
-            Unit = "custom-gc.service";
+          timers.custom-gc = lib.mkIf cfg.enableTimer {
+            wantedBy = [ "timers.target" ];
+            timerConfig = {
+              OnCalendar = "hourly";
+              Unit = "custom-gc.service";
+            };
           };
         };
       })

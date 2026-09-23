@@ -2,8 +2,8 @@
   config,
   lib,
   pkgs,
-  flakePackages,
   flakeInputs,
+  flakePackages,
   ...
 }:
 
@@ -289,7 +289,7 @@ in
         type = lib.types.attrsOf lib.types.ints.positive;
         default = { };
         example = {
-          "i2x4" = 2;
+          i2x4 = 2;
         };
         description = ''
           How many guests of each machine size to keep booted and waiting, so a
@@ -699,14 +699,20 @@ in
         upperLimitPercent = null;
       };
       actionRunner.enable = lib.mkDefault true;
-      fluent-bit.enable = lib.mkDefault true;
-      fluent-bit.enableNginxLogParsing = true;
-      fluent-bit.opensearch.fqdn = lib.mkDefault cfg.opensearch.host;
-      fluent-bit.opensearch.basicAuth.username = lib.mkDefault cfg.opensearch.username;
-      fluent-bit.opensearch.basicAuth.passwordFile = lib.mkDefault "${cfg.secrets.dir}/opensearch-garnix";
-      fluent-bit.buildLogsPipeline = {
+      fluent-bit = {
         enable = lib.mkDefault true;
-        port = buildLogsFluentBitPort;
+        enableNginxLogParsing = true;
+        opensearch = {
+          fqdn = lib.mkDefault cfg.opensearch.host;
+          basicAuth = {
+            username = lib.mkDefault cfg.opensearch.username;
+            passwordFile = lib.mkDefault "${cfg.secrets.dir}/opensearch-garnix";
+          };
+        };
+        buildLogsPipeline = {
+          enable = lib.mkDefault true;
+          port = buildLogsFluentBitPort;
+        };
       };
     };
 

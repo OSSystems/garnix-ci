@@ -1,8 +1,8 @@
 {
-  mkDerivation,
+  lib,
   base,
   fetchgit,
-  lib,
+  mkDerivation,
   mtl,
   profunctors,
 }:
