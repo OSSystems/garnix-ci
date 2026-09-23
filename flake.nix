@@ -1,64 +1,61 @@
 {
-  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
-
-  inputs.sops-nix = {
-    url = "github:Mic92/sops-nix";
-    inputs = {
-      nixpkgs.follows = "nixpkgs";
+  inputs = {
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
+    sops-nix = {
+      url = "github:Mic92/sops-nix";
+      inputs = {
+        nixpkgs.follows = "nixpkgs";
+      };
+    };
+    flake-utils.url = "github:numtide/flake-utils";
+    pedantix = {
+      url = "github:Swarsel/pedantix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+    garnix-guest-lib = {
+      url = "github:OSSystems/garnix-guest-lib";
+      inputs = {
+        nixpkgs.follows = "nixpkgs";
+      };
+    };
+    treetop = {
+      url = "github:soenkehahn/treetop";
+      inputs = {
+        nixpkgs.follows = "nixpkgs";
+        flake-utils.follows = "flake-utils";
+        crane.follows = "crane";
+      };
+    };
+    crane = {
+      url = "github:ipetkov/crane";
+    };
+    comment = {
+      url = "github:garnix-io/comment";
+      inputs = {
+        nixpkgs.follows = "nixpkgs";
+        flake-utils.follows = "flake-utils";
+        crane.follows = "crane";
+      };
+    };
+    cradle = {
+      url = "github:garnix-io/cradle";
+      inputs = {
+        nixpkgs.follows = "nixpkgs";
+        flake-utils.follows = "flake-utils";
+      };
+    };
+    treefmt-nix = {
+      url = "github:numtide/treefmt-nix";
+      inputs.nixpkgs.follows = "nixpkgs";
     };
   };
-
-  inputs.flake-utils.url = "github:numtide/flake-utils";
-
-  inputs.garnix-guest-lib = {
-    url = "github:OSSystems/garnix-guest-lib";
-    inputs = {
-      nixpkgs.follows = "nixpkgs";
-    };
-  };
-
-  inputs.treetop = {
-    url = "github:soenkehahn/treetop";
-    inputs = {
-      nixpkgs.follows = "nixpkgs";
-      flake-utils.follows = "flake-utils";
-      crane.follows = "crane";
-    };
-  };
-
-  inputs.crane = {
-    url = "github:ipetkov/crane";
-  };
-
-  inputs.comment = {
-    url = "github:garnix-io/comment";
-    inputs = {
-      nixpkgs.follows = "nixpkgs";
-      flake-utils.follows = "flake-utils";
-      crane.follows = "crane";
-    };
-  };
-
-  inputs.cradle = {
-    url = "github:garnix-io/cradle";
-    inputs = {
-      nixpkgs.follows = "nixpkgs";
-      flake-utils.follows = "flake-utils";
-    };
-  };
-
-  inputs.treefmt-nix = {
-    url = "github:numtide/treefmt-nix";
-    inputs.nixpkgs.follows = "nixpkgs";
-  };
-
   outputs =
     flakeInputs@{
       self,
-      nixpkgs,
-      flake-utils,
-      sops-nix,
       cradle,
+      flake-utils,
+      nixpkgs,
+      sops-nix,
       treefmt-nix,
       ...
     }:
@@ -110,7 +107,7 @@
     flake-utils.lib.eachDefaultSystem (
       system:
       let
-        pkgs = import nixpkgs { inherit system overlays; };
+        pkgs = import nixpkgs { inherit overlays system; };
         lib = nixpkgs.lib;
         namespace =
           prefix: attrSet:
@@ -120,10 +117,10 @@
           }) attrSet;
         subDirInputs = {
           inherit
-            system
-            pkgs
             flakeInputs
+            pkgs
             self
+            system
             ;
           lib = nixpkgs.lib;
         };
@@ -192,10 +189,10 @@
       };
       nixosConfigurations =
         (import ./nix/website.nix {
-          inherit self overlays flakeInputs;
+          inherit flakeInputs overlays self;
         }).nixosConfigurations
         // (import ./examples/example-selfhost.nix {
-          inherit self overlays flakeInputs;
+          inherit flakeInputs overlays self;
         }).nixosConfigurations;
     };
 }
