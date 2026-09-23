@@ -1,14 +1,17 @@
 { pkgs, flakeInputs, ... }:
 let
   treefmt-config = {
+    imports = [ flakeInputs.pedantix.treefmtModules.default ];
     projectRootFile = "flake.nix";
     programs = {
       gofmt.enable = true;
-      nixfmt.enable = true;
+      pedantix.enable = true;
       shellcheck.enable = true;
       shfmt.enable = true;
-      ormolu.enable = true;
-      ormolu.package = pkgs.haskellPackages.ormolu;
+      ormolu = {
+        enable = true;
+        package = pkgs.haskellPackages.ormolu;
+      };
       prettier.enable = true;
       deadnix = {
         enable = true;
@@ -17,26 +20,32 @@ let
         no-underscore = true;
       };
     };
-    settings.global.excludes = [
-      "backend/test/spec/Integration/bad-flake-nix/flake.nix"
-    ];
-    settings.formatter.shellcheck = {
-      excludes = [ ".envrc" ];
-    };
-    settings.formatter.prettier = {
-      options = [
-        "--trailing-comma"
-        "all"
-        "--no-error-on-unmatched-pattern"
+    settings = {
+      global.excludes = [
+        "backend/test/spec/Integration/bad-flake-nix/flake.nix"
+        "nix/modules/fluent-bit.nix"
+        "nix/tests/default.nix"
       ];
-      excludes = [
-        "**/secrets/**"
-        "**/*.md"
-        "**/*.mdx"
-        "**/*.json"
-        # This file is intentionally invalid.
-        "backend/test/spec/Integration/bad-yaml-config/garnix.yaml"
-      ];
+      formatter = {
+        shellcheck = {
+          excludes = [ ".envrc" ];
+        };
+        prettier = {
+          options = [
+            "--trailing-comma"
+            "all"
+            "--no-error-on-unmatched-pattern"
+          ];
+          excludes = [
+            "**/secrets/**"
+            "**/*.md"
+            "**/*.mdx"
+            "**/*.json"
+            # This file is intentionally invalid.
+            "backend/test/spec/Integration/bad-yaml-config/garnix.yaml"
+          ];
+        };
+      };
     };
   };
 in
