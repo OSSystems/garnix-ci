@@ -1,7 +1,7 @@
 {
   self,
-  overlays,
   flakeInputs,
+  overlays,
 }:
 let
   system = "x86_64-linux";
@@ -19,9 +19,9 @@ in
       self.nixosModules.garnix
       (
         {
-          pkgs,
-          lib,
           config,
+          lib,
+          pkgs,
           ...
         }:
         let
@@ -50,111 +50,114 @@ in
         in
         {
           networking.hostName = "garnix-website";
-
-          garnix.devMode.enable = true;
-          garnix.actionRunner.enable = false;
-          garnix.fluent-bit.enable = false;
-
-          services.garnixServer = {
-            enable = true;
-
-            hostname = "website.garnix.local";
-            url = "http://website.garnix.local";
-
-            adminGithubLogin = "dev-user";
-            githubAppName = "garnix-ci";
-            acmeEmail = null;
-
-            testFeatures = [
-              "DevApi"
-              "OpenSearchMocks"
-              "CacheUploadMocks"
-            ];
-
-            database = {
-              host = "127.0.0.1";
-              port = 5432;
-              user = "garnix";
-              name = "garnix";
-              ssl.mode = "disable";
-            };
-
-            opensearch = {
-              url = "http://127.0.0.1:9999/_msearch";
-              host = "127.0.0.1";
-              username = "garnix";
-            };
-
-            s3Cache.enable = false;
-            remoteBuilders.hosts = [ ];
-
-            secrets = {
-              databasePasswordPath = builtins.toString databasePasswordFile;
-              githubWebhookSecretPath = builtins.toString githubWebhookSecretFile;
-              githubClientSecretPath = builtins.toString githubClientSecretFile;
-              githubClientIdPath = builtins.toString githubClientIdFile;
-              githubAppIdPath = builtins.toString githubAppIdFile;
-              githubAppPkPath = builtins.toString githubAppPkFile;
-              opensearchCredentialPath = builtins.toString opensearchCredentialFile;
-              jwtKeyPath = builtins.toString jwtKeyFile;
-              repoSecretsKeyPath = "${ageKeyPair}/key";
-              repoSecretsPubKeyPath = "${ageKeyPair}/pub";
-            };
+          garnix = {
+            devMode.enable = true;
+            actionRunner.enable = false;
+            fluent-bit.enable = false;
           };
+          services = {
+            garnixServer = {
+              enable = true;
 
-          services.postgresql = {
-            enable = true;
-            ensureDatabases = [ "garnix" ];
-            ensureUsers = [
-              {
+              hostname = "website.garnix.local";
+              url = "http://website.garnix.local";
+
+              adminGithubLogin = "dev-user";
+              githubAppName = "garnix-ci";
+              acmeEmail = null;
+
+              testFeatures = [
+                "DevApi"
+                "OpenSearchMocks"
+                "CacheUploadMocks"
+              ];
+
+              database = {
+                host = "127.0.0.1";
+                port = 5432;
+                user = "garnix";
                 name = "garnix";
-                ensureDBOwnership = true;
-              }
-            ];
-            authentication = lib.mkForce ''
-              local   all       all                      trust
-              host    all       all      127.0.0.1/32    md5
-              host    all       all      ::1/128         md5
-            '';
-          };
+                ssl.mode = "disable";
+              };
 
-          systemd.services.garnix-website-pg-password = {
-            description = "Set the garnix postgres password";
-            wantedBy = [
-              "multi-user.target"
-              "garnixServer.service"
-            ];
-            before = [ "garnixServer.service" ];
-            after = [
-              "postgresql.service"
-              "postgresql-setup.service"
-            ];
-            requires = [ "postgresql.service" ];
-            serviceConfig = {
-              Type = "oneshot";
-              RemainAfterExit = true;
-              User = "postgres";
-            };
-            script = ''
-              ${config.services.postgresql.package}/bin/psql -tAc \
-                "ALTER USER garnix WITH PASSWORD '${databasePassword}';"
-            '';
-          };
+              opensearch = {
+                url = "http://127.0.0.1:9999/_msearch";
+                host = "127.0.0.1";
+                username = "garnix";
+              };
 
-          systemd.services.garnix-website-fixtures = {
-            description = "Seed the demo database from sql/local-fixtures.sql";
-            wantedBy = [ "multi-user.target" ];
-            after = [ "garnixServer.service" ];
-            requires = [ "garnixServer.service" ];
-            serviceConfig = {
-              Type = "oneshot";
-              RemainAfterExit = true;
-              User = "postgres";
+              s3Cache.enable = false;
+              remoteBuilders.hosts = [ ];
+
+              secrets = {
+                databasePasswordPath = builtins.toString databasePasswordFile;
+                githubWebhookSecretPath = builtins.toString githubWebhookSecretFile;
+                githubClientSecretPath = builtins.toString githubClientSecretFile;
+                githubClientIdPath = builtins.toString githubClientIdFile;
+                githubAppIdPath = builtins.toString githubAppIdFile;
+                githubAppPkPath = builtins.toString githubAppPkFile;
+                opensearchCredentialPath = builtins.toString opensearchCredentialFile;
+                jwtKeyPath = builtins.toString jwtKeyFile;
+                repoSecretsKeyPath = "${ageKeyPair}/key";
+                repoSecretsPubKeyPath = "${ageKeyPair}/pub";
+              };
             };
-            script = ''
-              ${config.services.postgresql.package}/bin/psql \
-                --dbname garnix --file ${../sql/local-fixtures.sql}
-            '';
+            postgresql = {
+              enable = true;
+              ensureDatabases = [ "garnix" ];
+              ensureUsers = [
+                {
+                  name = "garnix";
+                  ensureDBOwnership = true;
+                }
+              ];
+              authentication = lib.mkForce ''
+                local   all       all                      trust
+                host    all       all      127.0.0.1/32    md5
+                host    all       all      ::1/128         md5
+              '';
+            };
+          };
+          systemd = {
+            services = {
+              garnix-website-pg-password = {
+                description = "Set the garnix postgres password";
+                wantedBy = [
+                  "multi-user.target"
+                  "garnixServer.service"
+                ];
+                before = [ "garnixServer.service" ];
+                after = [
+                  "postgresql.service"
+                  "postgresql-setup.service"
+                ];
+                requires = [ "postgresql.service" ];
+                serviceConfig = {
+                  Type = "oneshot";
+                  RemainAfterExit = true;
+                  User = "postgres";
+                };
+                script = ''
+                  ${config.services.postgresql.package}/bin/psql -tAc \
+                    "ALTER USER garnix WITH PASSWORD '${databasePassword}';"
+                '';
+              };
+              garnix-website-fixtures = {
+                description = "Seed the demo database from sql/local-fixtures.sql";
+                wantedBy = [ "multi-user.target" ];
+                after = [ "garnixServer.service" ];
+                requires = [ "garnixServer.service" ];
+                serviceConfig = {
+                  Type = "oneshot";
+                  RemainAfterExit = true;
+                  User = "postgres";
+                };
+                script = ''
+                  ${config.services.postgresql.package}/bin/psql \
+                    --dbname garnix --file ${../sql/local-fixtures.sql}
+                '';
+              };
+            };
           };
         }
       )

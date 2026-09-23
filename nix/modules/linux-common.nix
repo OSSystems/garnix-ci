@@ -124,51 +124,51 @@ in
   };
 
   config = lib.mkIf pkgs.stdenv.hostPlatform.isLinux {
-    # Limit the amount of generations kept in the bootloader config to avoid
-    # filling up the boot partition.
-    boot.loader = {
-      grub.configurationLimit = 15;
-      systemd-boot.configurationLimit = 15;
-    };
+    boot = {
+      # Limit the amount of generations kept in the bootloader config to avoid
+      # filling up the boot partition.
+      loader = {
+        grub.configurationLimit = 15;
+        systemd-boot.configurationLimit = 15;
+      };
+      swraid = lib.mkIf config.garnix.enableSoftwareRaid {
+        enable = true;
+        # The mdadm RAID1s were created with 'mdadm --create ... --homehost=hetzner',
+        # but the hostname for each machine may be different, and mdadm's HOMEHOST
+        # setting defaults to '<system>' (using the system hostname).
+        # This results mdadm considering such disks as "foreign" as opposed to
+        # "local", and showing them as e.g. '/dev/md/hetzner:root0'
+        # instead of '/dev/md/root0'.
+        # This is mdadm's protection against accidentally putting a RAID disk
+        # into the wrong machine and corrupting data by accidental sync, see
+        # https://bugzilla.redhat.com/show_bug.cgi?id=606481#c14 and onward.
+        # We do not worry about plugging disks into the wrong machine because
+        # we will never exchange disks between machines, so we tell mdadm to
+        # ignore the homehost entirely.
+        # We set PROGRAM to silence a warning about mdmonitor not being configured.
+        # We cannot easily disable this service because it is hardwired into mdadm
+        # and started by the upstream mdadm udev rules.
+        mdadmConf = ''
+          HOMEHOST <ignore>
+          PROGRAM ${lib.getExe' pkgs.coreutils "true"}
+        '';
+      };
+      # dirtyfrag mitigation:
+      blacklistedKernelModules = [
+        "esp4"
+        "esp6"
+        "rxrpc"
+      ];
+      extraModprobeConfig = ''
+        install esp4 ${pkgs.coreutils}/bin/false
+        install esp6 ${pkgs.coreutils}/bin/false
+        install rxrpc ${pkgs.coreutils}/bin/false
 
-    boot.swraid = lib.mkIf config.garnix.enableSoftwareRaid {
-      enable = true;
-      # The mdadm RAID1s were created with 'mdadm --create ... --homehost=hetzner',
-      # but the hostname for each machine may be different, and mdadm's HOMEHOST
-      # setting defaults to '<system>' (using the system hostname).
-      # This results mdadm considering such disks as "foreign" as opposed to
-      # "local", and showing them as e.g. '/dev/md/hetzner:root0'
-      # instead of '/dev/md/root0'.
-      # This is mdadm's protection against accidentally putting a RAID disk
-      # into the wrong machine and corrupting data by accidental sync, see
-      # https://bugzilla.redhat.com/show_bug.cgi?id=606481#c14 and onward.
-      # We do not worry about plugging disks into the wrong machine because
-      # we will never exchange disks between machines, so we tell mdadm to
-      # ignore the homehost entirely.
-      # We set PROGRAM to silence a warning about mdmonitor not being configured.
-      # We cannot easily disable this service because it is hardwired into mdadm
-      # and started by the upstream mdadm udev rules.
-      mdadmConf = ''
-        HOMEHOST <ignore>
-        PROGRAM ${lib.getExe' pkgs.coreutils "true"}
+        alias xfrm-type-2-50 off
+        alias xfrm-type-10-50 off
+        alias net-pf-33 off
       '';
     };
-    # dirtyfrag mitigation:
-    boot.blacklistedKernelModules = [
-      "esp4"
-      "esp6"
-      "rxrpc"
-    ];
-    boot.extraModprobeConfig = ''
-      install esp4 ${pkgs.coreutils}/bin/false
-      install esp6 ${pkgs.coreutils}/bin/false
-      install rxrpc ${pkgs.coreutils}/bin/false
-
-      alias xfrm-type-2-50 off
-      alias xfrm-type-10-50 off
-      alias net-pf-33 off
-    '';
-
     networking = {
       useNetworkd = true;
       useDHCP = false;
@@ -182,7 +182,6 @@ in
         "149.112.112.11#dns11.quad9.net"
       ];
     };
-
     systemd.network.wait-online.anyInterface = true;
     systemd.network.networks."10-uplink" = lib.mkMerge [
       (lib.mkIf (config.garnix.ipv4 == null) {
@@ -213,62 +212,59 @@ in
         networkConfig.IPv6AcceptRA = "no";
       })
     ];
-
-    services.resolved = {
-      enable = true;
-      # Make the global config the preferred one for all domains.
-      domains = [ "~." ];
-      # Not all domains support DNSSEC yet.
-      # Even when set to allow-downgrade, requests for such domains fail.
-      dnssec = "false";
-      dnsovertls = if config.garnix.devMode.enable then "false" else "true";
-    };
-
-    services.openssh = {
-      enable = true;
-      settings = {
-        PasswordAuthentication = false;
-        KbdInteractiveAuthentication = false;
-        AuthenticationMethods = "publickey";
-        PermitRootLogin = "prohibit-password";
-
-        # Lower this to reduce the pressure on MaxStartups
-        LoginGraceTime = "20s";
-
-        # Increase this over the default to avoid overly aggressive rate-limiting
-        MaxStartups = "50:30:200";
-      };
-    };
-
-    services.fail2ban = {
-      enable = true;
-      ignoreIP = [
-        "10.0.0.0/8"
-        "172.16.0.0/12"
-        "192.168.0.0/16"
-      ];
-      bantime-increment = {
+    services = {
+      resolved = {
         enable = true;
-        rndtime = "5m";
+        # Make the global config the preferred one for all domains.
+        domains = [ "~." ];
+        # Not all domains support DNSSEC yet.
+        # Even when set to allow-downgrade, requests for such domains fail.
+        dnssec = "false";
+        dnsovertls = if config.garnix.devMode.enable then "false" else "true";
+      };
+      openssh = {
+        enable = true;
+        settings = {
+          PasswordAuthentication = false;
+          KbdInteractiveAuthentication = false;
+          AuthenticationMethods = "publickey";
+          PermitRootLogin = "prohibit-password";
+
+          # Lower this to reduce the pressure on MaxStartups
+          LoginGraceTime = "20s";
+
+          # Increase this over the default to avoid overly aggressive rate-limiting
+          MaxStartups = "50:30:200";
+        };
+      };
+      fail2ban = {
+        enable = true;
+        ignoreIP = [
+          "10.0.0.0/8"
+          "172.16.0.0/12"
+          "192.168.0.0/16"
+        ];
+        bantime-increment = {
+          enable = true;
+          rndtime = "5m";
+        };
+      };
+      nginx = {
+        enableReload = true;
+        logError = "stderr warn";
       };
     };
-
-    services.nginx = {
-      enableReload = true;
-      logError = "stderr warn";
+    programs = {
+      mosh.enable = true;
+      zsh.enable = true;
+      fish.enable = true;
     };
-
-    programs.mosh.enable = true;
     # For mosh
     networking.firewall.allowedUDPPorts = [
       60001
       60002
       60003
     ];
-
-    programs.zsh.enable = true;
-    programs.fish.enable = true;
-
     documentation = {
       enable = true;
       info.enable = false;
@@ -279,9 +275,7 @@ in
       doc.enable = false;
       nixos.enable = false;
     };
-
     time.timeZone = "UTC";
-
     security = {
       sudo = {
         enable = true;
@@ -293,7 +287,6 @@ in
         acceptTerms = true;
       };
     };
-
     nix = {
       settings = {
         trusted-users = [
@@ -307,7 +300,6 @@ in
         dates = "daily";
       };
     };
-
     systemd = {
       services = {
         nix-gc.serviceConfig.IOSchedulingPriority = 6;
@@ -363,16 +355,13 @@ in
         };
       };
     };
-
     system = {
       disableInstallerTools = true;
       build.nixos-rebuild = pkgs.nixos-rebuild.override { nix = config.nix.package.out; };
     };
-
     garnix = {
       useGarnixCache = true;
     };
-
     environment.systemPackages = with pkgs; [
       gdb
       iotop
@@ -383,7 +372,6 @@ in
       kill-nix-daemon-process-without-client
       cryptsetup
     ];
-
     virtualisation.vmVariant = {
       virtualisation = {
         cores = 2;
@@ -404,7 +392,6 @@ in
       users.users.root.password = "";
       garnix.devMode.enable = true;
     };
-
     system.activationScripts.diff = {
       supportsDryActivation = true;
       text = ''
@@ -417,7 +404,6 @@ in
         fi
       '';
     };
-
     system.activationScripts.requires-reboot = {
       supportsDryActivation = true;
       text = ''

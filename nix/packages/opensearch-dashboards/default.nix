@@ -1,10 +1,10 @@
 {
   lib,
-  stdenv,
-  makeWrapper,
-  fetchurl,
-  nodejs,
   coreutils,
+  fetchurl,
+  makeWrapper,
+  nodejs,
+  stdenv,
   which,
 }:
 

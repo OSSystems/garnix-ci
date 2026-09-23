@@ -1,5 +1,5 @@
 {
-  mkDerivation,
+  lib,
   aeson,
   base,
   base16-bytestring,
@@ -9,8 +9,8 @@
   github,
   github-webhooks,
   http-types,
-  lib,
   memory,
+  mkDerivation,
   servant,
   servant-server,
   string-conversions,

@@ -1,7 +1,7 @@
 # We use our fork until https://github.com/cuedo/github-webhooks/pull/92 has
 # been merged.
 {
-  mkDerivation,
+  lib,
   aeson,
   base,
   base16-bytestring,
@@ -9,13 +9,13 @@
   cryptonite,
   deepseq,
   deepseq-generics,
+  fetchgit,
   hspec,
   memory,
+  mkDerivation,
   text,
   time,
   vector,
-  fetchgit,
-  lib,
 }:
 mkDerivation {
   pname = "github-webhooks";

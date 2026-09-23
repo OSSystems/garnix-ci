@@ -1,9 +1,9 @@
 {
-  pkgs,
-  lib,
   self,
-  system,
+  lib,
+  pkgs,
   flakeInputs,
+  system,
   ...
 }:
 let

@@ -1,5 +1,5 @@
 {
-  mkDerivation,
+  lib,
   aeson,
   base,
   base58-bytestring,
@@ -11,7 +11,7 @@
   entropy,
   fetchgit,
   http-conduit,
-  lib,
+  mkDerivation,
   text,
   time,
   unordered-containers,

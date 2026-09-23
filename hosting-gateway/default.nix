@@ -1,8 +1,8 @@
 {
-  pkgs,
-  lib,
-  system,
   self,
+  lib,
+  pkgs,
+  system,
   ...
 }:
 let
@@ -104,8 +104,12 @@ in
 
         withoutMonitoring = evalGateway { };
         withMonitoring = evalGateway {
-          garnix.monitoring-client.enable = true;
-          garnix.monitoring-client.nodeId = "gateway.example.test";
+          garnix = {
+            monitoring-client = {
+              enable = true;
+              nodeId = "gateway.example.test";
+            };
+          };
         };
       in
       # Traefik is what routes, and it must poll the backend for its table.

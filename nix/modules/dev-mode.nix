@@ -40,7 +40,6 @@ in
 
   config = lib.mkIf config.garnix.devMode.enable {
     users.users.root.password = lib.mkForce null;
-
     system.activationScripts =
       let
         nixos-vm-host-key = "nixos-vm-host-key";
@@ -60,12 +59,12 @@ in
           deps = [ nixos-vm-host-key ];
         };
       };
-
-    security.pki.certificateFiles = [
-      devCerts.ca.cert
-      ../tests/data/foo.garnix.me.cert.pem
-    ];
-
-    security.acme.certs = lib.mkIf config.garnix.devMode.disableACME (lib.mkForce { });
+    security = {
+      pki.certificateFiles = [
+        devCerts.ca.cert
+        ../tests/data/foo.garnix.me.cert.pem
+      ];
+      acme.certs = lib.mkIf config.garnix.devMode.disableACME (lib.mkForce { });
+    };
   };
 }

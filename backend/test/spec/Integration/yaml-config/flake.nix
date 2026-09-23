@@ -13,10 +13,14 @@
         pkgs.hello;
     in
     {
-      packages.x86_64-linux.a = mk "x86_64-linux";
-      packages.x86_64-linux.b = mk "x86_64-linux";
-      # This is to check that errors in a system that shouldn't be checked
-      # don't propagate.
-      packages.aarch64-darwin = 1 / 0;
+      packages = {
+        x86_64-linux = {
+          a = mk "x86_64-linux";
+          b = mk "x86_64-linux";
+        };
+        # This is to check that errors in a system that shouldn't be checked
+        # don't propagate.
+        aarch64-darwin = 1 / 0;
+      };
     };
 }

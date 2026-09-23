@@ -1,4 +1,4 @@
-{ pkgs, lib, ... }:
+{ lib, pkgs, ... }:
 let
   fs = lib.fileset;
   src = fs.toSource {

@@ -1,10 +1,10 @@
 {
-  mkDerivation,
+  lib,
   base,
   bytestring,
   containers,
   convertible,
-  lib,
+  mkDerivation,
   mtl,
   old-time,
   text,

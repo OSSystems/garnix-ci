@@ -12,19 +12,21 @@ in
 
   nodes.server = { config, lib, ... }: {
     networking.extraHosts = "127.0.0.1 ${config.garnix.monitoring-client.fqdn}";
-    garnix.monitoring = {
-      monitoredHosts.${config.networking.hostName} = {
-        scrapeNginx = true;
-        scrapeGarnixServer = true;
+    garnix = {
+      monitoring = {
+        monitoredHosts.${config.networking.hostName} = {
+          scrapeNginx = true;
+          scrapeGarnixServer = true;
+        };
       };
-    };
-    garnix.monitoring-client = {
-      enable = lib.mkForce true;
-      nodeId = config.networking.hostName;
-      fqdn = config.garnix.devMode.certificates.domain;
-      basicAuth = {
-        inherit (basicAuth) username;
-        passwordFile = "${pkgs.writeText "passwd-file" basicAuth.password}";
+      monitoring-client = {
+        enable = lib.mkForce true;
+        nodeId = config.networking.hostName;
+        fqdn = config.garnix.devMode.certificates.domain;
+        basicAuth = {
+          inherit (basicAuth) username;
+          passwordFile = "${pkgs.writeText "passwd-file" basicAuth.password}";
+        };
       };
     };
     services.garnixServer.metricsPort = 80;

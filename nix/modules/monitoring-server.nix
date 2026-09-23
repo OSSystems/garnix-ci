@@ -1,8 +1,8 @@
 {
   config,
-  options,
   lib,
   pkgs,
+  options,
   ...
 }:
 
@@ -213,62 +213,62 @@ in
             '';
           }
         ];
-
-        services.grafana = {
-          enable = true;
-          settings = {
-            date_formats.default_timezone = "utc";
-            server = {
-              http_addr = cfg.listenAddress;
-              http_port = cfg.grafana.port;
-              domain = cfg.fqdn;
-              root_url = cfg.grafana.rootUrl;
-            };
-          }
-          // lib.optionalAttrs (cfg.grafana.secretKeyFile != null) {
-            security.secret_key = "$__file{${cfg.grafana.secretKeyFile}}";
-          };
-          provision = {
+        services = {
+          grafana = {
             enable = true;
+            settings = {
+              date_formats.default_timezone = "utc";
+              server = {
+                http_addr = cfg.listenAddress;
+                http_port = cfg.grafana.port;
+                domain = cfg.fqdn;
+                root_url = cfg.grafana.rootUrl;
+              };
+            }
+            // lib.optionalAttrs (cfg.grafana.secretKeyFile != null) {
+              security.secret_key = "$__file{${cfg.grafana.secretKeyFile}}";
+            };
+            provision = {
+              enable = true;
 
-            dashboards.settings.providers = [
-              {
-                name = "garnixServer";
-                options.path = pkgs.linkFarm "garnix-grafana-dashboards" [
-                  {
-                    name = "node-exporter-full.json";
-                    path = ../data/grafana-node-exporter-full.json;
-                  }
-                ];
-              }
-            ];
+              dashboards.settings.providers = [
+                {
+                  name = "garnixServer";
+                  options.path = pkgs.linkFarm "garnix-grafana-dashboards" [
+                    {
+                      name = "node-exporter-full.json";
+                      path = ../data/grafana-node-exporter-full.json;
+                    }
+                  ];
+                }
+              ];
 
-            datasources.settings.datasources = [
-              {
-                name = "Prometheus";
-                type = "prometheus";
-                url = "http://${cfg.listenAddress}:${toString config.services.prometheus.port}";
-                jsonData = {
-                  timeInterval = config.services.prometheus.globalConfig.scrape_interval;
-                };
-              }
-            ];
+              datasources.settings.datasources = [
+                {
+                  name = "Prometheus";
+                  type = "prometheus";
+                  url = "http://${cfg.listenAddress}:${toString config.services.prometheus.port}";
+                  jsonData = {
+                    timeInterval = config.services.prometheus.globalConfig.scrape_interval;
+                  };
+                }
+              ];
+            };
           };
-        };
-
-        services.prometheus = {
-          enable = true;
-          inherit (cfg.prometheus) port;
-          inherit (cfg) listenAddress;
-          globalConfig = {
-            scrape_interval = "30s";
-            scrape_timeout = "10s";
+          prometheus = {
+            enable = true;
+            inherit (cfg.prometheus) port;
+            inherit (cfg) listenAddress;
+            globalConfig = {
+              scrape_interval = "30s";
+              scrape_timeout = "10s";
+            };
+            retentionTime = "90d";
+            scrapeConfigs =
+              lib.concatMap scrapeConfigsFor jobs
+              ++ lib.optional cfg.sqlExporter.enable sqlJob
+              ++ cfg.extraScrapeConfigs;
           };
-          retentionTime = "90d";
-          scrapeConfigs =
-            lib.concatMap scrapeConfigsFor jobs
-            ++ lib.optional cfg.sqlExporter.enable sqlJob
-            ++ cfg.extraScrapeConfigs;
         };
       }
 
@@ -302,10 +302,12 @@ in
           virtualHosts.${cfg.fqdn} = config.garnix.devMode.withDevCerts {
             addSSL = true;
             enableACME = cfg.nginx.acme.enable;
-            locations."/".proxyPass = grafanaUrl;
-            locations."/api/live" = {
-              proxyPass = grafanaUrl;
-              proxyWebsockets = true;
+            locations = {
+              "/".proxyPass = grafanaUrl;
+              "/api/live" = {
+                proxyPass = grafanaUrl;
+                proxyWebsockets = true;
+              };
             };
           };
         };

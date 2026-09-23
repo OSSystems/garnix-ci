@@ -1,8 +1,8 @@
 {
   config,
-  options,
   lib,
   pkgs,
+  options,
   ...
 }:
 
@@ -87,35 +87,34 @@ in
               '';
             }
           ];
-
           networking.firewall.allowedTCPPorts = lib.optionals cfg.openFirewall [
             80
             443
           ];
-
-          services.prometheus.exporters = {
-            node = {
-              enable = true;
-              enabledCollectors = [
-                "systemd"
-                "processes"
-              ];
+          services = {
+            prometheus.exporters = {
+              node = {
+                enable = true;
+                enabledCollectors = [
+                  "systemd"
+                  "processes"
+                ];
+              };
+              nginx.enable = node.scrapeNginx;
+              nginxlog = {
+                enable = node.scrapeNginxLog;
+                group = "nginx";
+                settings.namespaces = [
+                  {
+                    name = "nginx";
+                    source.files = [ "/var/log/nginx/json_access.log" ];
+                    parser = "json";
+                  }
+                ];
+              };
             };
-            nginx.enable = node.scrapeNginx;
-            nginxlog = {
-              enable = node.scrapeNginxLog;
-              group = "nginx";
-              settings.namespaces = [
-                {
-                  name = "nginx";
-                  source.files = [ "/var/log/nginx/json_access.log" ];
-                  parser = "json";
-                }
-              ];
-            };
+            nginx.statusPage = lib.mkIf node.scrapeNginx true;
           };
-
-          services.nginx.statusPage = lib.mkIf node.scrapeNginx true;
         }
         (lib.mkIf cfg.nginx.enable {
           security.acme = {

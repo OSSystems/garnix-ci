@@ -1,8 +1,8 @@
 {
-  pkgs,
   lib,
-  system,
+  pkgs,
   flakeInputs,
+  system,
   ...
 }:
 let
@@ -81,7 +81,7 @@ let
 in
 rec {
   packages = {
-    inherit postgres migrate;
+    inherit migrate postgres;
     garnix =
       pkgs.runCommand "garnix"
         {

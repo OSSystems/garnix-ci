@@ -1,7 +1,7 @@
 {
   config,
-  pkgs,
   lib,
+  pkgs,
   ...
 }:
 let
@@ -195,25 +195,25 @@ in
   };
 
   config = lib.mkIf cfg.enable {
-    environment.systemPackages = [
-      pkgs.bubblewrap
-      runner
-      bwrapRunner
-    ];
-
-    environment.etc."containers/policy.json" = {
-      mode = "444";
-      text = ''
-        {
-            "default": [
-                {
-                    "type": "insecureAcceptAnything"
-                }
-            ]
-        }
-      '';
+    environment = {
+      systemPackages = [
+        pkgs.bubblewrap
+        runner
+        bwrapRunner
+      ];
+      etc."containers/policy.json" = {
+        mode = "444";
+        text = ''
+          {
+              "default": [
+                  {
+                      "type": "insecureAcceptAnything"
+                  }
+              ]
+          }
+        '';
+      };
     };
-
     users = {
       users.action-runner = {
         isSystemUser = true;
@@ -230,21 +230,17 @@ in
       };
       groups.action-runner = { };
     };
-
     nix.settings.trusted-users = [
       config.users.users.action-runner.name
     ];
-
     garnix.custom-gc = {
       enable = true;
       enableTimer = true;
     };
-
     services.logind.settings.Login = {
       KillUserProcesses = true;
       KillOnlyUsers = "nix-ssh";
     };
-
     virtualisation.vmVariant.virtualisation = {
       useNixStoreImage = true;
       writableStore = true;
