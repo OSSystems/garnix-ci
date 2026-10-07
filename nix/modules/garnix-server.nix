@@ -346,6 +346,27 @@ in
       '';
     };
 
+    githubCheckLogs = lib.mkOption {
+      type = lib.types.nullOr (
+        lib.types.enum [
+          "live"
+          "final"
+        ]
+      );
+      default = null;
+      example = "final";
+      description = ''
+        How build logs reach GitHub check runs. "live" updates each check run
+        with the log so far every few seconds while the build runs. "final"
+        only creates the check run and completes it with the log tail, two
+        GitHub API calls per check run, which keeps many parallel builds under
+        the GitHub App's hourly rate limit. Lines logged after the check run
+        completes, such as binary cache uploads, are not sent to GitHub in
+        "final". Full logs stay available behind the check's "Details" link
+        either way. When null, the server uses its built-in default of "live".
+      '';
+    };
+
     evalMemory = {
       defaultGigabytes = lib.mkOption {
         type = lib.types.nullOr lib.types.ints.positive;
@@ -773,6 +794,7 @@ in
         ++ lib.optional (
           cfg.sessionLifetimeSeconds != null
         ) "GARNIX_SESSION_LIFETIME=${toString cfg.sessionLifetimeSeconds}"
+        ++ lib.optional (cfg.githubCheckLogs != null) "GARNIX_GITHUB_CHECK_LOGS=${cfg.githubCheckLogs}"
         ++ lib.optional (
           cfg.evalMemory.defaultGigabytes != null
         ) "GARNIX_DEFAULT_EVAL_MEMORY_GB=${toString cfg.evalMemory.defaultGigabytes}"
