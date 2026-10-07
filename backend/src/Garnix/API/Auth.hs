@@ -96,7 +96,7 @@ getJwt mAuthHeader authResult = do
           err -> err
       )
       $ DB.getUser
-      $ ForgeLogin githubForge (GhLogin username)
+      =<< maybe (throw Unauthorized) pure (parseForgeLoginText username)
   isValid <- isAccessTokenValid (user ^. id) (AccessToken password) (^. #api)
   when (not isValid) $ do
     throw Unauthorized

@@ -1791,3 +1791,20 @@ loginOnForgeOf repo (ForgeLogin slug login)
   | slug == _repoIdForge repo = Just login
   | otherwise = Nothing
 
+-- | An account as one string, for places that only carry a user name, such as
+-- HTTP basic auth against the cache: @login@ on GitHub, @login\@slug@ on any
+-- other forge. Logins on GitHub and Gitea cannot contain an @\@@, so the first
+-- one ends the login and a slug may contain more.
+forgeLoginText :: ForgeLogin -> Text
+forgeLoginText (ForgeLogin slug login)
+  | slug == githubForge = getGhLogin login
+  | otherwise = getGhLogin login <> "@" <> getForgeSlug slug
+
+-- | The inverse of 'forgeLoginText'. 'Nothing' for an empty login or slug.
+parseForgeLoginText :: Text -> Maybe ForgeLogin
+parseForgeLoginText text = case T.breakOn "@" text of
+  ("", _) -> Nothing
+  (login, "") -> Just (ForgeLogin githubForge (GhLogin login))
+  (login, atSlug) -> case T.drop 1 atSlug of
+    "" -> Nothing
+    slug -> Just (ForgeLogin (ForgeSlug slug) (GhLogin login))

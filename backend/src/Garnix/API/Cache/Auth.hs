@@ -27,7 +27,7 @@ getStoreHashPermission storeHash authorization = do
     Just (Left err) -> do
       throw $ UnauthorizedWithMessage $ "Failed to parse basic auth: " <> show err
     Just (Right (user, pass)) -> do
-      let login = ForgeLogin githubForge (GhLogin user)
+      login <- maybe (throw InvalidAccessToken) pure (parseForgeLoginText user)
       isValid <- isAccessTokenValidCached storeHash login $ AccessToken pass
       unless isValid $ throw InvalidAccessToken
       pure $ Just login

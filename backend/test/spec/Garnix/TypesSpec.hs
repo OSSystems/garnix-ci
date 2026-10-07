@@ -13,6 +13,26 @@ import Test.Hspec
 
 spec :: Spec
 spec = describe "Types" $ do
+  describe "forgeLoginText" $ do
+    it "names github accounts by their bare login" $ do
+      forgeLoginText (ForgeLogin githubForge "alice") `shouldBe` "alice"
+      parseForgeLoginText "alice" `shouldBe` Just (ForgeLogin githubForge "alice")
+
+    it "qualifies accounts on other forges with their slug" $ do
+      let login = ForgeLogin (ForgeSlug "git.example") "alice"
+      forgeLoginText login `shouldBe` "alice@git.example"
+      parseForgeLoginText (forgeLoginText login) `shouldBe` Just login
+
+    it "keeps a slug that itself contains an @" $ do
+      let login = ForgeLogin (ForgeSlug "git@corp") "bob"
+      forgeLoginText login `shouldBe` "bob@git@corp"
+      parseForgeLoginText (forgeLoginText login) `shouldBe` Just login
+
+    it "rejects an empty login or slug" $ do
+      parseForgeLoginText "" `shouldBe` Nothing
+      parseForgeLoginText "@git.example" `shouldBe` Nothing
+      parseForgeLoginText "bob@" `shouldBe` Nothing
+
   describe "AuthJwtPayload" $ do
     let testUser now =
           User
