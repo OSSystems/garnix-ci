@@ -73,6 +73,7 @@ library
       Garnix.Duration
       Garnix.ExpiringCache
       Garnix.FlakeInputAuthorization
+      Garnix.Forge.Config
       Garnix.Forge.Gitea
       Garnix.GetAttributes
       Garnix.GithubInterface
@@ -746,6 +747,7 @@ test-suite spec
       Garnix.Hosting.TypesSpec
       Garnix.ExpiringCacheSpec
       Garnix.FlakeInputAuthorizationSpec
+      Garnix.Forge.ConfigSpec
       Garnix.Forge.GiteaSpec
       Garnix.GetAttributesSpec
       Garnix.GithubInterfaceSpec
@@ -836,6 +838,7 @@ test-suite spec
       Garnix.Duration
       Garnix.ExpiringCache
       Garnix.FlakeInputAuthorization
+      Garnix.Forge.Config
       Garnix.Forge.Gitea
       Garnix.GetAttributes
       Garnix.GithubInterface
