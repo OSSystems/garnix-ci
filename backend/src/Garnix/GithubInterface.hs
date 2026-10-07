@@ -1,6 +1,7 @@
 module Garnix.GithubInterface
   ( realGithubInterface,
     fromRunReport,
+    retryWreq,
     -- exported for testing
     _retryWhen,
     _retryGithubRequest,
