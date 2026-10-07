@@ -28,7 +28,7 @@ withInternalCacheToken reqUser cont = do
     hPutStrLn handle
       . unlines
       $ [ "machine cache.garnix.io",
-          "login " <> cs (getGhLogin (_forgeLoginGhLogin reqUser)),
+          "login " <> cs (forgeLoginText reqUser),
           "password " <> cs (getInternalCacheToken token)
         ]
     hClose handle
