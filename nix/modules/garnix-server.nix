@@ -64,6 +64,106 @@ let
     }
   );
 
+  secretFileOption =
+    description:
+    lib.mkOption {
+      type = lib.types.str;
+      description =
+        description
+        + " (string path. Do NOT use a Nix path literal or the secret will be copied into the world-readable /nix/store).";
+    };
+
+  forgeType = lib.types.submodule (
+    { name, ... }:
+    {
+      options = {
+        kind = lib.mkOption {
+          type = lib.types.enum [ "gitea" ];
+          default = "gitea";
+          description = ''
+            Which API the instance speaks. "gitea" covers Forgejo too, which
+            serves the same API.
+          '';
+        };
+        webUrl = lib.mkOption {
+          type = lib.types.str;
+          example = "https://git.example.com";
+          description = "Where people browse the instance. Links to repositories, commits and users are built from it.";
+        };
+        apiUrl = lib.mkOption {
+          type = lib.types.str;
+          example = "https://git.example.com/api/v1";
+          description = "Base of the instance's REST API.";
+        };
+        oauthClientId = lib.mkOption {
+          type = lib.types.str;
+          description = "Client id of the OAuth2 application registered on the instance for garnix logins.";
+        };
+        admins = lib.mkOption {
+          type = lib.types.listOf lib.types.str;
+          default = [ ];
+          example = [ "alice" ];
+          description = "Logins on this instance that administer garnix.";
+        };
+        webhookSecretFile = secretFileOption "Path to the secret the instance signs its webhook deliveries with";
+        oauthClientSecretFile = secretFileOption "Path to the client secret of the OAuth2 application";
+        apiTokenFile = secretFileOption "Path to the access token of the bot account garnix calls the instance's API and clones with";
+        exposeTokenToActions = lib.mkOption {
+          type = lib.types.bool;
+          default = false;
+          description = ''
+            Also stage the API token at
+            /run/garnix-action-secrets/forges/${name}/api_token, readable by
+            the action-runner group, so that shared-resources actions can
+            authenticate to this instance (the counterpart of the GitHub
+            access token staged by secrets.githubAccessTokenPath).
+
+            Off by default because the token is broad: Gitea has no
+            short-lived, repository-scoped tokens, so every shared-resources
+            action on this garnix instance can act as the bot account on every
+            repository the bot can reach. Requires garnix.actionRunner.enable.
+          '';
+        };
+        stagedSecrets = lib.mkOption {
+          type = lib.types.attrsOf lib.types.str;
+          internal = true;
+          readOnly = true;
+          default = {
+            webhookSecretFile = "${cfg.secrets.dir}/forges/${name}/webhook_secret";
+            oauthClientSecretFile = "${cfg.secrets.dir}/forges/${name}/oauth_client_secret";
+            apiTokenFile = "${cfg.secrets.dir}/forges/${name}/api_token";
+          };
+          description = ''
+            Where garnix-secrets-stage installs this instance's secrets, keyed
+            like the source options. The one definition both the stage script
+            and the rendered GARNIX_FORGES_FILE read.
+          '';
+        };
+      };
+    }
+  );
+
+  # The contract with the backend: the server reads non-GitHub forge
+  # instances from this file (GARNIX_FORGES_FILE). Secrets are named by the
+  # paths garnix-secrets-stage installs them at (stagedSecrets), never inlined.
+  forgesFile = pkgs.writeText "garnix-forges.json" (
+    builtins.toJSON (
+      lib.mapAttrs (
+        _slug: forge:
+        {
+          inherit (forge)
+            admins
+            apiUrl
+            kind
+            oauthClientId
+            webUrl
+            ;
+        }
+        // forge.stagedSecrets
+      ) cfg.forges
+    )
+  );
+
   logsDir = pkgs.writeShellScriptBin "logsDir" ''
     if [ -d /var/lib/garnix/logs ]; then
       echo "Logs dir exists. Not creating"
@@ -612,6 +712,34 @@ in
       };
     };
 
+    forges = lib.mkOption {
+      type = lib.types.attrsOf forgeType;
+      default = { };
+      example = lib.literalExpression ''
+        {
+          "git.example" = {
+            webUrl = "https://git.example.com";
+            apiUrl = "https://git.example.com/api/v1";
+            oauthClientId = "0b8f…";
+            admins = [ "alice" ];
+            webhookSecretFile = "/run/secrets/gitea/webhook_secret";
+            oauthClientSecretFile = "/run/secrets/gitea/oauth_client_secret";
+            apiTokenFile = "/run/secrets/gitea/api_token";
+          };
+        }
+      '';
+      description = ''
+        Gitea/Forgejo instances garnix serves, besides github.com. The
+        attribute name is the instance's slug: it names the forge in every
+        repository URL (/repo/<slug>/<owner>/<name>) and in the database, so
+        do not rename it once repositories are built. "github" is reserved for
+        github.com, which keeps its own settings.
+
+        Rendered into the file GARNIX_FORGES_FILE points the server at; the
+        secrets are staged under <secrets.dir>/forges/<slug>/.
+      '';
+    };
+
     devDefaults = lib.mkOption {
       type = lib.types.attrsOf lib.types.anything;
       default = {
@@ -655,10 +783,23 @@ in
         message = "services.garnixServer.s3Cache.{host,publicBucket,privateBucket,publicBaseUrl} must be set when s3Cache.enable = true.";
       }
       {
+        assertion = !(cfg.forges ? github);
+        message = "services.garnixServer.forges: the slug \"github\" is reserved for github.com, which is configured by the github* options.";
+      }
+      {
         assertion = !cfg.s3Cache.gc.enable || cfg.s3Cache.enable;
         message = "services.garnixServer.s3Cache.gc.enable requires services.garnixServer.s3Cache.enable.";
       }
-    ];
+    ]
+    ++ lib.mapAttrsToList (slug: _: {
+      # The slug is a URL segment and a directory name.
+      assertion = builtins.match "[A-Za-z0-9][A-Za-z0-9._-]*" slug != null;
+      message = "services.garnixServer.forges.\"${slug}\": a slug may only contain letters, digits, '.', '_' and '-', and must start with a letter or digit.";
+    }) cfg.forges
+    ++ lib.mapAttrsToList (slug: forge: {
+      assertion = forge.exposeTokenToActions -> config.garnix.actionRunner.enable;
+      message = "services.garnixServer.forges.\"${slug}\".exposeTokenToActions requires garnix.actionRunner.enable.";
+    }) cfg.forges;
 
     users = {
       users.${cfg.user} = lib.mkDefault {
@@ -805,6 +946,7 @@ in
                 lib.mapAttrsToList (slug: gigabytes: "${slug}=${toString gigabytes}") cfg.evalMemory.perRepository
               )
             }"
+        ++ lib.optional (cfg.forges != { }) "GARNIX_FORGES_FILE=${forgesFile}"
         ++ lib.optional (cfg.provisionerSocket != null) "GARNIX_PROVISIONER_SOCKET=${cfg.provisionerSocket}"
         ++ lib.optional (cfg.hosting.domain != null) "GARNIX_HOSTING_DOMAIN=${cfg.hosting.domain}"
         ++ lib.optional (

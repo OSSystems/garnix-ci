@@ -23,6 +23,50 @@ let
 
   stageActionToken = config.garnix.actionRunner.enable && secretsCfg.githubAccessTokenPath != null;
 
+  actionForgeSecretsDir = "${actionSecretsDir}/forges";
+
+  # The forges/ directory every instance's secrets sit in, read off
+  # forges.<slug>.stagedSecrets (<dir>/forges/<slug>/<file>) rather than
+  # spelled again here.
+  forgeSecretsParents = lib.unique (
+    lib.concatMap (forge: map (path: dirOf (dirOf path)) (lib.attrValues forge.stagedSecrets)) (
+      lib.attrValues cfg.forges
+    )
+  );
+
+  # Installs each secret at forges.<slug>.stagedSecrets, the paths
+  # garnix-server.nix renders into GARNIX_FORGES_FILE. The paths are free
+  # strings from the operator's config and this script runs as root, so every
+  # one is shell-quoted.
+  stageForgeSecrets = lib.concatStrings (
+    lib.mapAttrsToList (
+      slug: forge:
+      let
+        actionDir = "${actionForgeSecretsDir}/${slug}";
+      in
+      ''
+        install -d -m 0750 -o root -g ${cfg.user} ${lib.escapeShellArgs (lib.unique (map dirOf (lib.attrValues forge.stagedSecrets)))}
+      ''
+      + lib.concatStrings (
+        lib.mapAttrsToList (source: staged: ''
+          install -m 0440 -o root -g ${cfg.user} ${
+            lib.escapeShellArg forge.${source}
+          } ${lib.escapeShellArg staged}
+        '') forge.stagedSecrets
+      )
+      + lib.optionalString (forge.exposeTokenToActions && config.garnix.actionRunner.enable) ''
+        install -d -m 0750 -o root -g action-runner ${
+          lib.escapeShellArgs [
+            actionSecretsDir
+            actionForgeSecretsDir
+            actionDir
+          ]
+        }
+        install -m 0440 -o root -g action-runner ${lib.escapeShellArg forge.apiTokenFile} ${lib.escapeShellArg "${actionDir}/api_token"}
+      ''
+    ) cfg.forges
+  );
+
   installedSecrets = lib.filter (s: s.sourcePath != null) [
     {
       name = "database-password";
@@ -206,7 +250,12 @@ let
 
       install -d -m 0750 -o root -g action-runner ${actionSecretsDir}
       install -m 0440 -o root -g action-runner ${secretsCfg.githubAccessTokenPath} ${actionSecretsDir}/github_access_token
-    '';
+    ''
+    + lib.optionalString (cfg.forges != { }) ''
+
+      install -d -m 0750 -o root -g ${cfg.user} ${lib.escapeShellArgs forgeSecretsParents}
+    ''
+    + stageForgeSecrets;
   };
 in
 {
