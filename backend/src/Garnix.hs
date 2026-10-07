@@ -123,6 +123,14 @@ sessionLifetimeFromEnv = lookupEnv "GARNIX_SESSION_LIFETIME" >>= resolve
           $ "GARNIX_SESSION_LIFETIME must be a positive whole number of seconds, got: "
           <> cs raw
 
+githubCheckLogsFromEnv :: IO GithubCheckLogs
+githubCheckLogsFromEnv =
+  lookupEnvText "GARNIX_GITHUB_CHECK_LOGS" >>= \case
+    Nothing -> pure defaultGithubCheckLogs
+    Just raw -> case parseGithubCheckLogs raw of
+      Right mode -> pure mode
+      Left problem -> error $ "GARNIX_GITHUB_CHECK_LOGS: " <> cs problem
+
 evalMemoryConfigFromEnv :: IO EvalMemoryConfig
 evalMemoryConfigFromEnv = do
   defaultEvalMemory <-
@@ -387,6 +395,7 @@ withEnv testFeatures buildLogsDir buildLogsReportingPort action = do
         Left _ -> error "error reading GitHub App private key"
   mgr <- newTlsManager
   sessionLifetime <- sessionLifetimeFromEnv
+  githubCheckLogs <- githubCheckLogsFromEnv
   evalMemoryConfig <- evalMemoryConfigFromEnv
   jwtKey <-
     lookupEnv "JWT_KEY"
@@ -513,6 +522,7 @@ withEnv testFeatures buildLogsDir buildLogsReportingPort action = do
               evalHeartbeatWindow = fromMinutes @Int 2,
               evalSweepInterval = fromMinutes @Int 1,
               githubLogDebounceDuration = fromSeconds @Int 15,
+              githubCheckLogs,
               buildLogsPostTimeout = fromSeconds @Int 10,
               featureFlagConfig,
               fodCheckPool,

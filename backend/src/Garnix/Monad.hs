@@ -134,6 +134,7 @@ data Env = Env
     evalHeartbeatWindow :: Duration,
     evalSweepInterval :: Duration,
     githubLogDebounceDuration :: Duration,
+    githubCheckLogs :: GithubCheckLogs,
     buildLogsPostTimeout :: Duration,
     featureFlagConfig :: FeatureFlagConfig,
     fodCheckPool :: Garnix.Monad.Pool.Pool (),
@@ -168,6 +169,26 @@ data Env = Env
 
 defaultSessionLifetime :: Duration
 defaultSessionLifetime = fromDays @Int 7
+
+-- | Whether GitHub check runs get build logs while the build runs.
+data GithubCheckLogs
+  = -- | Update the check run with the accumulated log at most every
+    -- 'githubLogDebounceDuration', then once more on completion.
+    GithubCheckLogsLive
+  | -- | Only create the check run and complete it, with the log tail. Two
+    -- API calls per build instead of one every few seconds (a rerun adds an
+    -- in_progress update).
+    GithubCheckLogsFinal
+  deriving stock (Eq, Show, Generic)
+
+defaultGithubCheckLogs :: GithubCheckLogs
+defaultGithubCheckLogs = GithubCheckLogsLive
+
+parseGithubCheckLogs :: Text -> Either Text GithubCheckLogs
+parseGithubCheckLogs = \case
+  "live" -> Right GithubCheckLogsLive
+  "final" -> Right GithubCheckLogsFinal
+  other -> Left $ "expected \"live\" or \"final\", got: " <> other
 
 data TestFeature
   = DevApi
