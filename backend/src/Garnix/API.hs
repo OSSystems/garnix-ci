@@ -54,6 +54,11 @@ data WholeAPI r = WholeAPI
     signup :: r :- "api" :> "signup" :> ToServantApi SignupAPI,
     whoami :: r :- "api" :> "whoami" :> Auth '[JWT, Cookie] AuthJwtPayload :> Get '[JSON] (Maybe UserDto),
     authJwt :: r :- "api" :> "auth" :> "jwt" :> ToServantApi AuthJwtAPI,
+    -- | Logging in and signing up through any configured forge instance.
+    -- @login@ and @signup@ above are GitHub's, kept for the routes its OAuth
+    -- app calls back to.
+    forgeLogin :: r :- "api" :> "auth" :> Capture "forge" ForgeSlug :> "login" :> ToServantApi LoginAPI,
+    forgeSignup :: r :- "api" :> "auth" :> Capture "forge" ForgeSlug :> "signup" :> ToServantApi SignupAPI,
     config :: r :- "api" :> "config" :> Get '[JSON] FrontendConfig,
     badges :: r :- "api" :> "badges" :> Capture "owner" GhRepoOwner :> Capture "repo" GhRepoName :> QueryParam "branch" Branch :> Get '[JSON] Badge,
     forgeBadges :: r :- "api" :> "badges" :> Capture "forge" ForgeSlug :> Capture "owner" GhRepoOwner :> Capture "repo" GhRepoName :> QueryParam "branch" Branch :> Get '[JSON] Badge,
@@ -94,8 +99,10 @@ wholeAPI =
     { events = toServant ghWebhookAPI,
       account = toServant . accountAPI,
       dev = devAPI,
-      login = toServant loginAPI,
-      signup = toServant signupAPI,
+      login = toServant (loginAPI githubForge),
+      signup = toServant (signupAPI githubForge),
+      forgeLogin = toServant . loginAPI,
+      forgeSignup = toServant . signupAPI,
       whoami = whoAmIAPI,
       authJwt = toServant authJwtAPI,
       keys = \owner name -> Garnix.API.Keys.getRepoPublicKey (RepoId githubForge owner name),

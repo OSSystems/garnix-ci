@@ -9,11 +9,15 @@ import Data.Aeson qualified as Aeson
 import Data.Aeson.Lens
 import Data.ByteString qualified
 import Data.ByteString.Base64 qualified as Base64
+import Data.Map qualified as Map
 import Data.String.Interpolate (i)
+import Data.Text qualified as T
+import Garnix.API.Auth (OAuthFlow (..), forgeOAuth2, oauthCallbackPath, subscriptionFor)
 import Garnix.AccessToken.Types
 import Garnix.Build (buildFlake)
 import Garnix.DB qualified as DB
 import Garnix.Duration (addTime, fromMinutes)
+import Garnix.GithubUserToken (githubTokenFor)
 import Garnix.Monad
 import Garnix.Monad.Async
 import Garnix.Prelude
@@ -24,6 +28,7 @@ import Garnix.TestHelpers.Monad
 import Garnix.TestHelpers.WithServer
 import Garnix.Types
 import Network.HTTP.Types (forbidden403)
+import Network.OAuth2 qualified as OA
 import Network.Wreq
 import Servant.Auth.Server (validationKeys)
 import Servant.Auth.Server.Internal.JWT (makeJWT)
@@ -31,7 +36,10 @@ import Test.Hspec
 import Web.Cookie (parseSetCookie, setCookieName, setCookieValue)
 
 spec :: Spec
-spec = inM $ beforeM_ truncateDBM $ aroundM_ suppressLogs $ do
+spec = oauthSpec >> serverSpec
+
+serverSpec :: Spec
+serverSpec = inM $ beforeM_ truncateDBM $ aroundM_ suppressLogs $ do
   describe "/api/auth/jwt" $ do
     let encodeAuthHeader :: Text -> Text -> Text
         encodeAuthHeader username password = cs $ "Basic " <> Base64.encode (cs username <> ":" <> cs password)
@@ -226,3 +234,136 @@ spec = inM $ beforeM_ truncateDBM $ aroundM_ suppressLogs $ do
         claimsSet <- verifyAt jwt now
         claimsSet `shouldSatisfyM` isRight
         verifyAt jwt (addUTCTime 1 $ addTime configuredLifetime now) `shouldReturnM` Left JWTExpired
+
+  describe "logging in through another forge" $ do
+    let otherForge = ForgeSlug "git.example"
+        otherForgeCredentials =
+          GhUserCredentials
+            { _ghUserCredentialsAccessToken = "other-forge-token",
+              _ghUserCredentialsAccessTokenExpiresAt = Nothing,
+              _ghUserCredentialsRefreshToken = Nothing,
+              _ghUserCredentialsRefreshTokenExpiresAt = Nothing
+            }
+        -- A forge whose OAuth app hands out a token that belongs to "alice".
+        fakeForge =
+          ForgeInstance
+            { _forgeInstanceConfig =
+                ForgeConfig
+                  { _forgeConfigSlug = otherForge,
+                    _forgeConfigKind = GiteaForgeKind,
+                    _forgeConfigWebUrl = "https://git.example",
+                    _forgeConfigApiUrl = "https://git.example/api/v1",
+                    _forgeConfigWebhookSecret = "other-webhook-secret",
+                    _forgeConfigOAuthClientId = "other-client-id",
+                    _forgeConfigOAuthClientSecret = "other-client-secret",
+                    _forgeConfigApiToken = Nothing,
+                    _forgeConfigAdmins = ["alice"]
+                  },
+              _forgeInstanceForge =
+                githubForgeApi
+                  { _forgeExchangeOauthCode = \_ code ->
+                      if code == OAuthCode "other-forge-code"
+                        then pure otherForgeCredentials
+                        else throw Unauthorized,
+                    _forgeGetCurrentUser = \token ->
+                      if token == "other-forge-token"
+                        then pure ("alice", Email "alice@git.example")
+                        else throw Unauthorized
+                  }
+            }
+        withOtherForge :: M a -> M a
+        withOtherForge = local (#forges %~ Map.insert otherForge fakeForge)
+        finishSignupBody =
+          Aeson.object
+            [ "email" Aeson..= ("alice@git.example" :: Text),
+              "subscription_type" Aeson..= ("free" :: Text),
+              "agree_to_emails" Aeson..= False
+            ]
+
+    it "links to the forge's own OAuth app" $ withOtherForge $ withServer $ \server -> do
+      res <- assert200 $ server.get "/api/auth/git.example/login"
+      let link = res ^?! responseBody . key "github" . _String
+      ("https://git.example/login/oauth/authorize?" `T.isPrefixOf` link) `shouldBeM` True
+      ("client_id=other-client-id" `T.isInfixOf` link) `shouldBeM` True
+
+    it "signs up an account on that forge, apart from the same login on github" $ withOtherForge $ withServer $ \server -> do
+      githubAlice <- DB.newUser (ForgeLogin githubForge "alice") (Email "alice@github.example") FreeSubscription True
+      fill <- assert200 $ server.get "/api/auth/git.example/signup/fill?code=other-forge-code"
+      (fill ^? responseBody . key "exists" . _Bool) `shouldBeM` Just False
+      (fill ^? responseBody . key "forge" . _String) `shouldBeM` Just "git.example"
+      _ <- assert200 $ server.post "/api/auth/git.example/signup" finishSignupBody
+      user <- DB.getUser (ForgeLogin otherForge "alice")
+      (user ^. id == githubAlice ^. id) `shouldBeM` False
+      (user ^. subscriptionType) `shouldBeM` Admin
+      githubTokenFor user `shouldReturnM` GhToken "other-forge-token"
+      DB.getUser (ForgeLogin githubForge "alice") `shouldReturnM` githubAlice
+      whoami <- assert200 $ server.get "/api/whoami"
+      (whoami ^? responseBody . key "username" . _String) `shouldBeM` Just "alice"
+      (whoami ^? responseBody . key "forge" . _String) `shouldBeM` Just "git.example"
+
+    it "signs up with the email an account on github already uses" $ withOtherForge $ withServer $ \server -> do
+      githubAlice <- DB.newUser (ForgeLogin githubForge "alice") (Email "alice@git.example") FreeSubscription True
+      _ <- assert200 $ server.get "/api/auth/git.example/signup/fill?code=other-forge-code"
+      _ <- assert200 $ server.post "/api/auth/git.example/signup" finishSignupBody
+      user <- DB.getUser (ForgeLogin otherForge "alice")
+      (user ^. email) `shouldBeM` Email "alice@git.example"
+      (user ^. id == githubAlice ^. id) `shouldBeM` False
+
+    it "logs an existing account of that forge in" $ withOtherForge $ withServer $ \server -> do
+      user <- DB.newUser (ForgeLogin otherForge "alice") (Email "alice@git.example") FreeSubscription True
+      _ <- assert200 $ server.get "/api/auth/git.example/login/cb?code=other-forge-code"
+      githubTokenFor user `shouldReturnM` GhToken "other-forge-token"
+      whoami <- assert200 $ server.get "/api/whoami"
+      (whoami ^? responseBody . key "username" . _String) `shouldBeM` Just "alice"
+      (whoami ^? responseBody . key "forge" . _String) `shouldBeM` Just "git.example"
+
+    it "does not log the same login on github in" $ withOtherForge $ withServer $ \server -> do
+      void $ DB.newUser (ForgeLogin githubForge "alice") (Email "alice@github.example") FreeSubscription True
+      res <- server.get "/api/auth/git.example/login/cb?code=other-forge-code"
+      (res ^. responseStatus . Network.Wreq.statusCode) `shouldBeM` 404
+      (res ^? responseBody . key "message" . _String) `shouldBeM` Just "No user with github login alice could be found"
+
+    it "answers 404 for a slug that names no forge" $ withServer $ \server -> do
+      forM_ ["/api/auth/nowhere/login", "/api/auth/nowhere/login/cb?code=c", "/api/auth/nowhere/signup", "/api/auth/nowhere/signup/fill?code=c"] $ \path -> do
+        res <- server.get path
+        (path, res ^. responseStatus . Network.Wreq.statusCode) `shouldBeM` (path, 404)
+
+oauthSpec :: Spec
+oauthSpec = do
+  let gitExample = ForgeSlug "git.example"
+
+  describe "oauthCallbackPath" $ do
+    it "keeps the callbacks GitHub's OAuth app is registered with" $ do
+      oauthCallbackPath githubForge LoginFlow `shouldBe` "login/cb"
+      oauthCallbackPath githubForge SignupFlow `shouldBe` "signup/fill"
+
+    it "calls any other forge back under its slug" $ do
+      oauthCallbackPath gitExample LoginFlow `shouldBe` "auth/git.example/login/cb"
+      oauthCallbackPath gitExample SignupFlow `shouldBe` "auth/git.example/signup/fill"
+
+  describe "forgeOAuth2" $ do
+    it "points at the forge's web host and calls back to garnix" $ do
+      let config' =
+            ForgeConfig
+              { _forgeConfigSlug = gitExample,
+                _forgeConfigKind = GiteaForgeKind,
+                _forgeConfigWebUrl = "https://git.example",
+                _forgeConfigApiUrl = "https://git.example/api/v1",
+                _forgeConfigWebhookSecret = "webhook-secret",
+                _forgeConfigOAuthClientId = "client-id",
+                _forgeConfigOAuthClientSecret = "client-secret",
+                _forgeConfigApiToken = Nothing,
+                _forgeConfigAdmins = []
+              }
+          oauth = forgeOAuth2 ("https://garnix.example/" <>) gitExample config' SignupFlow
+      OA.oauthClientId oauth `shouldBe` "client-id"
+      OA.oauthClientSecret oauth `shouldBe` "client-secret"
+      OA.oauthOAuthorizeEndpoint oauth `shouldBe` "https://git.example/login/oauth/authorize"
+      OA.oauthAccessTokenEndpoint oauth `shouldBe` "https://git.example/login/oauth/access_token"
+      OA.oauthCallback oauth `shouldBe` "https://garnix.example/auth/git.example/signup/fill"
+
+  describe "subscriptionFor" $ do
+    it "makes the instance's listed logins admins and everyone else free" $ do
+      subscriptionFor ["root", "alice"] "alice" `shouldBe` Admin
+      subscriptionFor ["root", "alice"] "bob" `shouldBe` FreeSubscription
+      subscriptionFor [] "alice" `shouldBe` FreeSubscription

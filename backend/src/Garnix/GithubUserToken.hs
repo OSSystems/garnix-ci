@@ -23,7 +23,7 @@ githubTokenFor user = do
   stored <- credentialsOf (user ^. id)
   now <- liftIO getCurrentTime
   if isRunningOut now stored
-    then renewRunningOutToken (user ^. id)
+    then renewRunningOutToken user
     else GhToken <$> decryptSecret (stored ^. accessToken)
 
 withGithubUserToken :: (HasCallStack) => User -> (GhToken -> M a) -> M a
@@ -34,7 +34,7 @@ withGithubUserToken user action = do
     Right a -> pure a
     Left e | err e == GithubUserTokenRejected -> do
       log Notice "github rejected the stored user token, renewing it"
-      renewRejectedToken (user ^. id) token >>= action
+      renewRejectedToken user token >>= action
     Left e -> throwError e
 
 credentialsOf :: UserId -> M (GhUserCredentials EncryptedText)
@@ -46,18 +46,18 @@ isRunningOut now credentials = case credentials ^. accessTokenExpiresAt of
   Nothing -> False
   Just expiresAt -> expiresAt <= addTime renewalLeeway now
 
-renewRunningOutToken :: UserId -> M GhToken
-renewRunningOutToken userId = withCredentialsLock userId $ \stored -> do
+renewRunningOutToken :: User -> M GhToken
+renewRunningOutToken user = withCredentialsLock (user ^. id) $ \stored -> do
   now <- liftIO getCurrentTime
   if isRunningOut now stored
-    then renew userId stored
+    then renew user stored
     else GhToken <$> decryptSecret (stored ^. accessToken)
 
-renewRejectedToken :: UserId -> GhToken -> M GhToken
-renewRejectedToken userId rejected = withCredentialsLock userId $ \stored -> do
+renewRejectedToken :: User -> GhToken -> M GhToken
+renewRejectedToken user rejected = withCredentialsLock (user ^. id) $ \stored -> do
   current <- GhToken <$> decryptSecret (stored ^. accessToken)
   if current == rejected
-    then renew userId stored
+    then renew user stored
     else pure current
 
 withCredentialsLock :: UserId -> (GhUserCredentials EncryptedText -> M GhToken) -> M GhToken
@@ -66,15 +66,16 @@ withCredentialsLock userId action =
     stored <- DB.lockGithubUserCredentials userId >>= maybe (throw GithubSessionExpired) pure
     action stored
 
-renew :: UserId -> GhUserCredentials EncryptedText -> M GhToken
-renew userId stored = do
+-- | Renewed by the forge that issued the credentials: the user's own.
+renew :: User -> GhUserCredentials EncryptedText -> M GhToken
+renew user stored = do
   now <- liftIO getCurrentTime
   encryptedRefreshToken <- maybe (throw GithubSessionExpired) pure $ stored ^. refreshToken
   case stored ^. refreshTokenExpiresAt of
     Just expiresAt | expiresAt <= now -> throw GithubSessionExpired
     _ -> pure ()
-  renewed <- refreshUserCredentials githubForge =<< decryptSecret encryptedRefreshToken
-  storeCredentialsFor userId renewed
+  renewed <- refreshUserCredentials (user ^. forge) =<< decryptSecret encryptedRefreshToken
+  storeCredentialsFor (user ^. id) renewed
   pure $ GhToken $ renewed ^. accessToken
 
 endSessionOnRefusal :: UserId -> M a -> M a
