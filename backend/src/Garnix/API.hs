@@ -11,6 +11,7 @@ import Garnix.API.Cache
 import Garnix.API.Commits
 import Garnix.API.ConfigSchema (garnixConfigJsonSchema)
 import Garnix.API.Dev (DevAPI, devAPI)
+import Garnix.API.ForgeWebhooks (ForgeWebhookAPI, forgeWebhookAPI)
 import Garnix.API.GhWebhooks
 import Garnix.API.Health
 import Garnix.API.Hosts (HostsAPI, hostsAPI)
@@ -37,6 +38,8 @@ data WholeAPI r = WholeAPI
           :> "events"
           :> "github"
           :> ToServantApi GhWebhookAPI,
+    -- | Webhooks of the forge instances in @GARNIX_FORGES_FILE@.
+    forgeEvents :: r :- "api" :> "forges" :> ForgeWebhookAPI,
     account :: r :- "api" :> "account" :> Auth '[JWT, Cookie] AuthJwtPayload :> ToServantApi AccountAPI,
     build :: r :- "api" :> "build" :> Auth '[JWT, Cookie] AuthJwtPayload :> ToServantApi BuildAPI,
     commit :: r :- "api" :> "commits" :> Auth '[JWT, Cookie] AuthJwtPayload :> ToServantApi CommitAPI,
@@ -97,6 +100,7 @@ wholeAPI :: WholeAPI (AsServerT M)
 wholeAPI =
   WholeAPI
     { events = toServant ghWebhookAPI,
+      forgeEvents = forgeWebhookAPI,
       account = toServant . accountAPI,
       dev = devAPI,
       login = toServant (loginAPI githubForge),

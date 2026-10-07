@@ -1,15 +1,23 @@
 module Garnix.Forge.GiteaSpec (spec) where
 
 import Control.Concurrent (modifyMVar, modifyMVar_, newMVar, readMVar)
+import Crypto.Hash (Digest, SHA256)
+import Crypto.MAC.HMAC (HMAC, hmac, hmacGetDigest)
 import Data.Aeson (Value (..), decode, encode, object, (.=))
 import Data.Aeson.Lens (key, _String)
+import Data.ByteString.Lazy qualified as BSL
 import Data.Map.Strict qualified as Map
 import Data.Text qualified as T
 import Data.Text.Encoding qualified as T
+import Data.Text.IO qualified as T
+import Garnix.Build.Helpers (withInternalCacheToken)
 import Garnix.Forge.Gitea
+import Garnix.Hosting.Deploy (deployerGithubKeys)
 import Garnix.Monad
+import Garnix.NixConfig (getNetRcFileSetting)
 import Garnix.Prelude
 import Garnix.TestHelpers.Monad
+import Garnix.TestHelpers.WithServer qualified as WithServer
 import Garnix.Types hiding (body)
 import Network.HTTP.Types (hAuthorization, status200, status201, status404)
 import Network.HTTP.Types qualified as HTTP
@@ -110,7 +118,9 @@ notFound :: (HTTP.Status, Value)
 notFound = (status404, object ["message" .= ("not found" :: Text)])
 
 spec :: Spec
-spec = clientSpec
+spec = do
+  clientSpec
+  webhookSpec
 
 -- | The API client.
 clientSpec :: Spec
@@ -330,6 +340,71 @@ clientSpec = do
           withInstance config $ getCurrentUser (config ^. slug) "user-token"
         user `shouldBeM` ("alice", Email "alice@example.com")
         map authorization received `shouldBeM` [Just "token user-token"]
+
+-- | Builds triggered by an instance's webhooks.
+webhookSpec :: Spec
+webhookSpec = inM $ aroundM_ suppressLogsWhenPassing $ do
+  describe "builds requested from an instance" $ do
+    let netRcOf = view #userNixConfig >>= traverse (liftIO . T.readFile . getNetRcFile) . getNetRcFileSetting
+
+    it "get a cache token of their own, apart from the GitHub user with the same login" $ do
+      netRc <- withInternalCacheToken (ForgeLogin githubForge "alice") netRcOf
+      fmap ("machine cache.garnix.io\nlogin alice\n" `T.isInfixOf`) netRc `shouldBeM` Just True
+      fromInstance <- withInternalCacheToken (ForgeLogin (ForgeSlug "git.example") "alice") netRcOf
+      fmap ("machine cache.garnix.io\nlogin alice@git.example\n" `T.isInfixOf`) fromInstance `shouldBeM` Just True
+      let password = fmap (filter ("password " `T.isPrefixOf`) . T.lines)
+      (password fromInstance /= password netRc) `shouldBeM` True
+
+    it "authorize no deployer GitHub keys, as the GitHub account of the same login is somebody else" $ do
+      deployerGithubKeys (ForgeLogin githubForge "alice") `shouldBeM` Just "alice"
+      deployerGithubKeys (ForgeLogin (ForgeSlug "git.example") "alice") `shouldBeM` Nothing
+
+  describe "the webhook route" $ do
+    let post' config headers payload =
+          withInstance config $ WithServer.withServer $ \server ->
+            WithServer.postWithHeaders server ("/api/forges/" <> cs (getForgeSlug $ config ^. slug) <> "/webhook") headers payload
+        signed payload = cs (show (hmacHex "webhook-secret" (encode payload)))
+        pushPayload :: Value
+        pushPayload =
+          object
+            [ "ref" .= ("refs/heads/main" :: Text),
+              "after" .= ("2eba238e33607c1fa49253182e9fff42baafa1eb" :: Text),
+              "repository" .= object ["name" .= ("app" :: Text), "private" .= True, "full_name" .= ("acme/app" :: Text), "owner" .= object ["login" .= ("acme" :: Text)]],
+              "sender" .= object ["login" .= ("alice" :: Text)]
+            ]
+
+    it "accepts a correctly signed delivery" $ do
+      -- The bot cannot push to the repository, so the push is not built;
+      -- the delivery is still accepted.
+      (response, received) <- withFakeGitea (\_ _ _ -> (status200, repoAnswer False)) $ \config ->
+        post' config [("X-Gitea-Event", "push"), ("X-Gitea-Signature", signed pushPayload)] pushPayload
+      response `WithServer.shouldHaveStatusCode` 200
+      map path received `shouldBeM` ["/api/v1/repos/acme/app"]
+
+    it "accepts Forgejo's headers" $ do
+      (response, _) <- withFakeGitea (\_ _ _ -> (status200, repoAnswer False)) $ \config ->
+        post' config [("X-Forgejo-Event", "push"), ("X-Forgejo-Signature", signed pushPayload)] pushPayload
+      response `WithServer.shouldHaveStatusCode` 200
+
+    it "rejects a delivery with a wrong signature" $ do
+      (response, received) <- withFakeGitea (\_ _ _ -> (status200, repoAnswer True)) $ \config ->
+        post' config [("X-Gitea-Event", "push"), ("X-Gitea-Signature", cs (T.replicate 64 "0"))] pushPayload
+      response `WithServer.shouldHaveStatusCode` 401
+      length received `shouldBeM` 0
+
+    it "rejects a delivery without a signature" $ do
+      (response, received) <- withFakeGitea (\_ _ _ -> (status200, repoAnswer True)) $ \config ->
+        post' config [("X-Gitea-Event", "push")] pushPayload
+      response `WithServer.shouldHaveStatusCode` 401
+      length received `shouldBeM` 0
+
+    it "answers 404 for an unknown forge" $ do
+      response <- WithServer.withServer $ \server ->
+        WithServer.postWithHeaders server "/api/forges/nowhere/webhook" [("X-Gitea-Event", "push")] pushPayload
+      response `WithServer.shouldHaveStatusCode` 404
+  where
+    hmacHex :: StrictByteString -> LazyByteString -> Digest SHA256
+    hmacHex secret payload = hmacGetDigest (hmac secret (BSL.toStrict payload) :: HMAC SHA256)
 
 commitInfoOn :: RepoId -> Maybe PrFromFork -> CommitInfo
 commitInfoOn repo' fork =

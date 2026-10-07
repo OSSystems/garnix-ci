@@ -41,6 +41,7 @@ library
       Garnix.API.Commits
       Garnix.API.ConfigSchema
       Garnix.API.Dev
+      Garnix.API.ForgeWebhooks
       Garnix.API.GhWebhooks
       Garnix.API.Health
       Garnix.API.Hosts
@@ -75,6 +76,7 @@ library
       Garnix.FlakeInputAuthorization
       Garnix.Forge.Config
       Garnix.Forge.Gitea
+      Garnix.Forge.Gitea.Webhook
       Garnix.GetAttributes
       Garnix.GithubInterface
       Garnix.GithubInterface.Types
@@ -748,6 +750,7 @@ test-suite spec
       Garnix.ExpiringCacheSpec
       Garnix.FlakeInputAuthorizationSpec
       Garnix.Forge.ConfigSpec
+      Garnix.Forge.Gitea.WebhookSpec
       Garnix.Forge.GiteaSpec
       Garnix.GetAttributesSpec
       Garnix.GithubInterfaceSpec
@@ -806,6 +809,7 @@ test-suite spec
       Garnix.API.Commits
       Garnix.API.ConfigSchema
       Garnix.API.Dev
+      Garnix.API.ForgeWebhooks
       Garnix.API.GhWebhooks
       Garnix.API.Health
       Garnix.API.Hosts
@@ -840,6 +844,7 @@ test-suite spec
       Garnix.FlakeInputAuthorization
       Garnix.Forge.Config
       Garnix.Forge.Gitea
+      Garnix.Forge.Gitea.Webhook
       Garnix.GetAttributes
       Garnix.GithubInterface
       Garnix.GithubInterface.Types
