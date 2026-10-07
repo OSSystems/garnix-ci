@@ -1,6 +1,7 @@
 module Garnix.API where
 
 import Autodocodec.Schema (JSONSchema)
+import Data.Map.Strict qualified as Map
 import Data.Text qualified as T
 import Garnix.API.Account
 import Garnix.API.Auth
@@ -56,6 +57,7 @@ data WholeAPI r = WholeAPI
     config :: r :- "api" :> "config" :> Get '[JSON] FrontendConfig,
     badges :: r :- "api" :> "badges" :> Capture "owner" GhRepoOwner :> Capture "repo" GhRepoName :> QueryParam "branch" Branch :> Get '[JSON] Badge,
     forgeBadges :: r :- "api" :> "badges" :> Capture "forge" ForgeSlug :> Capture "owner" GhRepoOwner :> Capture "repo" GhRepoName :> QueryParam "branch" Branch :> Get '[JSON] Badge,
+    forges :: r :- "api" :> "forges" :> Get '[JSON] [ForgeSummary],
     waitlist :: r :- "api" :> "waitlist" :> ReqBody '[JSON] Email :> Post '[JSON] (),
     cache :: r :- "api" :> "cache" :> ToServantApi CacheAPI,
     garnixConfigSchema :: r :- "api" :> "garnix-config-schema.json" :> Get '[JSON] JSONSchema,
@@ -107,6 +109,7 @@ wholeAPI =
       modules = toServant . modulesAPI,
       badges = \owner name -> badgesAPI (RepoId githubForge owner name),
       forgeBadges = \slug owner name branch' -> githubRepoIdFromRoute slug owner name >>= \repo -> badgesAPI repo branch',
+      forges = forgesAPI,
       waitlist = waitlistAPI,
       cache = toServant cacheAPI,
       garnixConfigSchema = pure garnixConfigJsonSchema,
@@ -118,6 +121,33 @@ getConfig :: M FrontendConfig
 getConfig = do
   ghAppName <- view #githubAppName
   pure $ FrontendConfig {_frontendConfigGithubAppName = ghAppName}
+
+-- | A forge instance as the frontend sees it: enough to build URLs and links,
+-- none of its secrets.
+data ForgeSummary = ForgeSummary
+  { _forgeSummarySlug :: ForgeSlug,
+    _forgeSummaryKind :: Text,
+    _forgeSummaryWebUrl :: Text
+  }
+  deriving stock (Eq, Show, Generic)
+
+instance ToJSON ForgeSummary where
+  toEncoding = ourToEncoding
+  toJSON = ourToJSON
+
+forgesAPI :: M [ForgeSummary]
+forgesAPI = do
+  configured <- view #forges
+  pure $ map (summarize . _forgeInstanceConfig) $ Map.elems configured
+  where
+    summarize config =
+      ForgeSummary
+        { _forgeSummarySlug = _forgeConfigSlug config,
+          _forgeSummaryKind = case _forgeConfigKind config of
+            GithubForgeKind -> "github"
+            GiteaForgeKind -> "gitea",
+          _forgeSummaryWebUrl = _forgeConfigWebUrl config
+        }
 
 waitlistAPI :: Email -> M ()
 waitlistAPI email = do
