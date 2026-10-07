@@ -39,21 +39,23 @@ mkGithubReporter repoInfo commit =
               modifyMVar_ lastSentLogsMVar $ const $ pure $ Just (status, logs)
               let report = mkReport name url commit (fromMaybe "" logs) status
               void $ ignoringAllErrors $ updateBuildReport ghRunId report repoInfo
-      debouncedSendLogs <- do
-        debounceDuration <- view #githubLogDebounceDuration
-        if debounceDuration == emptyDuration
-          then pure sendLogs
-          else do
-            env <- ask
-            liftIO
-              <$> liftIO
-                ( mkDebounce
-                    defaultDebounceSettings
-                      { debounceAction = void $ runM env sendLogs,
-                        debounceFreq = toMicroseconds debounceDuration,
-                        debounceEdge = trailingEdge
-                      }
-                )
+      checkLogs <- view #githubCheckLogs
+      debounceDuration <- view #githubLogDebounceDuration
+      debouncedSendLogs <- case checkLogs of
+        GithubCheckLogsFinal -> pure $ pure ()
+        GithubCheckLogsLive
+          | debounceDuration == emptyDuration -> pure sendLogs
+          | otherwise -> do
+              env <- ask
+              liftIO
+                <$> liftIO
+                  ( mkDebounce
+                      defaultDebounceSettings
+                        { debounceAction = void $ runM env sendLogs,
+                          debounceFreq = toMicroseconds debounceDuration,
+                          debounceEdge = trailingEdge
+                        }
+                  )
       pure
         $ RunReporter
           { reportLogs = \(LogLine package _phase log) -> do
