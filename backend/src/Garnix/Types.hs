@@ -1783,3 +1783,11 @@ commitSummaryRepoId c = RepoId (_commitSummaryForge c) (_commitSummaryRepoOwner 
 userForgeLogin :: User -> ForgeLogin
 userForgeLogin u = ForgeLogin (_userForge u) (_userGithubLogin u)
 
+-- | The login an account has on a repository's forge, if it belongs there. A
+-- login, and the admin rights or collaborations that come with it, only mean
+-- something on its own forge: the same name on another forge is somebody else.
+loginOnForgeOf :: RepoId -> ForgeLogin -> Maybe GhLogin
+loginOnForgeOf repo (ForgeLogin slug login)
+  | slug == _repoIdForge repo = Just login
+  | otherwise = Nothing
+

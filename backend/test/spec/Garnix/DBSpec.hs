@@ -4,6 +4,7 @@ import Control.Concurrent.Async.Lifted (replicateConcurrently)
 import Control.Exception qualified as E
 import Control.Monad.Trans.Control (liftBaseDiscard)
 import Data.Aeson.Lens (key, _String)
+import Data.Map.Strict qualified as Map
 import Data.Set qualified as Set
 import Data.Text qualified as T
 import Database.PostgreSQL.Typed
@@ -14,9 +15,10 @@ import Garnix.API.Builds (getBuild')
 import Garnix.API.Commits (GetCommit (..), getSingleCommit)
 import Garnix.API.Keys (getActionPublicKey, getRepoPublicKey)
 import Garnix.API.Runs (toRunSummary)
+import Garnix.Access (canCancelBuild, hasAccessToRepo)
 import Garnix.DB qualified as DB
 import Garnix.Duration (fromDays, fromHours, fromMinutes, fromSeconds)
-import Garnix.Monad (M, throw)
+import Garnix.Monad (Forge (..), ForgeInstance (..), M, githubForgeInstance, throw)
 import Garnix.Nix.Types (DrvPath (..), StoreHash (..), StorePath (..))
 import Garnix.Prelude
 import Garnix.TestHelpers (testBuild, truncateDBM)
@@ -518,6 +520,29 @@ spec = do
       (onOther ^. id) `shouldNotBeM` (onGithub ^. id)
       again <- try $ DB.newUser (ForgeLogin otherForge "alice2") shared FreeSubscription True
       liftIO $ (again :: Either ErrorWithContext User) `shouldSatisfy` isLeft
+
+    it "only count as admins on their own forge" $ do
+      -- A forge that knows no repository, so access falls through to the
+      -- collaborator list, which is empty.
+      let base = githubForgeInstance "other-webhook-secret" "other-client-id" "other-client-secret" Nothing
+          repoLess = base {_forgeInstanceForge = (_forgeInstanceForge base) {_forgeResolveCredentials = \_ -> pure Nothing}}
+      local (#forges %~ Map.insert otherForge repoLess) $ do
+        githubAdmin <- DB.newUser (ForgeLogin githubForge "root") (Email "root@github.example") Admin True
+        otherAdmin <- DB.newUser (ForgeLogin otherForge "root") (Email "root@other.example") Admin True
+        let repo = RepoId otherForge "acme" "site"
+            private = RepoIsPublic False
+        canCancelBuild (Just githubAdmin) private "someone" repo `shouldReturnM` False
+        hasAccessToRepo (Just githubAdmin) private repo `shouldReturnM` False
+        canCancelBuild (Just otherAdmin) private "someone" repo `shouldReturnM` True
+        hasAccessToRepo (Just otherAdmin) private repo `shouldReturnM` True
+        drv <- ("/nix/store/" <>) . cs <$> randomBase64 8
+        build <-
+          testBuild
+            $ (forge .~ otherForge)
+            . (repoIsPublic .~ private)
+            . (drvPath ?~ drv)
+        DB.getOriginalBuildForDrvPath (Just githubAdmin) drv `shouldReturnM` Nothing
+        (fmap _originalBuildId <$> DB.getOriginalBuildForDrvPath (Just otherAdmin) drv) `shouldReturnM` Just (build ^. id)
 
     it "are distinct accounts" $ do
       onGithub <- DB.newUser (ForgeLogin githubForge "alice") (Email "alice@github.example") FreeSubscription True

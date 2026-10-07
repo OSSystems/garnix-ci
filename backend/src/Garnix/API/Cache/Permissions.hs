@@ -1,5 +1,8 @@
 module Garnix.API.Cache.Permissions
   ( Permission (..),
+    PermissionDecision (..),
+    decidePermission,
+    collaboratorPermission,
     getRepoPermissions,
     __getRepoPermissionsCache,
   )
@@ -17,9 +20,34 @@ data Permission
   | Disallowed
   deriving (Eq, Ord, Show)
 
-getRepoPermissions :: (HasCallStack) => Maybe GhLogin -> RepoId -> M Permission
-getRepoPermissions mUser repoId'@(RepoId _forge owner repo) =
-  lookupCache __getRepoPermissionsCache (mUser, owner, repo)
+-- | What a repository's publicity and the requester decide on their own, with
+-- the severity and reason to log. A private repository requested by an account
+-- on its forge still needs that login checked against the collaborators.
+data PermissionDecision
+  = Decided Permission Severity Text
+  | CheckCollaborator GhLogin
+  deriving (Eq, Show)
+
+-- | A user only counts as a collaborator on a repository of their own forge:
+-- the same login on another forge is somebody else.
+decidePermission :: RepoId -> Maybe ForgeLogin -> RepoPublicity -> PermissionDecision
+decidePermission repoId' mUser publicity = case (publicity, mUser) of
+  (RepoIsPublic True, _) -> Decided Allowed Informational "repo is public, allowing access"
+  (RepoIsPublic False, Nothing) -> Decided Disallowed Informational "repo is private and no authentication claim"
+  (RepoIsPublic False, Just forgeLogin') -> case loginOnForgeOf repoId' forgeLogin' of
+    Nothing -> Decided Disallowed Notice "Access claimed by an account on another forge. Blocking."
+    Just user -> CheckCollaborator user
+
+collaboratorPermission :: GhLogin -> GhCollaborators -> (Permission, Severity, Text)
+collaboratorPermission user = \case
+  RepoNotFound -> (Disallowed, Warning, "Repository not found, denying access")
+  GhCollaborators collaborators
+    | user `elem` collaborators -> (Allowed, Informational, "User is a collaborator to the repository, allowing")
+    | otherwise -> (Disallowed, Notice, "Access to disallowed resource. Blocking.")
+
+getRepoPermissions :: (HasCallStack) => Maybe ForgeLogin -> RepoId -> M Permission
+getRepoPermissions mUser repoId'@(RepoId _ owner repo) =
+  lookupCache __getRepoPermissionsCache (mUser, repoId')
     $ withTextSpans
       [ ("function", "Garnix.API.Cache.Permissions.getRepoPermission"),
         ("repo_perm_mUser", show mUser),
@@ -35,35 +63,23 @@ getRepoPermissions mUser repoId'@(RepoId _forge owner repo) =
         log Informational "Cache.getRepoPermissions: got garnixInstallationId"
         repoPublicity <- try $ getRepoPublicity credentials' repoId'
         log Informational $ "repoPublicity: " <> show repoPublicity
-        case (repoPublicity, mUser) of
-          (Left err, _) -> do
+        case decidePermission repoId' mUser <$> repoPublicity of
+          Left err -> do
             log Informational $ "Error fetching repo publicity, disallowing access: " <> show err
             pure Disallowed
-          (Right (RepoIsPublic True), _) -> do
-            log Informational "repo is public, allowing access"
-            pure Allowed
-          (Right (RepoIsPublic False), Nothing) -> do
-            log Informational "repo is private and no authentication claim"
-            pure Disallowed
-          (Right (RepoIsPublic False), Just user) -> do
-            collaborators <- getRepoCollaborators credentials' repoId'
-            case collaborators of
-              RepoNotFound -> do
-                log Warning "Repository not found, denying access"
-                pure Disallowed
-              GhCollaborators collaborators ->
-                if user `elem` collaborators
-                  then do
-                    log Informational "User is a collaborator to the repository, allowing"
-                    pure Allowed
-                  else do
-                    log Notice "Access to disallowed resource. Blocking."
-                    pure Disallowed
+          Right (Decided permission severity reason) -> do
+            log severity reason
+            pure permission
+          Right (CheckCollaborator user) -> do
+            (permission, severity, reason) <-
+              collaboratorPermission user <$> getRepoCollaborators credentials' repoId'
+            log severity reason
+            pure permission
 
-type GithubPermissionCache = ExpiringCache (Maybe GhLogin, GhRepoOwner, GhRepoName) Permission
+type RepoPermissionCache = ExpiringCache (Maybe ForgeLogin, RepoId) Permission
 
 {-# NOINLINE __getRepoPermissionsCache #-}
-__getRepoPermissionsCache :: GithubPermissionCache
+__getRepoPermissionsCache :: RepoPermissionCache
 __getRepoPermissionsCache =
   System.IO.Unsafe.unsafePerformIO
     $ mkCache

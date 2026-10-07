@@ -171,7 +171,7 @@ getOriginalBuildForDrvPath user drvPath = do
         FROM builds
         WHERE (
           repo_is_public
-            OR ${isAdmin}
+            OR (${isAdmin} AND forge = ${mForge})
             OR (${mghLogin}::text IS NOT NULL AND req_user = ${mghLogin} AND forge = ${mForge})
         )
         AND already_built = false
