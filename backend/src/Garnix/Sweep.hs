@@ -35,7 +35,7 @@ sweepBuilds live = do
   builds <- DB.getOrphanedBuilds live
   unless (null builds) $ do
     log Notice $ "sweepOrphans: " <> show (length builds) <> " abandoned build(s)"
-    forM_ (groupOn (\build -> RepoId githubForge (build ^. repoUser) (build ^. repoName)) builds)
+    forM_ (groupOn buildRepoId builds)
       $ \(repo, repoBuilds) ->
         withRepoInfo repo (length repoBuilds) $ \repoInfo -> do
           forM_ repoBuilds $ \build ->
@@ -62,7 +62,7 @@ sweepRuns live = do
   runs <- DB.getOrphanedRuns live
   unless (null runs) $ do
     log Notice $ "sweepOrphans: " <> show (length runs) <> " abandoned run(s)"
-    forM_ (groupOn (\(run, _) -> RepoId githubForge (run ^. repoUser) (run ^. repoName)) runs)
+    forM_ (groupOn (runRepoId . fst) runs)
       $ \(repo, repoRuns) ->
         withRepoInfo repo (length repoRuns) $ \repoInfo ->
           forM_ repoRuns $ \(run, mGhRunId) -> case mGhRunId of

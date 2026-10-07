@@ -55,6 +55,7 @@ spec = inM $ beforeM_ truncateDBM $ aroundM_ suppressLogs $ do
               {
                 username: #{user ^. githubLogin},
                 email: #{user ^. email},
+                forge: "github",
                 is_admin: false
               }
             |]
@@ -154,7 +155,7 @@ spec = inM $ beforeM_ truncateDBM $ aroundM_ suppressLogs $ do
     let sessionUser :: M User
         sessionUser =
           DB.newUser
-            (GhLogin "session-user")
+            (ForgeLogin githubForge (GhLogin "session-user"))
             (Email "session-user@example.com")
             FreeSubscription
             True

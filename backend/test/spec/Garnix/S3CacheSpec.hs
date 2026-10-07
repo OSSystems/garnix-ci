@@ -360,7 +360,7 @@ spec = do
             GH.withLocalRepo ghState "owner" "repo" identity defaultCommitInfo (GH.simpleSetup flake) $ \commitInfo -> do
               resolve =<< Orchestrator.handleCommit mempty True commitInfo
               waitFor (fromSeconds @Int 40) $ do
-                builds <- DB.getBuilds $ User undefined "owner" undefined undefined undefined
+                builds <- DB.getBuilds $ User undefined githubForge "owner" undefined undefined undefined
                 let statuses = Map.fromList $ mapMaybe (\build -> fmap (build ^. package,) (build ^. uploadedToCache)) builds
                 statuses `shouldBeM` Map.fromList [("Build starting", False), ("foo", True)]
 
@@ -379,7 +379,7 @@ spec = do
                   repoDir <> "#foo"
                 ]
             resolve =<< Orchestrator.handleCommit mempty True commitInfo
-            builds <- DB.getBuilds $ User undefined "owner" undefined undefined undefined
+            builds <- DB.getBuilds $ User undefined githubForge "owner" undefined undefined undefined
             let statuses = Map.fromList $ mapMaybe (\build -> fmap (build ^. package,) (build ^. status)) builds
             statuses
               `shouldBeM` ("Build starting" ~> Success)

@@ -121,8 +121,7 @@ commentDeployedUrls commitInfo prId deployed = ignoringAllErrors $ case deployed
   _ -> do
     claimed <-
       DBHosting.claimDeployUrlComment
-        (commitInfo ^. repoInfo . repoId . repoUser)
-        (commitInfo ^. repoInfo . repoId . repoName)
+        (commitInfo ^. repoInfo . repoId)
         prId
     if not claimed
       then log Informational "commentDeployedUrls: already commented on this pull request"
@@ -138,8 +137,7 @@ commentDeployFailed :: CommitInfo -> GhPullRequestId -> Text -> M ()
 commentDeployFailed commitInfo prId reason = ignoringAllErrors $ do
   claimed <-
     DBHosting.claimDeployFailureComment
-      (commitInfo ^. repoInfo . repoId . repoUser)
-      (commitInfo ^. repoInfo . repoId . repoName)
+      (commitInfo ^. repoInfo . repoId)
       prId
       (commitInfo ^. commit)
   if not claimed

@@ -41,6 +41,7 @@ sessionCookieSettings = do
 
 data UserDto = UserDto
   { _userDtoUsername :: GhLogin,
+    _userDtoForge :: ForgeSlug,
     _userDtoEmail :: Email,
     _userDtoIsAdmin :: Bool
   }
@@ -56,6 +57,7 @@ whoAmIAPI (Authenticated ((^. #user) -> user)) = do
     $ Just
     $ UserDto
       (user ^. githubLogin)
+      (user ^. forge)
       (user ^. email)
       (user ^. subscriptionType == Admin)
 whoAmIAPI _ = pure Nothing
@@ -94,7 +96,7 @@ getJwt mAuthHeader authResult = do
           err -> err
       )
       $ DB.getUser
-      $ GhLogin username
+      $ ForgeLogin githubForge (GhLogin username)
   isValid <- isAccessTokenValid (user ^. id) (AccessToken password) (^. #api)
   when (not isValid) $ do
     throw Unauthorized
@@ -218,7 +220,7 @@ loginCallback code = do
   (login', _, credentials) <- callbackHelper githubOauthLogin code
   cookieSettings' <- sessionCookieSettings
   jwtSettings' <- view #jwtSettings
-  user <- DB.getUser login' <?> "calling getUser"
+  user <- DB.getUser (ForgeLogin githubForge login') <?> "calling getUser"
   storeCredentialsFor (user ^. id) credentials <?> "storing the github credentials"
   mApplyCookies <-
     liftIO (acceptLogin cookieSettings' jwtSettings' (WebSession user))
@@ -240,12 +242,13 @@ signupCallback ::
     )
 signupCallback code = do
   (login', email', credentials) <- callbackHelper githubOauthSignup code
-  eUser <- try $ DB.getUser login' <?> "calling getUser"
+  eUser <- try $ DB.getUser (ForgeLogin githubForge login') <?> "calling getUser"
   creatingUser <- case eUser of
     Right _ ->
       pure
         $ CreatingUser
           { _creatingUserExists = True,
+            _creatingUserForge = githubForge,
             _creatingUserGithubLogin = login',
             _creatingUserEmail = email',
             _creatingUserGithubToken = credentials
@@ -254,6 +257,7 @@ signupCallback code = do
       pure
         $ CreatingUser
           { _creatingUserExists = False,
+            _creatingUserForge = githubForge,
             _creatingUserGithubLogin = login',
             _creatingUserEmail = email',
             _creatingUserGithubToken = credentials
@@ -293,7 +297,7 @@ finishSignup (Authenticated cUser) addenda = do
           else FreeSubscription
   user <-
     DB.newUser
-      (cUser ^. githubLogin)
+      (ForgeLogin (cUser ^. forge) (cUser ^. githubLogin))
       (addenda ^. email)
       subType
       (addenda ^. agreeToEmails)

@@ -18,7 +18,7 @@ spec = inM $ beforeM_ truncateDBM $ aroundM_ suppressLogsWhenPassing $ do
   let loggedInUser :: M User
       loggedInUser =
         DB.newUser
-          (GhLogin "token-user")
+          (ForgeLogin githubForge (GhLogin "token-user"))
           (Email "token-user@example.com")
           FreeSubscription
           True
@@ -109,8 +109,7 @@ spec = inM $ beforeM_ truncateDBM $ aroundM_ suppressLogsWhenPassing $ do
       user <- loggedInUser
       now <- liftIO getCurrentTime
       storeCredentialsFor (user ^. id)
-        $ ( credentialsExpiringAt "ghu_old" (Just $ addUTCTime 60 now) "ghr_old"
-          )
+        $ (credentialsExpiringAt "ghu_old" (Just $ addUTCTime 60 now) "ghr_old")
           { _ghUserCredentialsRefreshTokenExpiresAt = Just $ addUTCTime (-60) now
           }
       result <- try $ refusingToRenew $ githubTokenFor user

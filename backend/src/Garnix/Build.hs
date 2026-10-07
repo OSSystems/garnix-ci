@@ -28,7 +28,7 @@ import Garnix.Reporters.OpenSearchReporter (openSearchReporter)
 import Garnix.Types as Types
 import Garnix.YamlConfig (flakeDir)
 
-buildModule :: GhLogin -> ModuleValues.GetRepoAndModuleValues -> M CommitInfo
+buildModule :: ForgeLogin -> ModuleValues.GetRepoAndModuleValues -> M CommitInfo
 buildModule reqUser modules = do
   commitInfo <- Module.getCommitInfo reqUser modules
   let reporter = openSearchReporter <> mkGithubReporter (commitInfo ^. repoInfo) (commitInfo ^. commit)
@@ -73,7 +73,7 @@ rerunBuild reporter build commitInfo = do
     Checkout.runWithCheckout Checkout.remoteWithConfig commitInfo $ \config -> do
       withAuthorization (config ^. flakeDir) repoConfig commitInfo $ do
         reportBuildResult runReporter build'
-        void $ withInternalCacheToken (commitInfo ^. reqUser . ghLogin) $ do
+        void $ withInternalCacheToken (commitInfo ^. reqUser) $ do
           FodCheck.withFodChecker reporter commitInfo $ \fodChecker -> do
             doBuild fodChecker runReporter Webhook (config ^. flakeDir) repoConfig build'
         MetaCheck.update reporter commitInfo

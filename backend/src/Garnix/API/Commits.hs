@@ -1,5 +1,6 @@
 module Garnix.API.Commits where
 
+import Data.Maybe (listToMaybe)
 import Garnix.API.Runs (RunSummary, toRunSummary)
 import Garnix.Access (githubRepoIdFromRoute, hasAccessTo, hasAccessToRepo)
 import Garnix.DB qualified as DB
@@ -71,10 +72,10 @@ getCommitsForUser user = do
 
 getSingleCommit :: Maybe User -> CommitHash -> M GetCommit
 getSingleCommit user' commit = do
-  summary <- DB.getCommitSummary commit
-  hasAccess <- hasAccessTo user' (summary ^. repoIsPublic) (summary ^. reqUser) (RepoId githubForge (summary ^. repoOwner) (summary ^. repoName))
-  when (not hasAccess) $ throw (NoSuchCommit commit)
-  result <- DB.getBuildsAndRunsByCommit (RepoId githubForge (summary ^. repoOwner) (summary ^. repoName)) commit
+  summaries <- DB.getCommitSummaries commit
+  visible <- filterM (\s -> hasAccessTo user' (s ^. repoIsPublic) (s ^. reqUser) (commitSummaryRepoId s)) summaries
+  summary <- maybe (throw $ NoSuchCommit commit) pure (listToMaybe visible)
+  result <- DB.getBuildsAndRunsByCommit (commitSummaryRepoId summary) commit
   pure $ case result of
     CommitEvaluating -> GetCommit summary [] []
     CommitEvaluated _ builds runs ->

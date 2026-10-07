@@ -38,7 +38,7 @@ spec = inM . beforeM_ truncateDBM . aroundM_ suppressLogsWhenPassing . context "
     it "returns the values when they exist" $ withServer $ \server -> do
       user <- server.login
       values <- mkModuleValues ["test-module"]
-      ModuleValues.update (user ^. githubLogin) (values .- #modules)
+      ModuleValues.update (userForgeLogin user) (values .- #modules)
       res <- assert200 $ server.get "/api/modules"
       res ^?! responseBody . _Value `shouldBeM` toJSON values
 
@@ -60,7 +60,7 @@ spec = inM . beforeM_ truncateDBM . aroundM_ suppressLogsWhenPassing . context "
             VALUES
               ('garnix-io', 'test-module-module', 'latest-hash-here', '{}', true, 'test-module')
           |]
-      ModuleValues.update (user ^. githubLogin) (oldVersion .- #modules)
+      ModuleValues.update (userForgeLogin user) (oldVersion .- #modules)
       res <- assert200 $ server.get "/api/modules"
       res ^?! responseBody . _Value `shouldBeM` toJSON oldVersion
 
@@ -116,7 +116,7 @@ spec = inM . beforeM_ truncateDBM . aroundM_ suppressLogsWhenPassing . context "
             VALUES
               ('garnix-io', 'test-module-module', 'latest-hash-here', '{}', true, 'test-module')
           |]
-      ModuleValues.update (user ^. githubLogin) (oldVersion .- #modules)
+      ModuleValues.update (userForgeLogin user) (oldVersion .- #modules)
       res <- assert200 $ server.get "/api/modules/available"
       let expected =
             oldVersion

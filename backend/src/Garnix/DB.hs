@@ -27,8 +27,8 @@ import Garnix.Password
 import Garnix.Prelude
 import Garnix.Types
 
-getUser :: GhLogin -> M User
-getUser ghLogin = do
+getUser :: ForgeLogin -> M User
+getUser (ForgeLogin forge' ghLogin) = do
   res <-
     pgQuery
       [pgSQL|
@@ -38,34 +38,37 @@ getUser ghLogin = do
       subscription_type,
       created_at
     FROM users
-    WHERE github_login = ${ghLogin}
+    WHERE forge = ${forge'}
+      AND github_login = ${ghLogin}
   |]
   case res of
     [] -> throw $ NoSuchUser ghLogin
-    [(id', email', sub', cre')] -> pure $ User id' ghLogin email' sub' cre'
+    [(id', email', sub', cre')] -> pure $ User id' forge' ghLogin email' sub' cre'
     _ -> throw $ OtherError "Got more than 1 user from getUser"
 
-getUserId :: GhLogin -> M UserId
-getUserId ghLogin = do
-  res <- pgQuery [pgSQL| SELECT id FROM users WHERE github_login = ${ghLogin} |]
+getUserId :: ForgeLogin -> M UserId
+getUserId (ForgeLogin forge' ghLogin) = do
+  res <- pgQuery [pgSQL| SELECT id FROM users WHERE forge = ${forge'} AND github_login = ${ghLogin} |]
   case res of
     [] -> throw $ NoSuchUser ghLogin
     [id] -> pure $ UserId id
     _ -> throw $ OtherError "Got more than 1 user from getUserId"
 
-newUser :: GhLogin -> Email -> SubscriptionType -> Bool -> M User
-newUser ghLogin email' sub agreeToEmails' = do
+newUser :: ForgeLogin -> Email -> SubscriptionType -> Bool -> M User
+newUser (ForgeLogin forge' ghLogin) email' sub agreeToEmails' = do
   r <-
     pgQuery
       [pgSQL|
     INSERT INTO users
-      ( github_login,
+      ( forge,
+        github_login,
         email,
         subscription_type,
         agree_to_emails
       )
     VALUES
-      ( ${ghLogin},
+      ( ${forge'},
+        ${ghLogin},
         ${email'},
         ${sub},
         ${agreeToEmails'}
@@ -78,6 +81,7 @@ newUser ghLogin email' sub agreeToEmails' = do
       pure
         $ User
           { _userId = id',
+            _userForge = forge',
             _userGithubLogin = ghLogin,
             _userEmail = email',
             _userSubscriptionType = sub,
@@ -87,7 +91,7 @@ newUser ghLogin email' sub agreeToEmails' = do
     _ -> throw $ OtherError "impossible: more than two users created"
 
 getRepoConfig :: RepoId -> M RepoConfig
-getRepoConfig (RepoId _forge repoOwner repoName) = do
+getRepoConfig (RepoId forge' repoOwner repoName) = do
   configuredEvalMemory <- getConfiguredEvalMemory repoOwner repoName
   repoConfig <-
     map (\(skipInputChecks, evalMemory) -> RepoConfig skipInputChecks (fromMaybe configuredEvalMemory evalMemory))
@@ -97,7 +101,8 @@ getRepoConfig (RepoId _forge repoOwner repoName) = do
             skip_private_inputs_check_for_collaborators,
             max_eval_memory
           FROM repo_config
-          WHERE repo_user = ${repoOwner}
+          WHERE forge = ${forge'}
+            AND repo_user = ${repoOwner}
             AND repo_name = ${repoName}
         |]
   case repoConfig of
@@ -120,6 +125,7 @@ getBuild buildId = do
       [pgSQL|
     SELECT
       id,
+      forge,
       repo_user,
       repo_name,
       pr_from_fork,
@@ -152,6 +158,7 @@ getBuild buildId = do
 getOriginalBuildForDrvPath :: Maybe User -> FilePath -> M (Maybe OriginalBuild)
 getOriginalBuildForDrvPath user drvPath = do
   let mghLogin = user ^? _Just . githubLogin
+      mForge = user ^? _Just . forge
       isAdmin = user ^? _Just . subscriptionType == Just Admin
   res <-
     map (\(id, commit, status) -> OriginalBuild id commit status)
@@ -165,7 +172,7 @@ getOriginalBuildForDrvPath user drvPath = do
         WHERE (
           repo_is_public
             OR ${isAdmin}
-            OR (${mghLogin}::text IS NOT NULL AND req_user = ${mghLogin})
+            OR (${mghLogin}::text IS NOT NULL AND req_user = ${mghLogin} AND forge = ${mForge})
         )
         AND already_built = false
         AND drv_path = ${drvPath}
@@ -185,7 +192,8 @@ makeNewBuildForGithubRunId reqUser ghRunId evalHost = do
       _Build
       [pgSQL|
     INSERT INTO builds
-      ( repo_user,
+      ( forge,
+        repo_user,
         repo_name,
         pr_from_fork,
         branch,
@@ -206,6 +214,7 @@ makeNewBuildForGithubRunId reqUser ghRunId evalHost = do
         eval_host,
         uploaded_to_cache)
       SELECT
+        forge,
         repo_user,
         repo_name,
         pr_from_fork,
@@ -230,6 +239,7 @@ makeNewBuildForGithubRunId reqUser ghRunId evalHost = do
       WHERE github_run_id = ${ghRunId}
     RETURNING
       id,
+      forge,
       repo_user,
       repo_name,
       pr_from_fork,
@@ -262,8 +272,9 @@ getLatestBuildsMatching repoInfo commit = do
   pgQueryPrism
     _Build
     [pgSQL|
-    SELECT DISTINCT ON (repo_user, repo_name, git_commit, package, package_type, system)
+    SELECT DISTINCT ON (forge, repo_user, repo_name, git_commit, package, package_type, system)
       id,
+      forge,
       repo_user,
       repo_name,
       pr_from_fork,
@@ -286,11 +297,12 @@ getLatestBuildsMatching repoInfo commit = do
       uploaded_to_cache,
       already_built
     FROM builds
-    WHERE repo_user = ${repoInfo ^. (repoId . repoUser)}
+    WHERE forge = ${repoInfo ^. (repoId . forge)}
+    AND repo_user = ${repoInfo ^. (repoId . repoUser)}
     AND repo_name = ${repoInfo ^. (repoId . repoName)}
     AND git_commit = ${commit}
     ORDER BY
-      repo_user, repo_name, git_commit, package, package_type, system,
+      forge, repo_user, repo_name, git_commit, package, package_type, system,
       start_time DESC
   |]
 
@@ -301,6 +313,7 @@ getBuilds usr = do
     [pgSQL|
     SELECT
       id,
+      forge,
       repo_user,
       repo_name,
       pr_from_fork,
@@ -323,7 +336,8 @@ getBuilds usr = do
       uploaded_to_cache,
       already_built
     FROM builds
-    WHERE req_user = ${usr ^. githubLogin}
+    WHERE forge = ${usr ^. forge}
+      AND req_user = ${usr ^. githubLogin}
     ORDER BY start_time DESC
     LIMIT 500
   |]
@@ -339,12 +353,13 @@ setBuildUploaded buildId = do
       |]
 
 getLatestBuildsForBranch :: RepoId -> Branch -> M [Build]
-getLatestBuildsForBranch (RepoId _forge owner name) branch = do
+getLatestBuildsForBranch (RepoId forge' owner name) branch = do
   pgQueryPrism
     _Build
     [pgSQL|
     SELECT
       id,
+      forge,
       repo_user,
       repo_name,
       pr_from_fork,
@@ -367,13 +382,15 @@ getLatestBuildsForBranch (RepoId _forge owner name) branch = do
       uploaded_to_cache,
       already_built
     FROM builds
-      WHERE repo_user = ${owner}
+      WHERE forge = ${forge'}
+        AND repo_user = ${owner}
         AND branch = ${branch}
         AND repo_name = ${name}
         AND git_commit = (
           SELECT git_commit
           FROM builds
-          WHERE repo_user = ${owner}
+          WHERE forge = ${forge'}
+            AND repo_user = ${owner}
             AND repo_name = ${name}
             AND branch = ${branch}
             AND package = 'Build starting'
@@ -387,17 +404,19 @@ data RegisterPushResult = NewPush | AlreadyPushed
   deriving stock (Eq, Show, Generic)
 
 registerPush :: RepoId -> CommitHash -> Branch -> M RegisterPushResult
-registerPush (RepoId _forge repoOwner repoName) commit branch = do
+registerPush (RepoId forge' repoOwner repoName) commit branch = do
   pgQuery
     [pgSQL|
       INSERT INTO pushes
-        (repo_user,
+        (forge,
+         repo_user,
          repo_name,
          git_commit,
          branch
         )
       VALUES
-        (${repoOwner},
+        (${forge'},
+         ${repoOwner},
          ${repoName},
          ${commit},
          ${branch}
@@ -411,9 +430,10 @@ registerPush (RepoId _forge repoOwner repoName) commit branch = do
       _ -> throw $ OtherError "Impossible: more than one result"
 
 getCommitsByOwnerAndRepo :: RepoId -> M [CommitSummary]
-getCommitsByOwnerAndRepo (RepoId _forge repoOwner repoName) = do
+getCommitsByOwnerAndRepo (RepoId repoForge repoOwner repoName) = do
   map
-    ( \( repoOwner :: GhRepoOwner,
+    ( \( forge' :: ForgeSlug,
+         repoOwner :: GhRepoOwner,
          repoName :: GhRepoName,
          gitCommit :: CommitHash,
          branch :: Maybe Branch,
@@ -425,11 +445,12 @@ getCommitsByOwnerAndRepo (RepoId _forge repoOwner repoName) = do
          pending :: Int64,
          cancelled :: Int64
          ) ->
-          CommitSummary repoOwner repoName (RepoIsPublic isPublic) gitCommit branch reqUser startTime succeeded failed pending cancelled
+          CommitSummary forge' repoOwner repoName (RepoIsPublic isPublic) gitCommit branch reqUser startTime succeeded failed pending cancelled
     )
     <$> pgQuery
       [pgSQL|!
         SELECT
+          (array_agg(forge))[1],
           (array_agg(repo_user))[1],
           (array_agg(repo_name))[1],
           git_commit,
@@ -443,7 +464,8 @@ getCommitsByOwnerAndRepo (RepoId _forge repoOwner repoName) = do
           COUNT(*) FILTER (WHERE status = 'cancelled') as pending
         FROM (
           SELECT DISTINCT ON (git_commit, package_type, system, package) * FROM builds
-          WHERE repo_user = ${repoOwner}
+          WHERE forge = ${repoForge}
+            AND repo_user = ${repoOwner}
             AND repo_name = ${repoName}
           ORDER BY git_commit, package_type, system, package, start_time DESC
         ) AS sub
@@ -453,18 +475,20 @@ getCommitsByOwnerAndRepo (RepoId _forge repoOwner repoName) = do
       |]
 
 getCommit :: RepoId -> CommitHash -> M (Maybe Commit)
-getCommit (RepoId _forge owner name) commit =
+getCommit (RepoId forge' owner name) commit =
   pgQueryPrism
     _Commit
     [pgSQL|
       SELECT
+        forge,
         repo_user,
         repo_name,
         git_commit,
         status,
         meta_check
       FROM commits
-      WHERE repo_user = ${owner}
+      WHERE forge = ${forge'}
+        AND repo_user = ${owner}
         AND repo_name = ${name}
         AND git_commit = ${commit}
     |]
@@ -474,7 +498,7 @@ getCommit (RepoId _forge owner name) commit =
       _ -> throw $ OtherError "Impossible: more than one result"
 
 newCommit :: RepoId -> CommitHash -> M ()
-newCommit (RepoId _forge owner name) commit = do
+newCommit (RepoId forge' owner name) commit = do
   evalHost <- view #hostname
   evalInstance <- view #evalInstance
   now <- liftIO getCurrentTime
@@ -482,12 +506,12 @@ newCommit (RepoId _forge owner name) commit = do
     $ pgExec
       [pgSQL|
         INSERT INTO commits
-          (repo_user, repo_name, git_commit, status, meta_check,
+          (forge, repo_user, repo_name, git_commit, status, meta_check,
            eval_host, eval_instance, started_at)
         VALUES
-            (${owner}, ${name}, ${commit}, 'evaluating', 'pending',
+            (${forge'}, ${owner}, ${name}, ${commit}, 'evaluating', 'pending',
              ${evalHost}, ${evalInstance}, ${now})
-        ON CONFLICT (repo_user, repo_name, git_commit) DO UPDATE
+        ON CONFLICT (forge, repo_user, repo_name, git_commit) DO UPDATE
           SET meta_check = 'pending',
               eval_host = ${evalHost},
               eval_instance = ${evalInstance},
@@ -495,13 +519,14 @@ newCommit (RepoId _forge owner name) commit = do
       |]
 
 setCommitStatus :: RepoId -> CommitHash -> CommitStatus -> M ()
-setCommitStatus (RepoId _forge owner name) commit st =
+setCommitStatus (RepoId forge' owner name) commit st =
   void
     $ pgExec
       [pgSQL|
         UPDATE commits
           SET status = ${st}
-        WHERE repo_user = ${owner}
+        WHERE forge = ${forge'}
+          AND repo_user = ${owner}
           AND repo_name = ${name}
           AND git_commit = ${commit}
       |]
@@ -529,7 +554,7 @@ data CheckStatusUpdate = CheckStatusUpdate
 -- As it is, buildA's thread would still attempt to set the check to CheckFail, but only if its current
 -- state is CheckPending, which is not. So no change will happen, which is what we want.
 setMetaCheck :: RepoId -> CommitHash -> CheckStatusUpdate -> M Bool
-setMetaCheck (RepoId _forge owner name) commit (CheckStatusUpdate {_checkStatusUpdateFrom = from, _checkStatusUpdateTo = to}) = do
+setMetaCheck (RepoId forge' owner name) commit (CheckStatusUpdate {_checkStatusUpdateFrom = from, _checkStatusUpdateTo = to}) = do
   if from == to
     then pure False
     else
@@ -538,7 +563,8 @@ setMetaCheck (RepoId _forge owner name) commit (CheckStatusUpdate {_checkStatusU
           [pgSQL|
             UPDATE commits
               SET meta_check = ${to}
-            WHERE repo_user = ${owner}
+            WHERE forge = ${forge'}
+              AND repo_user = ${owner}
               AND repo_name = ${name}
               AND git_commit = ${commit}
               AND meta_check = ${from}
@@ -548,13 +574,14 @@ setMetaCheck (RepoId _forge owner name) commit (CheckStatusUpdate {_checkStatusU
 -- this commit. Returns True exactly once per commit, even across re-runs -
 -- unlike 'setMetaCheck', whose 'pending' state 'newCommit' resets on every run.
 claimFailureComment :: RepoId -> CommitHash -> M Bool
-claimFailureComment (RepoId _forge owner name) commit =
+claimFailureComment (RepoId forge' owner name) commit =
   (== 1)
     <$> pgExec
       [pgSQL|
         UPDATE commits
           SET failure_commented = true
-        WHERE repo_user = ${owner}
+        WHERE forge = ${forge'}
+          AND repo_user = ${owner}
           AND repo_name = ${name}
           AND git_commit = ${commit}
           AND NOT failure_commented
@@ -573,11 +600,12 @@ getBuildsAndRunsByCommit repo commitHash = do
         pure $ CommitEvaluated commit builds runs
 
 getBuildsByCommit :: RepoId -> CommitHash -> M [Build]
-getBuildsByCommit (RepoId _forge repoOwner repoName) commitHash = do
+getBuildsByCommit (RepoId forge' repoOwner repoName) commitHash = do
   pgQuery
     [pgSQL|
       SELECT DISTINCT ON (git_commit, package_type, system, package)
         id,
+        forge,
         repo_user,
         repo_name,
         pr_from_fork,
@@ -601,6 +629,7 @@ getBuildsByCommit (RepoId _forge repoOwner repoName) commitHash = do
         already_built
       FROM builds
       WHERE git_commit = ${commitHash}
+            AND forge = ${forge'}
             AND repo_user = ${repoOwner}
             AND repo_name = ${repoName}
       ORDER BY git_commit, package_type, system, package, start_time DESC
@@ -608,6 +637,7 @@ getBuildsByCommit (RepoId _forge repoOwner repoName) commitHash = do
     |]
     <&> map
       ( \( id,
+           buildForge,
            repoUser,
            repoName,
            prFromFork,
@@ -632,6 +662,7 @@ getBuildsByCommit (RepoId _forge repoOwner repoName) commitHash = do
            ) ->
             Build
               { _buildId = id,
+                _buildForge = buildForge,
                 _buildRepoUser = repoUser,
                 _buildRepoName = repoName,
                 _buildPrFromFork = prFromFork,
@@ -657,20 +688,22 @@ getBuildsByCommit (RepoId _forge repoOwner repoName) commitHash = do
       )
 
 getRuns :: RepoId -> CommitHash -> M [Run]
-getRuns (RepoId _forge repoOwner repoName) commitHash = do
+getRuns (RepoId forge' repoOwner repoName) commitHash = do
   pgQuery
     [pgSQL|
-      SELECT id, name, repo_user, repo_name, git_commit, branch, status, req_user, start_time, end_time
+      SELECT id, name, forge, repo_user, repo_name, git_commit, branch, status, req_user, start_time, end_time
       FROM runs
       WHERE git_commit = ${commitHash}
+        AND forge = ${forge'}
         AND repo_user = ${repoOwner}
         AND repo_name = ${repoName}
     |]
     <&> map
-      ( \(id, name, repoOwner, repoName, gitCommit, branch, status, reqUser, startTime, endTime) ->
+      ( \(id, name, runForge, repoOwner, repoName, gitCommit, branch, status, reqUser, startTime, endTime) ->
           Run
             { _runId = id,
               _runName = name,
+              _runForge = runForge,
               _runRepoUser = repoOwner,
               _runRepoName = repoName,
               _runGitCommit = gitCommit,
@@ -687,15 +720,16 @@ getRun runId = do
   result <-
     pgQuery
       [pgSQL|
-        SELECT id, name, repo_user, repo_name, git_commit, branch, status, req_user, start_time, end_time
+        SELECT id, name, forge, repo_user, repo_name, git_commit, branch, status, req_user, start_time, end_time
         FROM runs
         WHERE id = ${runId}
       |]
       <&> map
-        ( \(id, name, repoOwner, repoName, gitCommit, branch, status, reqUser, startTime, endTime) ->
+        ( \(id, name, runForge, repoOwner, repoName, gitCommit, branch, status, reqUser, startTime, endTime) ->
             Run
               { _runId = id,
                 _runName = name,
+                _runForge = runForge,
                 _runRepoUser = repoOwner,
                 _runRepoName = repoName,
                 _runGitCommit = gitCommit,
@@ -724,6 +758,7 @@ setRunStatus runId status =
 
 newRun :: Text -> CommitInfo -> M Run
 newRun name commitInfo = do
+  let runForge = commitInfo ^. repoInfo . repoId . forge
   let repoOwner = commitInfo ^. repoInfo . repoId . repoUser
   let repoName = commitInfo ^. repoInfo . repoId . Garnix.Types.repoName
   let commitHash = commitInfo ^. commit
@@ -735,10 +770,10 @@ newRun name commitInfo = do
     pgQuery
       [pgSQL|
         INSERT INTO runs
-          (name, repo_user, repo_name, git_commit, branch, status, req_user,
+          (name, forge, repo_user, repo_name, git_commit, branch, status, req_user,
            eval_host, eval_instance)
         VALUES
-          (${name}, ${repoOwner}, ${repoName}, ${commitHash}, ${branch}, NULL, ${reqUser},
+          (${name}, ${runForge}, ${repoOwner}, ${repoName}, ${commitHash}, ${branch}, NULL, ${reqUser},
            ${evalHost}, ${evalInstance})
         RETURNING
           id, name, repo_user, repo_name, git_commit, branch, status, req_user, start_time
@@ -748,6 +783,7 @@ newRun name commitInfo = do
             Run
               { _runId = id,
                 _runName = name,
+                _runForge = runForge,
                 _runRepoUser = repoOwner,
                 _runRepoName = repoName,
                 _runGitCommit = commitHash,
@@ -764,7 +800,7 @@ newRun name commitInfo = do
 
 -- todo remove?
 tagCacheUpload :: RepoId -> [StorePath] -> M ()
-tagCacheUpload (RepoId _forge repoOwner repoName) =
+tagCacheUpload (RepoId forge' repoOwner repoName) =
   \case
     [] -> pure ()
     storePaths -> do
@@ -780,17 +816,17 @@ tagCacheUpload (RepoId _forge repoOwner repoName) =
         $ pgExec
           [pgSQL|
             INSERT INTO cache_store_hash_tags
-              (hash, repo_owner, repo_name)
-              VALUES (UNNEST(${hashes}::text[]), ${repoOwner}, ${repoName})
+              (hash, forge, repo_owner, repo_name)
+              VALUES (UNNEST(${hashes}::text[]), ${forge'}, ${repoOwner}, ${repoName})
               ON CONFLICT DO NOTHING
           |]
 
 getReposForHash :: StoreHash -> M [RepoId]
 getReposForHash hash = do
-  map (uncurry (RepoId githubForge))
+  map (\(forge', owner, name) -> RepoId forge' owner name)
     <$> pgQuery
       [pgSQL|
-      SELECT repo_owner, repo_name
+      SELECT forge, repo_owner, repo_name
       FROM cache_store_hash_tags
       WHERE hash = ${hash}
     |]
@@ -854,13 +890,13 @@ finalizeS3CacheUpload s3CacheStoreHash = do
       |]
 
 tagCacheUploadForS3Cache :: RepoId -> StoreHash -> M ()
-tagCacheUploadForS3Cache (RepoId _forge repoOwner repoName) hash = do
+tagCacheUploadForS3Cache (RepoId forge' repoOwner repoName) hash = do
   void
     $ pgExec
       [pgSQL|
         INSERT INTO cache_store_hash_tags
-          (hash, repo_owner, repo_name)
-          VALUES (${hash}, ${repoOwner}, ${repoName})
+          (hash, forge, repo_owner, repo_name)
+          VALUES (${hash}, ${forge'}, ${repoOwner}, ${repoName})
           ON CONFLICT DO NOTHING
       |]
 
@@ -1357,7 +1393,8 @@ deleteAccessTokenForUser userId tokenId = do
 getCommitsForReqUser :: User -> M [CommitSummary]
 getCommitsForReqUser user = do
   map
-    ( \( repoOwner :: GhRepoOwner,
+    ( \( forge' :: ForgeSlug,
+         repoOwner :: GhRepoOwner,
          repoName :: GhRepoName,
          gitCommit :: CommitHash,
          branch :: Maybe Branch,
@@ -1369,7 +1406,7 @@ getCommitsForReqUser user = do
          pending :: Int64,
          cancelled :: Int64
          ) ->
-          CommitSummary repoOwner repoName (RepoIsPublic isPublic) gitCommit branch reqUser startTime succeeded failed pending cancelled
+          CommitSummary forge' repoOwner repoName (RepoIsPublic isPublic) gitCommit branch reqUser startTime succeeded failed pending cancelled
     )
     <$> pgQuery
       [pgSQL|!
@@ -1379,7 +1416,8 @@ getCommitsForReqUser user = do
         -- future queries just operate on this or use the git_commit index.
         commits_for_req_user AS (
           SELECT git_commit, max(start_time) as commit_start_time FROM builds
-          WHERE req_user = ${user ^. githubLogin}
+          WHERE forge = ${user ^. forge}
+            AND req_user = ${user ^. githubLogin}
           GROUP BY git_commit
           ORDER BY commit_start_time DESC
           LIMIT 100
@@ -1388,6 +1426,7 @@ getCommitsForReqUser user = do
         -- Now we can find all the builds we care about efficiently by joining:
         all_related_builds AS (
           SELECT
+            forge,
             repo_user,
             repo_name,
             package_type,
@@ -1402,7 +1441,8 @@ getCommitsForReqUser user = do
           FROM commits_for_req_user
           LEFT JOIN builds
             ON commits_for_req_user.git_commit = builds.git_commit
-          WHERE req_user = ${user ^. githubLogin}
+          WHERE forge = ${user ^. forge}
+            AND req_user = ${user ^. githubLogin}
         ),
 
         -- Now filter out re-runs using `SELECT DISTINCT`
@@ -1414,6 +1454,7 @@ getCommitsForReqUser user = do
 
         -- Finally, aggregate the status totals by git_commit
         SELECT
+          (array_agg(forge))[1],
           (array_agg(repo_user))[1],
           (array_agg(repo_name))[1],
           git_commit,
@@ -1432,29 +1473,32 @@ getCommitsForReqUser user = do
 
 -- * /api/build/commit/{commit}
 
-getCommitSummary :: CommitHash -> M CommitSummary
-getCommitSummary commit = do
-  res <-
-    map
-      ( \( repoOwner :: GhRepoOwner,
-           repoName :: GhRepoName,
-           gitCommit :: CommitHash,
-           branch :: Maybe Branch,
-           reqUser :: GhLogin,
-           isPublic :: Bool,
-           startTime :: UTCTime,
-           succeeded :: Int64,
-           failed :: Int64,
-           pending :: Int64,
-           cancelled :: Int64
-           ) ->
-            CommitSummary repoOwner repoName (RepoIsPublic isPublic) gitCommit branch reqUser startTime succeeded failed pending cancelled
-      )
-      <$> pgQuery
-        [pgSQL|!
+-- | One summary per repository that built the commit, newest first. A hash
+-- alone does not name a repository: forks and mirrors on other forges share it.
+getCommitSummaries :: CommitHash -> M [CommitSummary]
+getCommitSummaries commit = do
+  map
+    ( \( forge' :: ForgeSlug,
+         repoOwner :: GhRepoOwner,
+         repoName :: GhRepoName,
+         gitCommit :: CommitHash,
+         branch :: Maybe Branch,
+         reqUser :: GhLogin,
+         isPublic :: Bool,
+         startTime :: UTCTime,
+         succeeded :: Int64,
+         failed :: Int64,
+         pending :: Int64,
+         cancelled :: Int64
+         ) ->
+          CommitSummary forge' repoOwner repoName (RepoIsPublic isPublic) gitCommit branch reqUser startTime succeeded failed pending cancelled
+    )
+    <$> pgQuery
+      [pgSQL|!
         SELECT
-          (array_agg(repo_user))[1],
-          (array_agg(repo_name))[1],
+          forge,
+          repo_user,
+          repo_name,
           git_commit,
           (array_agg(branch))[1],
           (array_agg(req_user))[1],
@@ -1465,16 +1509,13 @@ getCommitSummary commit = do
           COUNT(*) FILTER (WHERE status IS NULL) as pending,
           COUNT(*) FILTER (WHERE status = 'cancelled') as cancelled
         FROM (
-          SELECT DISTINCT ON (git_commit, package_type, system, package) * FROM builds
+          SELECT DISTINCT ON (forge, repo_user, repo_name, git_commit, package_type, system, package) * FROM builds
           WHERE git_commit = ${commit}
-          ORDER BY git_commit, package_type, system, package, start_time DESC
+          ORDER BY forge, repo_user, repo_name, git_commit, package_type, system, package, start_time DESC
         ) AS sub
-        GROUP BY git_commit
+        GROUP BY forge, repo_user, repo_name, git_commit
+        ORDER BY min(start_time) DESC, forge, repo_user, repo_name
       |]
-  case res of
-    [r] -> pure r
-    [] -> throw $ NoSuchCommit commit
-    _ -> throw $ OtherError "Impossible: more than one result"
 
 -- * Internal stuff
 
@@ -1487,7 +1528,8 @@ newBuildDB commitInfo packageInfo evalHost wantsIncrementalism = do
       _Build
       [pgSQL|
     INSERT INTO builds
-        (repo_user,
+        (forge,
+         repo_user,
          repo_name,
          pr_from_fork,
          branch,
@@ -1504,7 +1546,8 @@ newBuildDB commitInfo packageInfo evalHost wantsIncrementalism = do
          uploaded_to_cache
         )
     VALUES
-        (${commitInfo ^. (repoInfo . repoId . repoUser)},
+        (${commitInfo ^. (repoInfo . repoId . forge)},
+         ${commitInfo ^. (repoInfo . repoId . repoUser)},
          ${commitInfo ^. (repoInfo . repoId . repoName)},
          ${commitInfo ^. prFromFork},
          ${commitInfo ^. branch},
@@ -1523,6 +1566,7 @@ newBuildDB commitInfo packageInfo evalHost wantsIncrementalism = do
     ON CONFLICT DO NOTHING
     RETURNING
       id,
+      forge,
       repo_user,
       repo_name,
       pr_from_fork,
@@ -1665,6 +1709,7 @@ getOrphanedBuilds liveInstances =
     [pgSQL|
       SELECT
         id,
+        forge,
         repo_user,
         repo_name,
         pr_from_fork,
@@ -1695,6 +1740,7 @@ getOrphanedBuilds liveInstances =
     |]
     <&> map
       ( \( id,
+           buildForge,
            repoUser,
            repoName,
            prFromFork,
@@ -1719,6 +1765,7 @@ getOrphanedBuilds liveInstances =
            ) ->
             Build
               { _buildId = id,
+                _buildForge = buildForge,
                 _buildRepoUser = repoUser,
                 _buildRepoName = repoName,
                 _buildPrFromFork = prFromFork,
@@ -1747,7 +1794,7 @@ getOrphanedRuns :: [Text] -> M [(Run, Maybe GhRunId)]
 getOrphanedRuns liveInstances =
   pgQuery
     [pgSQL|
-      SELECT id, name, repo_user, repo_name, git_commit, branch, status,
+      SELECT id, name, forge, repo_user, repo_name, git_commit, branch, status,
              req_user, start_time, end_time, github_run_id
       FROM runs
       WHERE end_time IS NULL
@@ -1757,10 +1804,11 @@ getOrphanedRuns liveInstances =
       LIMIT 200
     |]
     <&> map
-      ( \(id, name, repoOwner, repoName, gitCommit, branch, status, reqUser, startTime, endTime, githubRunId) ->
+      ( \(id, name, runForge, repoOwner, repoName, gitCommit, branch, status, reqUser, startTime, endTime, githubRunId) ->
           ( Run
               { _runId = id,
                 _runName = name,
+                _runForge = runForge,
                 _runRepoUser = repoOwner,
                 _runRepoName = repoName,
                 _runGitCommit = gitCommit,
@@ -1776,10 +1824,10 @@ getOrphanedRuns liveInstances =
 
 getStuckMetaChecks :: [Text] -> M [(RepoId, CommitHash)]
 getStuckMetaChecks liveInstances =
-  map (\(owner, name, commit) -> (RepoId githubForge owner name, commit))
+  map (\(forge', owner, name, commit) -> (RepoId forge' owner name, commit))
     <$> pgQuery
     [pgSQL|
-      SELECT c.repo_user, c.repo_name, c.git_commit
+      SELECT c.forge, c.repo_user, c.repo_name, c.git_commit
       FROM commits c
       WHERE c.status = 'evaluated'
         AND c.meta_check = 'pending'
@@ -1788,7 +1836,8 @@ getStuckMetaChecks liveInstances =
         AND NOT EXISTS (
           SELECT 1
           FROM builds b
-          WHERE b.repo_user = c.repo_user
+          WHERE b.forge = c.forge
+            AND b.repo_user = c.repo_user
             AND b.repo_name = c.repo_name
             AND b.git_commit = c.git_commit
             AND b.end_time IS NULL
@@ -1799,10 +1848,10 @@ getStuckMetaChecks liveInstances =
 
 getOrphanedEvaluations :: [Text] -> M [(RepoId, CommitHash)]
 getOrphanedEvaluations liveInstances =
-  map (\(owner, name, commit) -> (RepoId githubForge owner name, commit))
+  map (\(forge', owner, name, commit) -> (RepoId forge' owner name, commit))
     <$> pgQuery
     [pgSQL|
-      SELECT repo_user, repo_name, git_commit
+      SELECT forge, repo_user, repo_name, git_commit
       FROM commits
       WHERE status = 'evaluating'
         AND (eval_instance IS NULL
@@ -1821,8 +1870,8 @@ setRunGithubId runId ghRunId =
         WHERE id = ${runId}
       |]
 
-getPrDeployDurationForOwner :: GhRepoOwner -> M Duration
-getPrDeployDurationForOwner owner = do
+getPrDeployDurationForOwner :: ForgeSlug -> GhRepoOwner -> M Duration
+getPrDeployDurationForOwner forge' owner = do
   res <-
     pgQuery
       [pgSQL|
@@ -1835,7 +1884,8 @@ getPrDeployDurationForOwner owner = do
         FROM servers
         INNER JOIN builds
         ON servers.configuration_build_id = builds.id
-        WHERE builds.repo_user = ${owner}
+        WHERE builds.forge = ${forge'}
+        AND builds.repo_user = ${owner}
         AND servers.pull_request IS NOT NULL
         AND servers.ready_at IS NOT NULL
         AND (servers.ended_at IS NULL OR
@@ -1847,9 +1897,10 @@ getPrDeployDurationForOwner owner = do
     _ -> throw $ OtherError "Impossible: more than one result"
 
 getCurrentMonthUsages ::
+  ForgeSlug ->
   [GhRepoOwner] ->
   M (Map GhRepoOwner Duration)
-getCurrentMonthUsages owners = do
+getCurrentMonthUsages forge' owners = do
   fromList
     . map (\(repoOwner :: GhRepoOwner, seconds :: Maybe Double) -> (repoOwner, fromSeconds $ fromMaybe 0 seconds))
     <$> pgQuery
@@ -1858,19 +1909,21 @@ getCurrentMonthUsages owners = do
           repo_user,
           SUM(LEAST(120 * 60, date_part('EPOCH', (end_time - start_time)))) AS total_build_time
         FROM builds
-        WHERE repo_user = ANY(${owners})
+        WHERE forge = ${forge'}
+        AND repo_user = ANY(${owners})
         AND end_time >= date_trunc('month', NOW())
         GROUP BY repo_user
       |]
 
 getRepoKeyDB :: RepoId -> M (Maybe (PublicKey, PrivateKey))
-getRepoKeyDB (RepoId _forge owner name) = do
+getRepoKeyDB (RepoId forge' owner name) = do
   results <-
     pgQuery
       [pgSQL|
         SELECT public_key, private_key
         FROM repo_secrets
-        WHERE repo_user = ${owner}
+        WHERE forge = ${forge'}
+        AND repo_user = ${owner}
         AND repo_name = ${name}
     |]
   case results of
@@ -1885,18 +1938,20 @@ setRepoKeyDB ::
   Candidate PublicKey ->
   Candidate PrivateKey ->
   M (PublicKey, PrivateKey)
-setRepoKeyDB repo@(RepoId _forge owner name) (Candidate pub) (Candidate priv) = do
+setRepoKeyDB repo@(RepoId forge' owner name) (Candidate pub) (Candidate priv) = do
   void
     $ pgQuery
       [pgSQL|
      INSERT INTO repo_secrets
-       ( repo_user,
+       ( forge,
+         repo_user,
          repo_name,
          public_key,
          private_key
        )
      VALUES
-       ( ${owner},
+       ( ${forge'},
+         ${owner},
          ${name},
          ${pub},
          ${priv}
@@ -1908,13 +1963,14 @@ setRepoKeyDB repo@(RepoId _forge owner name) (Candidate pub) (Candidate priv) = 
     Just v -> pure v
 
 getActionKeyDB :: RepoId -> PackageName -> M (Maybe (PublicKey, PrivateKey))
-getActionKeyDB (RepoId _forge owner name) action = do
+getActionKeyDB (RepoId forge' owner name) action = do
   results <-
     pgQuery
       [pgSQL|
         SELECT public_key, private_key
         FROM action_secrets
-        WHERE repo_user = ${owner}
+        WHERE forge = ${forge'}
+        AND repo_user = ${owner}
         AND repo_name = ${name}
         AND action_name = ${action}
     |]
@@ -1931,19 +1987,21 @@ setActionKeyDB ::
   Candidate PublicKey ->
   Candidate PrivateKey ->
   M (PublicKey, PrivateKey)
-setActionKeyDB repo@(RepoId _forge owner name) action (Candidate pub) (Candidate priv) = do
+setActionKeyDB repo@(RepoId forge' owner name) action (Candidate pub) (Candidate priv) = do
   void
     $ pgQuery
       [pgSQL|
      INSERT INTO action_secrets
-       ( repo_user,
+       ( forge,
+         repo_user,
          repo_name,
          action_name,
          public_key,
          private_key
        )
      VALUES
-       ( ${owner},
+       ( ${forge'},
+         ${owner},
          ${name},
          ${action},
          ${pub},
@@ -1956,13 +2014,14 @@ setActionKeyDB repo@(RepoId _forge owner name) action (Candidate pub) (Candidate
     Just v -> pure v
 
 isDenylisted :: RepoId -> M Bool
-isDenylisted (RepoId _forge owner name) = do
+isDenylisted (RepoId forge' owner name) = do
   result :: [Text] <-
     pgQuery
       [pgSQL|
         SELECT repo_user
         FROM denylist
-        WHERE repo_user = ${owner}
+        WHERE forge = ${forge'}
+        AND repo_user = ${owner}
         AND (repo_name = ${name} OR repo_name IS NULL)
       |]
   pure $ not $ null result
@@ -1986,7 +2045,8 @@ getIncrementalTarget build commits =
     [pgSQL|
         SELECT
           DISTINCT ON
-            (repo_user,
+            (forge,
+             repo_user,
              repo_name,
              package,
              package_type,
@@ -1994,6 +2054,7 @@ getIncrementalTarget build commits =
              git_commit
              )
           id,
+          forge,
           repo_user,
           repo_name,
           pr_from_fork,
@@ -2021,14 +2082,19 @@ getIncrementalTarget build commits =
                 git_commit
               FROM builds
               WHERE git_commit = ANY(${commits}::text[])
+                AND forge = ${build ^. forge}
+                AND repo_user = ${build ^. repoUser}
+                AND repo_name = ${build ^. repoName}
               GROUP BY git_commit
               HAVING
                 bool_and(CASE WHEN end_time IS NULL THEN FALSE else TRUE END)
               ORDER BY ARRAY_POSITION(${commits}, git_commit)
               LIMIT 1)
+          AND forge = ${build ^. forge}
           AND repo_user = ${build ^. repoUser}
           AND repo_name = ${build ^. repoName}
         ORDER BY
+          forge,
           repo_user,
           repo_name,
           package,
@@ -2049,8 +2115,8 @@ checkHealth = do
 
 -- * Tokens
 
-getUserInternalToken :: GhLogin -> M InternalCacheToken
-getUserInternalToken reqUser =
+getUserInternalToken :: ForgeLogin -> M InternalCacheToken
+getUserInternalToken (ForgeLogin forge' reqUser) =
   maybeGetDbToken >>= \case
     Just token -> pure token
     Nothing -> generateInternalCacheToken >>= insertUserToken
@@ -2061,7 +2127,8 @@ getUserInternalToken reqUser =
         [pgSQL|
           SELECT internal_token
             FROM internal_access_tokens
-            WHERE github_login = ${reqUser}
+            WHERE forge = ${forge'}
+              AND github_login = ${reqUser}
         |]
         >>= \case
           [] -> pure Nothing
@@ -2073,8 +2140,8 @@ getUserInternalToken reqUser =
       pgQuery
         [pgSQL|
           INSERT INTO internal_access_tokens
-            (github_login, internal_token)
-          VALUES (${reqUser}, ${rawToken})
+            (forge, github_login, internal_token)
+          VALUES (${forge'}, ${reqUser}, ${rawToken})
           ON CONFLICT DO NOTHING
           RETURNING internal_token
         |]

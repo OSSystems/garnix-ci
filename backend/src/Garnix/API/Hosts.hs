@@ -379,12 +379,12 @@ onDemandCheck queried = do
 
 getHosts :: AuthResult AuthJwtPayload -> M [RunningServer]
 getHosts (Authenticated (WebSession user)) =
-  withGithubUserToken user $ getRunningAndRecentServersForOwners <=< ownersOf user
+  withGithubUserToken user $ getRunningAndRecentServersForOwners (user ^. forge) <=< ownersOf user
 getHosts _ = throw Unauthorized
 
 deleteHost :: AuthResult AuthJwtPayload -> ServerId -> M ()
 deleteHost (Authenticated (WebSession user)) serverId = withGithubUserToken user $ \ghToken -> do
-  servers <- getRunningAndRecentServersForOwners =<< ownersOf user ghToken
+  servers <- getRunningAndRecentServersForOwners (user ^. forge) =<< ownersOf user ghToken
   -- Deleting is gated on the server appearing in the caller's own list, so a
   -- server id alone is not authorization to tear it down.
   if any ((== serverId) . _runningServerId) servers

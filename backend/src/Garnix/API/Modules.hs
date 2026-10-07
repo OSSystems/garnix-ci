@@ -80,10 +80,10 @@ modulesAPI = \case
       }
 
 getValues :: User -> M ModuleValues.GetRepoAndModuleValues
-getValues = maybe (throw NotFound) pure <=< ModuleValues.get . _userGithubLogin
+getValues = maybe (throw NotFound) pure <=< ModuleValues.get . userForgeLogin
 
 updateValues :: User -> ModuleValues.UpdateRepoModuleValues -> M NoContent
-updateValues user values = ModuleValues.update (user ^. githubLogin) values $> NoContent
+updateValues user values = ModuleValues.update (userForgeLogin user) values $> NoContent
 
 getAvailableModules :: M (Rec ("modules" .== [ModuleValues.Module]))
 getAvailableModules = (#modules .==) <$> ModuleValues.getAvailableModules
@@ -91,15 +91,15 @@ getAvailableModules = (#modules .==) <$> ModuleValues.getAvailableModules
 runBuild :: User -> M BuildInfo
 runBuild user = do
   repoAndModuleValues <- getValues user
-  commitInfo <- Build.buildModule (user ^. githubLogin) repoAndModuleValues
+  commitInfo <- Build.buildModule (userForgeLogin user) repoAndModuleValues
   pure $ BuildInfo (commitInfo ^. commit) (commitInfo ^. branch)
 
 createPullRequest :: User -> M PullRequestResult
 createPullRequest user = do
-  ModuleValues.get (user ^. githubLogin) >>= \case
+  ModuleValues.get (userForgeLogin user) >>= \case
     Nothing -> throw NotFound
     Just repoAndModuleValues -> do
-      commitInfo <- Build.Module.getCommitInfo (user ^. githubLogin) repoAndModuleValues
+      commitInfo <- Build.Module.getCommitInfo (userForgeLogin user) repoAndModuleValues
       withSpan commitInfo $ do
         let baseBranch = maybe (Branch "main") identity $ commitInfo ^. branch
         newBranch <- Branch . ("garnix-modules-" <>) <$> randomBase64 8
@@ -130,16 +130,16 @@ createPullRequest user = do
 
 getFlake :: User -> M (Headers '[Header "Content-Disposition" Text] ByteString)
 getFlake user = do
-  ModuleValues.get (user ^. githubLogin) >>= \case
+  ModuleValues.get (userForgeLogin user) >>= \case
     Nothing -> throw NotFound
     Just repoAndModuleValues -> do
-      commitInfo <- Build.Module.getCommitInfo (user ^. githubLogin) repoAndModuleValues
+      commitInfo <- Build.Module.getCommitInfo (userForgeLogin user) repoAndModuleValues
       let defaultBranch = maybe (Branch "main") identity $ commitInfo ^. branch
       contents <- Build.Module.generateFlakeNix defaultBranch repoAndModuleValues
       pure $ addHeader "attachment; filename=\"flake.nix\"" $ cs contents
 
 reset :: User -> M NoContent
 reset user =
-  ModuleValues.get (user ^. githubLogin) >>= \case
+  ModuleValues.get (userForgeLogin user) >>= \case
     Nothing -> throw NotFound
-    Just _ -> ModuleValues.delete (user ^. githubLogin) $> NoContent
+    Just _ -> ModuleValues.delete (userForgeLogin user) $> NoContent

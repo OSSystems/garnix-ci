@@ -142,13 +142,14 @@ instance ToJSON NixValue where
             "value" .= value
           ]
 
-get :: GhLogin -> M (Maybe GetRepoAndModuleValues)
-get ghLogin =
+get :: ForgeLogin -> M (Maybe GetRepoAndModuleValues)
+get (ForgeLogin forge' ghLogin) =
   DB.pgQuery
     [pgSQL|
         SELECT id, repo_user, repo_name
         FROM module_user_repo
-        WHERE github_login = ${ghLogin}
+        WHERE forge = ${forge'}
+          AND github_login = ${ghLogin}
       |]
     >>= \case
       [] -> pure Nothing
@@ -207,8 +208,8 @@ get ghLogin =
                 .+ #description .== description
           )
 
-update :: GhLogin -> UpdateRepoModuleValues -> M ()
-update ghLogin row = do
+update :: ForgeLogin -> UpdateRepoModuleValues -> M ()
+update (ForgeLogin forge' ghLogin) row = do
   let repo_user = row ^. #repo_user
       repo_name = row ^. #repo_name
       user_config = row ^. #user_config
@@ -216,9 +217,9 @@ update ghLogin row = do
     $ DB.pgExec
       [pgSQL|
         INSERT INTO module_user_repo
-          (github_login, repo_user, repo_name)
-          VALUES (${ghLogin}, ${repo_user}, ${repo_name})
-        ON CONFLICT (github_login) DO
+          (forge, github_login, repo_user, repo_name)
+          VALUES (${forge'}, ${ghLogin}, ${repo_user}, ${repo_name})
+        ON CONFLICT (forge, github_login) DO
           UPDATE
             SET repo_user = ${repo_user},
                 repo_name = ${repo_name}
@@ -233,7 +234,7 @@ update ghLogin row = do
         $ DB.pgExec
           [pgSQL|
             DELETE FROM module_values
-              WHERE module_user_repo_id = (SELECT id FROM module_user_repo WHERE github_login = ${ghLogin})
+              WHERE module_user_repo_id = (SELECT id FROM module_user_repo WHERE forge = ${forge'} AND github_login = ${ghLogin})
           |]
 
     addValue :: ModuleValue -> M ()
@@ -249,7 +250,7 @@ update ghLogin row = do
                       INSERT INTO module_values
                         (module_user_repo_id, module_id, values)
                         VALUES (
-                          (SELECT id FROM module_user_repo WHERE github_login = ${ghLogin}),
+                          (SELECT id FROM module_user_repo WHERE forge = ${forge'} AND github_login = ${ghLogin}),
                           (SELECT id FROM modules WHERE name = ${module_name} and git_commit = ${commit}),
                           ${values}
                         )
@@ -261,14 +262,14 @@ update ghLogin row = do
                       INSERT INTO module_values
                         (module_user_repo_id, module_id, values)
                         VALUES (
-                          (SELECT id FROM module_user_repo WHERE github_login = ${ghLogin}),
+                          (SELECT id FROM module_user_repo WHERE forge = ${forge'} AND github_login = ${ghLogin}),
                           (SELECT id FROM modules WHERE name = ${module_name} and enabled = true),
                           ${values}
                         )
                     |]
 
-delete :: GhLogin -> M ()
-delete ghLogin = do
+delete :: ForgeLogin -> M ()
+delete (ForgeLogin forge' ghLogin) = do
   void
     $ DB.pgExec
       [pgSQL|
@@ -276,13 +277,15 @@ delete ghLogin = do
           WHERE module_user_repo_id =
             (SELECT id
               FROM module_user_repo
-              WHERE github_login = ${ghLogin})
+              WHERE forge = ${forge'}
+                AND github_login = ${ghLogin})
       |]
   void
     $ DB.pgExec
       [pgSQL|
         DELETE FROM module_user_repo
-          WHERE github_login = ${ghLogin}
+          WHERE forge = ${forge'}
+            AND github_login = ${ghLogin}
       |]
 
 getAvailableModules :: M [Module]

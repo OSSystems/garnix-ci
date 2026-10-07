@@ -152,7 +152,7 @@ parseRepo repo =
 notifyOfCommit :: CheckSuiteEvent -> M ()
 notifyOfCommit event = do
   let GhRepoOwner (GhLogin ghRepoOwner) = event ^. eventRepoName . _1
-  _ <- try $ DB.newUser (GhLogin ghRepoOwner) "owner@owner.com" FreeSubscription True
+  _ <- try $ DB.newUser (ForgeLogin githubForge (GhLogin ghRepoOwner)) "owner@owner.com" FreeSubscription True
   mFlakePromise <- ghWebhookCheckSuite event
   resolve mFlakePromise
 
@@ -266,7 +266,7 @@ waitFor duration action = do
 testUser :: M User
 testUser =
   DB.newUser
-    (GhLogin "user")
+    (ForgeLogin githubForge "user")
     (Email "foo@example.com")
     FreeSubscription
     True
@@ -277,6 +277,7 @@ testBuild f = do
         f
           $ Build
             { _buildId = undefined,
+              _buildForge = githubForge,
               _buildRepoUser = "test-owner",
               _buildRepoName = "test-repo",
               _buildPrFromFork = undefined,
@@ -306,6 +307,7 @@ testBuild f = do
         [pgSQL|
         INSERT INTO builds
             (
+              forge,
               repo_user,
               repo_name,
               branch,
@@ -328,6 +330,7 @@ testBuild f = do
             )
         VALUES
             (
+              ${build ^. G.forge},
               ${build ^. repoUser},
               ${build ^. repoName},
               ${build ^. branch},
@@ -350,6 +353,7 @@ testBuild f = do
             )
         RETURNING
           id,
+          forge,
           repo_user,
           repo_name,
           pr_from_fork,
@@ -384,7 +388,8 @@ testCommit f = do
   let commit =
         f
           $ Commit
-            { _commitRepoOwner = "test-owner",
+            { _commitForge = githubForge,
+              _commitRepoOwner = "test-owner",
               _commitRepoName = "test-repo",
               _commitHash = "aaaaaa",
               _commitStatus = Evaluated,
@@ -394,9 +399,9 @@ testCommit f = do
     DB.pgExec
       [pgSQL|
         INSERT INTO commits
-          (repo_user, repo_name, git_commit, status, meta_check)
+          (forge, repo_user, repo_name, git_commit, status, meta_check)
         VALUES
-          (${commit ^. repoOwner}, ${commit ^. repoName}, ${commit ^. hash}, ${commit ^. status}, ${commit ^. metaCheck})
+          (${commit ^. G.forge}, ${commit ^. repoOwner}, ${commit ^. repoName}, ${commit ^. hash}, ${commit ^. status}, ${commit ^. metaCheck})
       |]
   when (n /= 1) $ do
     error "expected: 1"

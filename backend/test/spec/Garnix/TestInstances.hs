@@ -59,6 +59,9 @@ instance Arbitrary GhRepoName where
 instance Arbitrary GhLogin where
   arbitrary = GhLogin <$> arbitrary
 
+instance Arbitrary ForgeSlug where
+  arbitrary = ForgeSlug <$> arbitrary
+
 instance Arbitrary CommitHash where
   arbitrary = CommitHash <$> arbitrary
 

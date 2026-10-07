@@ -73,7 +73,7 @@ testUser :: Text -> M UserId
 testUser name =
   (^. id)
     <$> DB.newUser
-      (GhLogin name)
+      (ForgeLogin githubForge (GhLogin name))
       (Email $ name <> "@example.com")
       FreeSubscription
       True

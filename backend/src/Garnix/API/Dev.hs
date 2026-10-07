@@ -45,12 +45,12 @@ devAPI = do
 
 getTestUser :: M User
 getTestUser = do
-  existing <- try $ DB.getUser (GhLogin "dev-user")
+  existing <- try $ DB.getUser (ForgeLogin githubForge "dev-user")
   case existing of
     Right user -> return user
     Left (ErrorWithContext {err = NoSuchUser {}}) -> do
       DB.newUser
-        (GhLogin "dev-user")
+        (ForgeLogin githubForge "dev-user")
         (Email "dev-user@example.com")
         FreeSubscription
         True

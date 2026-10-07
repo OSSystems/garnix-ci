@@ -21,6 +21,7 @@ import Data.Aeson.Encode.Pretty (encodePretty)
 import Data.Aeson.Encoding qualified as Aeson
 import Data.Aeson.Key qualified as AesonKey
 import Data.Aeson.KeyMap (toMapText)
+import Data.Aeson.KeyMap qualified as KeyMap
 import Data.Aeson.Types qualified as JSON
 import Data.ByteString.Lazy qualified as BSL
 import Data.Generics.Product (HasField' (..))
@@ -409,6 +410,7 @@ outputsForBuild build = buildOutputs <$> _buildOutputPaths build
 
 data Build = Build
   { _buildId :: BuildId,
+    _buildForge :: ForgeSlug,
     _buildRepoUser :: GhRepoOwner,
     _buildRepoName :: GhRepoName,
     _buildPrFromFork :: Maybe PrFromFork,
@@ -447,6 +449,7 @@ instance Pretty Build where
         2
         ( vsep
             [ "id:" <> pretty (_buildId s),
+              "forge:" <+> pretty (_buildForge s),
               "repoUser:" <+> pretty (_buildRepoUser s),
               "repoName:" <+> pretty (_buildRepoName s),
               "prFromFork:" <+> pretty (_buildPrFromFork s),
@@ -483,6 +486,7 @@ newtype RawLogs = RawLogs {getRawLogs :: Text}
 
 data BuildResponse = BuildResponse
   { _buildResponseId :: BuildId,
+    _buildResponseForge :: ForgeSlug,
     _buildResponseRepoUser :: GhRepoOwner,
     _buildResponseRepoName :: GhRepoName,
     _buildResponseGitCommit :: CommitHash,
@@ -669,7 +673,8 @@ instance Pretty CheckStatus where
   pretty = pretty . review asCheckStatus
 
 data Commit = Commit
-  { _commitRepoOwner :: GhRepoOwner,
+  { _commitForge :: ForgeSlug,
+    _commitRepoOwner :: GhRepoOwner,
     _commitRepoName :: GhRepoName,
     _commitHash :: CommitHash,
     _commitStatus :: CommitStatus,
@@ -685,6 +690,7 @@ data FullCommitState
 data Run = Run
   { _runId :: RunId,
     _runName :: Text,
+    _runForge :: ForgeSlug,
     _runRepoUser :: GhRepoOwner,
     _runRepoName :: GhRepoName,
     _runGitCommit :: CommitHash,
@@ -1006,7 +1012,8 @@ instance (FromJSON secret) => FromJSON (GhUserCredentials secret) where
   parseJSON = ourParseJSON
 
 data CommitSummary = CommitSummary
-  { _commitSummaryRepoOwner :: GhRepoOwner,
+  { _commitSummaryForge :: ForgeSlug,
+    _commitSummaryRepoOwner :: GhRepoOwner,
     _commitSummaryRepoName :: GhRepoName,
     _commitSummaryRepoIsPublic :: RepoPublicity,
     _commitSummaryGitCommit :: CommitHash,
@@ -1422,6 +1429,7 @@ newtype UserId = UserId {getUserId :: Int32}
 
 data User = User
   { _userId :: UserId,
+    _userForge :: ForgeSlug,
     _userGithubLogin :: GhLogin,
     _userEmail :: Email,
     _userSubscriptionType :: SubscriptionType,
@@ -1433,7 +1441,13 @@ instance ToJSON User where
   toEncoding = ourToEncoding
   toJSON = ourToJSON
 
-instance FromJSON User where parseJSON = ourParseJSON
+-- | Sessions minted before users carried their forge have no @forge@ field;
+-- they all belong to GitHub accounts.
+instance FromJSON User where
+  parseJSON = withObject "User" $ \obj ->
+    ourParseJSON
+      $ Aeson.Object
+      $ KeyMap.insertWith (\_default given -> given) "forge" (Aeson.toJSON githubForge) obj
 
 data AuthJwtPayload = WebSession User | ApiSession User
   deriving stock (Eq, Show, Generic)
@@ -1462,6 +1476,7 @@ instance ToJSON AuthJwtPayload where
   toJSON payload =
     JSON.Object
       $ ("id" Aeson..= _userId user)
+      <> ("forge" Aeson..= _userForge user)
       <> ("github_login" Aeson..= _userGithubLogin user)
       <> ("email" Aeson..= _userEmail user)
       <> ("subscription_type" Aeson..= _userSubscriptionType user)
@@ -1493,6 +1508,7 @@ instance ToJSON InstallationStatus where
 
 data CreatingUser a = CreatingUser
   { _creatingUserExists :: Bool,
+    _creatingUserForge :: ForgeSlug,
     _creatingUserGithubLogin :: GhLogin,
     _creatingUserEmail :: Email,
     _creatingUserGithubToken :: a
@@ -1751,3 +1767,19 @@ makePrisms ''CommitStatus
 makePrisms ''CheckStatus
 makePrisms ''Commit
 makePrisms ''FullCommitState
+
+buildRepoId :: Build -> RepoId
+buildRepoId b = RepoId (_buildForge b) (_buildRepoUser b) (_buildRepoName b)
+
+runRepoId :: Run -> RepoId
+runRepoId r = RepoId (_runForge r) (_runRepoUser r) (_runRepoName r)
+
+commitRepoId :: Commit -> RepoId
+commitRepoId c = RepoId (_commitForge c) (_commitRepoOwner c) (_commitRepoName c)
+
+commitSummaryRepoId :: CommitSummary -> RepoId
+commitSummaryRepoId c = RepoId (_commitSummaryForge c) (_commitSummaryRepoOwner c) (_commitSummaryRepoName c)
+
+userForgeLogin :: User -> ForgeLogin
+userForgeLogin u = ForgeLogin (_userForge u) (_userGithubLogin u)
+

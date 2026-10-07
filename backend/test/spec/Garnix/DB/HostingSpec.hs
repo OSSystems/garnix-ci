@@ -1,14 +1,19 @@
 module Garnix.DB.HostingSpec (spec) where
 
 import Control.Concurrent.Async.Lifted (replicateConcurrently)
+import Data.Map.Strict qualified as Map
 import Data.Maybe (maybeToList)
+import Database.PostgreSQL.Typed (pgSQL)
+import Garnix.DB qualified as DB
 import Garnix.DB.Hosting qualified as Hosting
+import Garnix.Duration (toSeconds)
+import Garnix.Hosting.Helpers (RunningServer (..), getRunningAndRecentServersForOwners)
 import Garnix.Hosting.Types
 import Garnix.Monad (M)
 import Garnix.Prelude
 import Garnix.TestHelpers (testBuild, truncateDBM)
-import Garnix.TestHelpers.Monad (beforeM_, inM, shouldBeM, shouldReturnM)
-import Garnix.Types (Build (..), BuildId)
+import Garnix.TestHelpers.Monad (beforeM_, inM, shouldBeM, shouldReturnM, shouldSatisfyM)
+import Garnix.Types (Build (..), BuildId, ForgeSlug (..), GhPullRequestId (..), githubForge)
 import Test.Hspec
 
 small :: ServerTier
@@ -116,3 +121,39 @@ spec = inM $ beforeM_ truncateDBM $ do
       second <- fmap _serverInfoEndedAt <$> Hosting.getServer serverId
       fmap isJust first `shouldBeM` Just True
       second `shouldBeM` first
+
+  describe "owners on different forges" $ do
+    -- "acme" on github and "acme" on another forge are two accounts: neither
+    -- sees, deletes or is billed for the other's deploys and builds.
+    let otherForge = ForgeSlug "git.example"
+        deployOn forge' = do
+          now <- liftIO getCurrentTime
+          build <-
+            testBuild $ \b ->
+              b
+                { _buildForge = forge',
+                  _buildRepoUser = "acme",
+                  _buildStartTime = addUTCTime (-60) now,
+                  _buildEndTime = Just now
+                }
+          void $ warm small
+          Hosting.claimPoolServer MicroVM small (_buildId build) (Just (GhPullRequestId 1)) False
+
+    it "lists an owner's servers on its own forge only" $ do
+      void $ deployOn githubForge
+      onOther <- deployOn otherForge
+      (map _runningServerId <$> getRunningAndRecentServersForOwners otherForge ["acme"])
+        `shouldReturnM` maybeToList onOther
+
+    it "counts an owner's build and deploy time on its own forge only" $ do
+      onGithub <- deployOn githubForge
+      void $ deployOn otherForge
+      -- The github deploy has been up for ten minutes, the other one just came up.
+      forM_ onGithub $ \serverId ->
+        void $ DB.pgExec [pgSQL| UPDATE servers SET ready_at = now() - interval '10 minutes' WHERE id = ${serverId} |]
+      usage <- DB.getCurrentMonthUsages otherForge ["acme"]
+      liftIO $ (toSeconds <$> Map.lookup "acme" usage) `shouldSatisfy` maybe False (\s -> s > 50 && s < 70)
+      onOtherDeployTime <- toSeconds <$> DB.getPrDeployDurationForOwner otherForge "acme"
+      onOtherDeployTime `shouldSatisfyM` (< 60)
+      onGithubDeployTime <- toSeconds <$> DB.getPrDeployDurationForOwner githubForge "acme"
+      onGithubDeployTime `shouldSatisfyM` (> 540)

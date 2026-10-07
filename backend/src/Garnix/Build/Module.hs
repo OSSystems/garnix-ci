@@ -22,13 +22,14 @@ import Garnix.Monad.SubProcess qualified as SubProcess
 import Garnix.NixConfig qualified as NixConfig
 import Garnix.Prelude
 import Garnix.Sandbox
-import Garnix.Types (Branch (..), CommitInfo (..), Error (..), ForgeLogin (..), GhLogin, RepoId (..), credentials, getCommitHash, getGhLogin, getGhRepoName, getGhRepoOwner, ghToken, githubForge)
+import Garnix.Types (Branch (..), CommitInfo (..), Error (..), ForgeLogin (..), RepoId (..), credentials, getCommitHash, getGhLogin, getGhRepoName, getGhRepoOwner, ghToken)
 
-getCommitInfo :: GhLogin -> ModuleValues.GetRepoAndModuleValues -> M CommitInfo
-getCommitInfo reqUser modules = do
+-- | The repository a user keeps their modules in lives on that user's forge.
+getCommitInfo :: ForgeLogin -> ModuleValues.GetRepoAndModuleValues -> M CommitInfo
+getCommitInfo reqUser@(ForgeLogin userForge _) modules = do
   case (modules ^. #repo_user, modules ^. #repo_name) of
     (Just user, Just repo) -> do
-      let repoId' = RepoId githubForge user repo
+      let repoId' = RepoId userForge user repo
       repoInfo' <-
         resolveRepo repoId'
           >>= maybe (throw $ NoSuchRepo {_owner = user, _name = repo}) pure
@@ -39,7 +40,7 @@ getCommitInfo reqUser modules = do
           commit <- getHeadCommit (repoInfo' ^. ghToken) repoId' branch
           pure
             $ CommitInfo
-              { _commitInfoReqUser = ForgeLogin githubForge reqUser,
+              { _commitInfoReqUser = reqUser,
                 _commitInfoRepoPublicity = repoPublicity,
                 _commitInfoRepoInfo = repoInfo',
                 _commitInfoBranch = Just branch,

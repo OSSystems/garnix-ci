@@ -187,7 +187,7 @@ buildPkg = curry6
                 abortOnCancellation build q
               log Informational "buildPkg: build finished, checking status"
               forkM $ do
-                S3Cache.upload runReporter (RepoId githubForge (build ^. repoUser) (build ^. repoName)) evaluationResult (build ^. repoIsPublic)
+                S3Cache.upload runReporter (buildRepoId build) evaluationResult (build ^. repoIsPublic)
                 DB.setBuildUploaded (build ^. id)
               case status' of
                 Failure -> log Warning "build failed"
