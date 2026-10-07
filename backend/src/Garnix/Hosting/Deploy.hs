@@ -24,6 +24,7 @@ module Garnix.Hosting.Deploy
     parseLoginUsers,
     failedUnitsFromActivation,
     publicHostFor,
+    deployerGithubKeys,
   )
 where
 
@@ -616,10 +617,19 @@ redeployServer reporter commitInfo deploymentType serverInfo wanted = do
 -- or a port in the config has to take effect on the next deploy.
 configureServer :: SshUser -> CommitInfo -> ServerInfo -> ServerToSpinUp -> M ()
 configureServer sshUser commitInfo serverInfo wanted = do
+  let deployer = commitInfo ^. reqUser
+  deployerKeys <-
+    if _serverToSpinUpAuthorizeDeployerGithubKeys wanted
+      then case deployerGithubKeys deployer of
+        Just login -> pure (Just login)
+        Nothing -> do
+          log Informational $ "not authorizing GitHub keys for " <> getForgeSlug (deployer ^. forge) <> " user " <> getGhLogin (deployer ^. ghLogin)
+          pure Nothing
+      else pure Nothing
   copyAuthorizedKeys
     sshUser
     serverInfo
-    (if _serverToSpinUpAuthorizeDeployerGithubKeys wanted then Just (commitInfo ^. reqUser . ghLogin) else Nothing)
+    deployerKeys
     (_serverToSpinUpAuthorizedSSHKeys wanted)
     <?> "Synchronizing SSH keys"
   exposeResult <- exposeServerPorts serverInfo wanted
@@ -628,6 +638,14 @@ configureServer sshUser commitInfo serverInfo wanted = do
       (_serverInfoId serverInfo)
       result
       (_serverToSpinUpHttpPorts wanted)
+
+-- | The GitHub account whose keys a deploy may authorize for the user who
+-- requested it. A login on another forge is not the GitHub account of the same
+-- name, so it has none.
+deployerGithubKeys :: ForgeLogin -> Maybe GhLogin
+deployerGithubKeys deployer
+  | deployer ^. forge == githubForge = Just (deployer ^. ghLogin)
+  | otherwise = Nothing
 
 -- | Deploy a NixOS configuration onto a freshly provisioned guest. Does not
 -- touch the previous generation.
