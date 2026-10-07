@@ -62,10 +62,11 @@ data RunningServer = RunningServer
 instance ToJSON RunningServer where
   toJSON = ourToJSON
 
--- | Every server of these owners that is running, plus those that ended in the
--- last day so a user can still see why a deploy went away.
-getRunningAndRecentServersForOwners :: [GhRepoOwner] -> M [RunningServer]
-getRunningAndRecentServersForOwners owners = do
+-- | Every server of these owners on this forge that is running, plus those
+-- that ended in the last day so a user can still see why a deploy went away.
+-- The same owner name on another forge is somebody else.
+getRunningAndRecentServersForOwners :: ForgeSlug -> [GhRepoOwner] -> M [RunningServer]
+getRunningAndRecentServersForOwners forge' owners = do
   domain <- view #hostingDomain
   exposures <- DBHosting.getServerExposures
   domainsByServer <- DBHosting.getServerDomains
@@ -79,7 +80,8 @@ getRunningAndRecentServersForOwners owners = do
            host(servers.ipv4), servers.deploy_logs
     FROM servers
     INNER JOIN builds ON servers.configuration_build_id = builds.id
-    WHERE builds.repo_user = ANY(${owners})
+    WHERE builds.forge = ${forge'}
+      AND builds.repo_user = ANY(${owners})
       AND (servers.ended_at IS NULL OR servers.ended_at > now() - interval '24 hours')
     ORDER BY servers.created_at DESC
   |]

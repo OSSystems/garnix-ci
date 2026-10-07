@@ -58,7 +58,7 @@ getRunWithAccess access user' runId = do
   run <- case run' of
     Just run -> pure run
     Nothing -> throw (NoSuchRun runId)
-  let runRepo = RepoId githubForge (run ^. repoUser) (run ^. repoName)
+  let runRepo = runRepoId run
   credentials' <-
     resolveCredentials runRepo
       >>= maybe (throw $ OtherError "Failed to look up the repository's credentials") pure
@@ -73,7 +73,7 @@ getBuildWithAccess access user' buildId = do
         Read -> hasAccessTo
         Cancel -> canCancelBuild
   build <- DB.getBuild buildId
-  hasAccess <- accessCheck user' (build ^. repoIsPublic) (build ^. reqUser) (RepoId githubForge (build ^. repoUser) (build ^. repoName))
+  hasAccess <- accessCheck user' (build ^. repoIsPublic) (build ^. reqUser) (buildRepoId build)
   when (not hasAccess) $ throw (NoSuchBuild buildId)
   pure build
 

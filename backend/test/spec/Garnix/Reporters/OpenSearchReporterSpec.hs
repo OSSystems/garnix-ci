@@ -44,6 +44,7 @@ spec = do
             {
               id: #{runId},
               name: "test run name",
+              forge: "github",
               repo_user: "owner",
               repo_name: "repo",
               git_commit: #{commitInfo ^. commit},

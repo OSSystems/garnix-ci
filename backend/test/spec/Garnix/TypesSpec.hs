@@ -17,6 +17,7 @@ spec = describe "Types" $ do
     let testUser now =
           User
             { _userId = UserId 123,
+              _userForge = githubForge,
               _userGithubLogin = "some-user",
               _userEmail = "foo@example.org",
               _userSubscriptionType = FreeSubscription,
@@ -29,6 +30,7 @@ spec = describe "Types" $ do
         `shouldBe` [aesonQQ|
                      {
                        "id": 123,
+                       "forge": "github",
                        "github_login": "some-user",
                        "email": "foo@example.org",
                        "subscription_type": "free",
@@ -41,6 +43,26 @@ spec = describe "Types" $ do
       now <- getCurrentTime
       forM_ [WebSession (testUser now), ApiSession (testUser now)] $ \payload ->
         eitherDecode' (encode payload) `shouldBe` Right payload
+
+    it "reads sessions minted before users carried a forge as github accounts" $ do
+      now <- getCurrentTime
+      let json =
+            [i|
+              {
+                "id": 123,
+                "github_login": "some-user",
+                "email": "foo@example.org",
+                "subscription_type": "free",
+                "created_at": #{encode now},
+                "session_kind": "web"
+              }
+            |]
+      eitherDecode' (cs json) `shouldBe` Right (WebSession (testUser now))
+
+    it "keeps the forge of a session" $ do
+      now <- getCurrentTime
+      let payload = WebSession (testUser now & forge .~ ForgeSlug "git.example")
+      eitherDecode' (encode payload) `shouldBe` Right payload
 
     it "refuses sessions minted before the github token moved to the database" $ do
       now <- getCurrentTime

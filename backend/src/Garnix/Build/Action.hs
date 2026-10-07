@@ -71,7 +71,7 @@ run flakeDir repoConfig reporter commitInfo attr actionConfig build =
       copyClosure derivation <?> "Action: copy closure"
       privKey <- case build ^. prFromFork of
         Nothing -> do
-          Just . snd <$> Keys.getActionKeys (RepoId githubForge (build ^. repoUser) (build ^. repoName)) (build ^. package)
+          Just . snd <$> Keys.getActionKeys (buildRepoId build) (build ^. package)
         Just _fork -> pure Nothing
       withTimeout $ runAction runReporter actionConfig command privKey environmentVars <?> "Action: execute"
   where

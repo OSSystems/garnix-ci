@@ -89,9 +89,9 @@ getViewableOwners user token = do
     : [(org, AppInstalled) | org <- adminOrgs]
       <> [(org, AppInstalledWithoutMemberAccess) | org <- Set.toList opaqueOrgs]
 
-getUsageForOrg :: Map.Map GhRepoOwner Duration -> GhRepoOwner -> InstallationStatus -> M OrgUsage
-getUsageForOrg usage org installationStatus = do
-  prDeploymentTime <- DB.getPrDeployDurationForOwner org
+getUsageForOrg :: ForgeSlug -> Map.Map GhRepoOwner Duration -> GhRepoOwner -> InstallationStatus -> M OrgUsage
+getUsageForOrg forge' usage org installationStatus = do
+  prDeploymentTime <- DB.getPrDeployDurationForOwner forge' org
   pure
     OrgUsage
       { _orgUsageCiTime = fromMaybe emptyDuration $ Map.lookup org usage,
@@ -102,16 +102,16 @@ getUsageForOrg usage org installationStatus = do
 usageOverview :: AuthResult AuthJwtPayload -> M UsageOverview
 usageOverview (Authenticated (WebSession user)) = do
   owners <- withGithubUserToken user $ getViewableOwners user
-  usage <- DB.getCurrentMonthUsages (Map.keys owners)
-  UsageOverview <$> Map.traverseWithKey (getUsageForOrg usage) owners
+  usage <- DB.getCurrentMonthUsages (user ^. forge) (Map.keys owners)
+  UsageOverview <$> Map.traverseWithKey (getUsageForOrg (user ^. forge) usage) owners
 usageOverview _ = throw Unauthorized
 
 orgUsage :: AuthResult AuthJwtPayload -> GhRepoOwner -> M OrgUsage
 orgUsage (Authenticated (WebSession user)) org = do
   owners <- withGithubUserToken user $ getViewableOwners user
   installationStatus <- maybe (throw NotFound) pure $ Map.lookup org owners
-  usage <- DB.getCurrentMonthUsages [org]
-  getUsageForOrg usage org installationStatus
+  usage <- DB.getCurrentMonthUsages (user ^. forge) [org]
+  getUsageForOrg (user ^. forge) usage org installationStatus
 orgUsage _ _ = throw Unauthorized
 
 data GetTokensResponseBody = GetTokensResponseBody

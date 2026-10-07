@@ -75,7 +75,7 @@ handlePullRequest reporter commitInfo prId = do
     deployPrServers =
       Build.Checkout.withCheckout commitInfo
         $ withSpan prId
-        $ withInternalCacheToken (commitInfo ^. Types.reqUser . ghLogin)
+        $ withInternalCacheToken (commitInfo ^. Types.reqUser)
         $ void
         $ rolloutNewServerVersion reporter commitInfo (GhPrDeployment prId)
 
@@ -112,9 +112,9 @@ handleRerun ev = do
   withSpan (build' ^. id) $ do
     let commitInfo =
           CommitInfo
-            { _commitInfoReqUser = ForgeLogin githubForge (ev ^. #reqUser),
+            { _commitInfoReqUser = ForgeLogin (build' ^. forge) (ev ^. #reqUser),
               _commitInfoRepoPublicity = ev ^. #repoIsPublic,
-              _commitInfoRepoInfo = RepoInfo (ev ^. #credentials) (ev ^. #token) (RepoId githubForge (build' ^. repoUser) (build' ^. repoName)),
+              _commitInfoRepoInfo = RepoInfo (ev ^. #credentials) (ev ^. #token) (buildRepoId build'),
               _commitInfoBranch = build' ^. branch,
               _commitInfoPrFromFork = build' ^. prFromFork,
               _commitInfoCommit = build' ^. gitCommit

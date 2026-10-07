@@ -230,7 +230,7 @@ mkTestUser :: GhToken -> M User
 mkTestUser token = do
   user <-
     DB.newUser
-      (GhLogin "mock-user")
+      (ForgeLogin githubForge (GhLogin "mock-user"))
       (Email "mock-user@example.com")
       FreeSubscription
       True

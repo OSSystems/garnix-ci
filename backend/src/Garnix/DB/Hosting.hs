@@ -47,10 +47,12 @@ import Garnix.Types
     GhPullRequestId,
     GhRepoName,
     GhRepoOwner,
+    HasForge (forge),
     HasRepoId (repoId),
     HasRepoName (repoName),
     HasRepoUser (repoUser),
     PackageName (..),
+    RepoId (..),
     RepoInfo,
   )
 
@@ -268,7 +270,8 @@ decodeServer
 -- already running before it decides what to change.
 getRunningServersOf :: RepoInfo -> DeploymentType -> M [ServerInfo]
 getRunningServersOf repoInfo deploymentType = do
-  let owner = repoInfo ^. repoId . repoUser
+  let forge' = repoInfo ^. repoId . forge
+      owner = repoInfo ^. repoId . repoUser
       repo = repoInfo ^. repoId . repoName
   rows <- case deploymentType of
     BranchDeployment branch ->
@@ -281,7 +284,8 @@ getRunningServersOf repoInfo deploymentType = do
              servers.is_primary, builds.persistence_name
       FROM servers
       INNER JOIN builds ON servers.configuration_build_id = builds.id
-      WHERE builds.repo_user = ${owner}
+      WHERE builds.forge = ${forge'}
+        AND builds.repo_user = ${owner}
         AND builds.repo_name = ${repo}
         AND builds.branch = ${branch}
         AND servers.pull_request IS NULL
@@ -298,7 +302,8 @@ getRunningServersOf repoInfo deploymentType = do
              servers.is_primary, builds.persistence_name
       FROM servers
       INNER JOIN builds ON servers.configuration_build_id = builds.id
-      WHERE builds.repo_user = ${owner}
+      WHERE builds.forge = ${forge'}
+        AND builds.repo_user = ${owner}
         AND builds.repo_name = ${repo}
         AND servers.pull_request = ${prId}
         AND servers.ended_at IS NULL
@@ -679,29 +684,28 @@ getServerStatsHistory serverId = do
 
 -- | Claim the right to post this pull request's addresses. True exactly once
 -- per pull request, however many pushes it collects.
-claimDeployUrlComment :: GhRepoOwner -> GhRepoName -> GhPullRequestId -> M Bool
-claimDeployUrlComment owner name pullRequest =
+claimDeployUrlComment :: RepoId -> GhPullRequestId -> M Bool
+claimDeployUrlComment (RepoId forge' owner name) pullRequest =
   (== 1)
     <$> DB.pgExec
       [pgSQL|
-        INSERT INTO deploy_comments (repo_user, repo_name, pull_request, kind)
-        VALUES (${owner}, ${name}, ${pullRequest}, 'url')
+        INSERT INTO deploy_comments (forge, repo_user, repo_name, pull_request, kind)
+        VALUES (${forge'}, ${owner}, ${name}, ${pullRequest}, 'url')
         ON CONFLICT DO NOTHING
       |]
 
 -- | Claim the right to report a failed deploy. Scoped to the commit, so a
 -- later push that breaks a working deploy is still reported.
 claimDeployFailureComment ::
-  GhRepoOwner ->
-  GhRepoName ->
+  RepoId ->
   GhPullRequestId ->
   CommitHash ->
   M Bool
-claimDeployFailureComment owner name pullRequest commit =
+claimDeployFailureComment (RepoId forge' owner name) pullRequest commit =
   (== 1)
     <$> DB.pgExec
       [pgSQL|
-        INSERT INTO deploy_comments (repo_user, repo_name, pull_request, kind, git_commit)
-        VALUES (${owner}, ${name}, ${pullRequest}, 'failure', ${commit})
+        INSERT INTO deploy_comments (forge, repo_user, repo_name, pull_request, kind, git_commit)
+        VALUES (${forge'}, ${owner}, ${name}, ${pullRequest}, 'failure', ${commit})
         ON CONFLICT DO NOTHING
       |]

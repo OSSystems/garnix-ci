@@ -42,6 +42,7 @@ getRunLogs mUser runId mAfter = do
 data RunSummary = RunSummary
   { _runSummaryId :: Text,
     _runSummaryName :: Text,
+    _runSummaryForge :: ForgeSlug,
     _runSummaryRepoUser :: GhRepoOwner,
     _runSummaryRepoName :: GhRepoName,
     _runSummaryGitCommit :: CommitHash,
@@ -57,6 +58,7 @@ toRunSummary run@(Run {_runId, _runName, _runStatus, _runStartTime, _runEndTime}
   RunSummary
     { _runSummaryId = getRunId _runId ^. re hashIdText,
       _runSummaryName = _runName,
+      _runSummaryForge = run ^. forge,
       _runSummaryRepoUser = run ^. repoUser,
       _runSummaryRepoName = run ^. repoName,
       _runSummaryGitCommit = run ^. gitCommit,

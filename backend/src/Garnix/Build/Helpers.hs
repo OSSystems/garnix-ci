@@ -20,7 +20,7 @@ withPrivateNixXdgCache action = do
   local (#nixXdgCacheDir ?~ tempDir) $ do
     action <?> "running action with private nix xdg cache"
 
-withInternalCacheToken :: GhLogin -> M a -> M a
+withInternalCacheToken :: ForgeLogin -> M a -> M a
 withInternalCacheToken reqUser cont = do
   token <- DB.getUserInternalToken reqUser
   (path, handle) <- safeSystemTempFile "garnix-netrc"
@@ -28,7 +28,7 @@ withInternalCacheToken reqUser cont = do
     hPutStrLn handle
       . unlines
       $ [ "machine cache.garnix.io",
-          "login " <> cs (getGhLogin reqUser),
+          "login " <> cs (getGhLogin (_forgeLoginGhLogin reqUser)),
           "password " <> cs (getInternalCacheToken token)
         ]
     hClose handle

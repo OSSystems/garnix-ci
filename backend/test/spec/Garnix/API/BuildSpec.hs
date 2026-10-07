@@ -384,4 +384,4 @@ spec = inM $ aroundM_ suppressLogsWhenPassing $ beforeM_ truncateDBM $ do
 
 testUser :: GhLogin -> Email -> M User
 testUser ghLogin email =
-  DB.newUser ghLogin email FreeSubscription True
+  DB.newUser (ForgeLogin githubForge ghLogin) email FreeSubscription True

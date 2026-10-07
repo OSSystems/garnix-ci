@@ -3,10 +3,17 @@ module Garnix.DBSpec (spec) where
 import Control.Concurrent.Async.Lifted (replicateConcurrently)
 import Control.Exception qualified as E
 import Control.Monad.Trans.Control (liftBaseDiscard)
+import Data.Aeson.Lens (key, _String)
 import Data.Set qualified as Set
 import Data.Text qualified as T
 import Database.PostgreSQL.Typed
 import Database.PostgreSQL.Typed qualified as PSQL
+import Database.PostgreSQL.Typed.Protocol (pgBegin, pgRollback, pgSimpleQueries_)
+import Database.PostgreSQL.Typed.TH (getTPGDatabase)
+import Garnix.API.Builds (getBuild')
+import Garnix.API.Commits (GetCommit (..), getSingleCommit)
+import Garnix.API.Keys (getActionPublicKey, getRepoPublicKey)
+import Garnix.API.Runs (toRunSummary)
 import Garnix.DB qualified as DB
 import Garnix.Duration (fromDays, fromHours, fromMinutes, fromSeconds)
 import Garnix.Monad (M, throw)
@@ -27,7 +34,7 @@ spec = do
     it "allows duplicate builds" $ do
       user <-
         DB.newUser
-          (GhLogin "user")
+          (ForgeLogin githubForge (GhLogin "user"))
           (Email "foo@x.com")
           FreeSubscription
           True
@@ -74,8 +81,8 @@ spec = do
           (hostname, last_heartbeat)
           VALUES ('test', NOW())
           |]
-        void $ DB.newUser (GhLogin "conflict") (Email "a@a") FreeSubscription True
-        void $ DB.newUser (GhLogin "conflict") (Email "a@a") FreeSubscription True
+        void $ DB.newUser (ForgeLogin githubForge (GhLogin "conflict")) (Email "a@a") FreeSubscription True
+        void $ DB.newUser (ForgeLogin githubForge (GhLogin "conflict")) (Email "a@a") FreeSubscription True
       hb <- DB.getRecentServerHeartbeats
       liftIO $ hb `shouldBe` []
 
@@ -111,7 +118,7 @@ spec = do
 
   context "getUserInternalToken" $ inM $ beforeM_ truncateDBM $ do
     it "gets the same token when called by multiple threads concurrently" $ do
-      results <- replicateConcurrently 50 (DB.getUserInternalToken $ GhLogin "user")
+      results <- replicateConcurrently 50 (DB.getUserInternalToken $ ForgeLogin githubForge (GhLogin "user"))
       case results of
         [] -> liftIO $ expectationFailure "expected 50 tokens, got none"
         firstResult : _ -> liftIO $ results `shouldBe` replicate 50 firstResult
@@ -347,6 +354,13 @@ spec = do
       build <- testBuild ((gitCommit .~ "aaaa") . (endTime ?~ now))
       DB.getIncrementalTarget (build & repoName .~ "somethingelse") ["aaaa"] `shouldReturnM` []
 
+    it "ignores an unfinished build of the same commit in a mirror on another forge" $ do
+      now <- liftIO getCurrentTime
+      baseBuild <- testBuild (forge .~ otherForge)
+      build <- testBuild ((forge .~ otherForge) . (gitCommit .~ "aaaa") . (endTime ?~ now))
+      _ <- testBuild (gitCommit .~ "aaaa")
+      DB.getIncrementalTarget baseBuild ["aaaa"] `shouldReturnM` [build]
+
   let wrap test = do
         socketPath <- getEnv "TPG_SOCK"
         user <- getEnv "TPG_USER"
@@ -360,6 +374,174 @@ spec = do
       DB.addVerifiedFod verifiedDrvPath (StorePath (StoreHash "hash3") "foo")
       DB.keepUnverifiedFods (Set.fromList [(verifiedDrvPath, ()), (unverifiedDrvPath, ())])
         `shouldReturnM` Set.fromList [(unverifiedDrvPath, ())]
+
+  describe "repositories on different forges" $ inM $ beforeM_ truncateDBM $ do
+    -- The same owner and name on two forges, under a fresh name each run so
+    -- that rows left behind in tables truncateDBM does not clear never match.
+    let freshRepos :: M (RepoId, RepoId)
+        freshRepos = do
+          suffix <- randomBase64 8
+          let owner = GhRepoOwner (GhLogin ("acme-" <> suffix))
+          pure (RepoId githubForge owner "site", RepoId otherForge owner "site")
+
+    it "keeps separate builds" $ do
+      (onGithub, onOther) <- freshRepos
+      githubBuild <- DB.newBuildDB (commitOn onGithub) packageInfo "garnix-server-test" False
+      otherBuild <- DB.newBuildDB (commitOn onOther) packageInfo "garnix-server-test" False
+      (githubBuild ^. forge) `shouldBeM` githubForge
+      (otherBuild ^. forge) `shouldBeM` otherForge
+      (map (^. id) <$> DB.getBuildsByCommit onGithub sharedCommit) `shouldReturnM` [githubBuild ^. id]
+      (map (^. id) <$> DB.getBuildsByCommit onOther sharedCommit) `shouldReturnM` [otherBuild ^. id]
+      (buildRepoId <$> DB.getBuild (otherBuild ^. id)) `shouldReturnM` onOther
+
+    it "keeps separate commits" $ do
+      (onGithub, onOther) <- freshRepos
+      DB.newCommit onGithub sharedCommit
+      DB.newCommit onOther sharedCommit
+      DB.setCommitStatus onGithub sharedCommit Evaluated
+      (fmap (^. status) <$> DB.getCommit onGithub sharedCommit) `shouldReturnM` Just Evaluated
+      (fmap (^. status) <$> DB.getCommit onOther sharedCommit) `shouldReturnM` Just Evaluating
+      (fmap commitRepoId <$> DB.getCommit onOther sharedCommit) `shouldReturnM` Just onOther
+
+    it "keeps separate pushes" $ do
+      (onGithub, onOther) <- freshRepos
+      DB.registerPush onGithub sharedCommit "main" `shouldReturnM` DB.NewPush
+      DB.registerPush onOther sharedCommit "main" `shouldReturnM` DB.NewPush
+      DB.registerPush onOther sharedCommit "main" `shouldReturnM` DB.AlreadyPushed
+
+    it "keeps separate deployer and action keys" $ do
+      (onGithub, onOther) <- freshRepos
+      githubKey <- getRepoPublicKey onGithub
+      otherKey <- getRepoPublicKey onOther
+      otherKey `shouldNotBeM` githubKey
+      getRepoPublicKey onGithub `shouldReturnM` githubKey
+      getRepoPublicKey onOther `shouldReturnM` otherKey
+      githubActionKey <- getActionPublicKey onGithub "deploy"
+      otherActionKey <- getActionPublicKey onOther "deploy"
+      otherActionKey `shouldNotBeM` githubActionKey
+      getActionPublicKey onOther "deploy" `shouldReturnM` otherActionKey
+
+    it "tags cached store paths with the forge" $ do
+      (onGithub, onOther) <- freshRepos
+      let hash = StoreHash "00000000000000000000000000forge0"
+      DB.tagCacheUploadForS3Cache onGithub hash
+      DB.tagCacheUploadForS3Cache onOther hash
+      (Set.fromList <$> DB.getReposForHash hash) `shouldReturnM` Set.fromList [onGithub, onOther]
+
+    it "summarises a commit with the forge it was built on" $ do
+      (_, onOther) <- freshRepos
+      void $ DB.newBuildDB (commitOn onOther) packageInfo "garnix-server-test" False
+      (map commitSummaryRepoId <$> DB.getCommitSummaries sharedCommit) `shouldReturnM` [onOther]
+
+    it "summarises a commit built on two forges once per repository" $ do
+      (onGithub, onOther) <- freshRepos
+      let buildOn repo pkg status' publicity =
+            testBuild
+              $ (forge .~ (repo ^. forge))
+              . (repoUser .~ (repo ^. repoUser))
+              . (repoName .~ (repo ^. repoName))
+              . (gitCommit .~ sharedCommit)
+              . (package .~ pkg)
+              . (status ?~ status')
+              . (repoIsPublic .~ RepoIsPublic publicity)
+      void $ buildOn onGithub "a" Failure False
+      void $ buildOn onGithub "b" Failure False
+      void $ buildOn onOther "a" Success True
+      let counts s = (commitSummaryRepoId s, s ^. succeeded, s ^. failed)
+      (Set.fromList . map counts <$> DB.getCommitSummaries sharedCommit)
+        `shouldReturnM` Set.fromList [(onGithub, 0, 2), (onOther, 1, 0)]
+      -- Anonymous visitors only see the public mirror, never the private
+      -- repository's builds merged into it.
+      GetCommit summary _ _ <- getSingleCommit Nothing sharedCommit
+      counts summary `shouldBeM` (onOther, 1, 0)
+
+    it "names the forge in build, run and commit responses" $ do
+      (_, onOther) <- freshRepos
+      let forgeField :: (ToJSON a) => a -> Maybe Text
+          forgeField = (^? key "forge" . _String) . toJSON
+      build <- DB.newBuildDB (commitOn onOther) packageInfo "garnix-server-test" False
+      run <- DB.newRun "check" (commitOn onOther)
+      forgeField build `shouldBeM` Just "git.example"
+      (forgeField <$> getBuild' Nothing (build ^. id)) `shouldReturnM` Just "git.example"
+      forgeField (toRunSummary run) `shouldBeM` Just "git.example"
+      (map forgeField <$> DB.getCommitSummaries sharedCommit) `shouldReturnM` [Just "git.example"]
+
+  describe "reverting forge_qualified_keys" $ inM $ beforeM_ truncateDBM $ do
+    let readRevert = liftIO $ T.lines . cs <$> readFile "../sql/revert/forge_qualified_keys.sql"
+        forgeTables =
+          catMaybes
+            <$> DB.pgQuery
+              [pgSQL|
+                SELECT table_name::text FROM information_schema.columns
+                  WHERE table_schema = 'public' AND column_name = 'forge'
+                  ORDER BY table_name
+              |]
+
+    it "checks every table that has a forge column" $ do
+      script <- T.unlines <$> readRevert
+      tables <- forgeTables
+      length tables `shouldBeM` 14
+      filter (\t -> not (("FROM " <> t <> " WHERE forge <> 'github'") `T.isInfixOf` script)) tables
+        `shouldBeM` []
+
+    it "refuses while any row belongs to a forge other than github" $ do
+      -- Without the refusal, dropping the column would hand this Gitea admin
+      -- to whoever owns the github login "mallory".
+      mallory <- DB.newUser (ForgeLogin otherForge "mallory") (Email "mallory@git.example") Admin True
+      script <- readRevert
+      others <- filter (/= "users") <$> forgeTables
+      -- The script commits on its own. Run its body in a transaction that is
+      -- always rolled back, so a weakened guard fails this spec instead of
+      -- reverting the test database. Inside it, empty the other tables, which
+      -- the truncation between specs leaves alone, so that mallory is the one
+      -- row the guard can see. Asserts are off, as a server may set.
+      let (transactionLines, body) = partition (`elem` ["BEGIN;", "COMMIT;"]) script
+          setup =
+            [ "SET LOCAL plpgsql.check_asserts = off;",
+              "TRUNCATE " <> T.intercalate ", " others <> " CASCADE;"
+            ]
+      liftIO $ transactionLines `shouldBe` ["BEGIN;", "COMMIT;"]
+      result <- liftIO $ E.bracket (pgConnect =<< getTPGDatabase) pgDisconnect $ \conn ->
+        E.bracket_ (pgBegin conn) (pgRollback conn)
+          $ E.try (pgSimpleQueries_ conn (cs (T.unlines (setup <> body))))
+      case result of
+        Left (err :: PGError) ->
+          liftIO $ show err `shouldSatisfy` T.isInfixOf "rows from forges other than github exist"
+        Right () -> liftIO $ expectationFailure "the revert ran although a git.example account exists"
+      DB.getUser (ForgeLogin otherForge "mallory") `shouldReturnM` mallory
+
+  describe "users on different forges" $ inM $ beforeM_ truncateDBM $ do
+    it "may share an email across forges, but not on one forge" $ do
+      let shared = Email "alice@example.com"
+      onGithub <- DB.newUser (ForgeLogin githubForge "alice") shared FreeSubscription True
+      onOther <- DB.newUser (ForgeLogin otherForge "alice") shared FreeSubscription True
+      (onOther ^. id) `shouldNotBeM` (onGithub ^. id)
+      again <- try $ DB.newUser (ForgeLogin otherForge "alice2") shared FreeSubscription True
+      liftIO $ (again :: Either ErrorWithContext User) `shouldSatisfy` isLeft
+
+    it "are distinct accounts" $ do
+      onGithub <- DB.newUser (ForgeLogin githubForge "alice") (Email "alice@github.example") FreeSubscription True
+      onOther <- DB.newUser (ForgeLogin otherForge "alice") (Email "alice@other.example") FreeSubscription True
+      (onOther ^. id) `shouldNotBeM` (onGithub ^. id)
+      userForgeLogin onOther `shouldBeM` ForgeLogin otherForge "alice"
+      DB.getUser (ForgeLogin githubForge "alice") `shouldReturnM` onGithub
+      DB.getUser (ForgeLogin otherForge "alice") `shouldReturnM` onOther
+      DB.getUserId (ForgeLogin otherForge "alice") `shouldReturnM` (onOther ^. id)
+
+    it "get their own internal cache tokens" $ do
+      githubToken <- DB.getUserInternalToken (ForgeLogin githubForge "alice")
+      otherToken <- DB.getUserInternalToken (ForgeLogin otherForge "alice")
+      getInternalCacheToken otherToken `shouldNotBeM` getInternalCacheToken githubToken
+
+    it "only see their own builds" $ do
+      onOther <- DB.newUser (ForgeLogin otherForge "alice") (Email "alice@other.example") FreeSubscription True
+      void
+        $ DB.newBuildDB
+          (commitOn (RepoId githubForge "alice" "site") & reqUser .~ ForgeLogin githubForge "alice")
+          packageInfo
+          "garnix-server-test"
+          False
+      DB.getBuilds onOther `shouldReturnM` []
 
   describe "getDBConnection" $ around_ wrap $ do
     let correctPassword = "garnix"
@@ -378,6 +560,28 @@ spec = do
     it "fails with wrong passwords" $ do
       DB.getDBConnection ["foo", "bar"] `shouldThrow` (\(e :: PGError) -> "password authentication failed" `isInfixOf` cs (show e))
       pure ()
+
+shouldNotBeM :: (HasCallStack, Show a, Eq a) => a -> a -> M ()
+shouldNotBeM a b = liftIO $ a `shouldNotBe` b
+
+otherForge :: ForgeSlug
+otherForge = ForgeSlug "git.example"
+
+sharedCommit :: CommitHash
+sharedCommit = "c0ffee"
+
+packageInfo :: PackageInfo
+packageInfo = PackageInfo TypePackage (IsSystem X8664Linux) (PackageName "site")
+
+commitOn :: RepoId -> CommitInfo
+commitOn repo =
+  CommitInfo
+    (ForgeLogin (repo ^. forge) "someone")
+    (RepoIsPublic True)
+    (RepoInfo undefined undefined repo)
+    (Just "main")
+    Nothing
+    sharedCommit
 
 resetHeartbeatReporting :: M ()
 resetHeartbeatReporting =

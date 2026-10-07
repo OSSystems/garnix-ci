@@ -120,6 +120,7 @@ getBuild' user' buildId = do
   pure
     $ BuildResponse
       { _buildResponseId = b ^. id,
+        _buildResponseForge = b ^. forge,
         _buildResponseRepoUser = b ^. repoUser,
         _buildResponseRepoName = b ^. repoName,
         _buildResponseGitCommit = b ^. gitCommit,

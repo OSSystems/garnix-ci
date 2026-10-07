@@ -34,6 +34,7 @@ spec = inM $ beforeM_ truncateDBM $ do
               {
                 username: "dev-user",
                 email: "dev-user@example.com",
+                forge: "github",
                 is_admin: false
               }
             |]
@@ -49,6 +50,7 @@ spec = inM $ beforeM_ truncateDBM $ do
               {
                 username: "dev-user",
                 email: "dev-user@example.com",
+                forge: "github",
                 is_admin: false
               }
             |]

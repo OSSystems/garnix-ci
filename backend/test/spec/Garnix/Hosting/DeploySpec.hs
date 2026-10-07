@@ -479,6 +479,7 @@ persistentBuildFor :: Text -> Maybe Text -> Build
 persistentBuildFor package' persistence =
   Build
     { _buildId = BuildId (review hashIdInt 1),
+      _buildForge = githubForge,
       _buildRepoUser = "owner",
       _buildRepoName = "repo",
       _buildPrFromFork = Nothing,

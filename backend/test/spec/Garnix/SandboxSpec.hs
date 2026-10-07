@@ -195,7 +195,7 @@ spec = inM $ do
       pure ()
 
     it "mounts in netrc file path if specified" $ do
-      let dummyUser = GhLogin "huhu"
+      let dummyUser = ForgeLogin githubForge "huhu"
       token <- DB.getUserInternalToken dummyUser
       withInternalCacheToken dummyUser $ do
         nixConfig <- view #userNixConfig
@@ -210,7 +210,7 @@ spec = inM $ do
         out
           `shouldBeM` (T.strip . T.unlines)
             [ "machine cache.garnix.io",
-              "login " <> cs (getGhLogin dummyUser),
+              "login huhu",
               "password " <> cs (getInternalCacheToken token)
             ]
 

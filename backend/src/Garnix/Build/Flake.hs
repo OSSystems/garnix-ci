@@ -28,7 +28,7 @@ import Garnix.YamlConfig (Action, ExcludeBranches (..), GarnixConfig, Incrementa
 runBuildFlake :: (HasCallStack) => Reporter -> BuildKind -> CommitInfo -> Remote -> M ()
 runBuildFlake reporter buildKind commitInfo withCheckout = do
   (startingBuild, startingBuildRunReporter) <- newBuild reporter commitInfo (PackageInfo TypeOverall NoSystem buildStarting) False
-  withInternalCacheToken (commitInfo ^. reqUser . ghLogin) $ do
+  withInternalCacheToken (commitInfo ^. reqUser) $ do
     metaCheckRun <- MetaCheck.newReport reporter commitInfo
     -- Only known once the checkout hands us the repo's garnix.yaml, but needed
     -- by the handler below, which also covers failures from before that point
