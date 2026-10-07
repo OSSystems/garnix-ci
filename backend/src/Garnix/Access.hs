@@ -4,15 +4,50 @@ module Garnix.Access
     getRunWithAccess,
     hasAccessTo,
     hasAccessToRepo,
+    githubRepoId,
+    githubRepoIdFromRoute,
+    repoIdFromRoute,
+    routeRepoId,
   )
 where
 
+import Data.Map.Strict (Map)
+import Data.Map.Strict qualified as Map
 import Garnix.DB qualified as DB
 import Garnix.Monad
 import Garnix.Prelude
 import Garnix.Types as Types
 
 data Access = Read | Cancel
+
+-- | The repository a URL names, if its forge is configured.
+routeRepoId :: Map ForgeSlug a -> ForgeSlug -> GhRepoOwner -> GhRepoName -> Maybe RepoId
+routeRepoId configured slug owner name = RepoId slug owner name <$ guard (Map.member slug configured)
+
+-- | The repository a URL names, if it is on github.com.
+--
+-- Until the tables are keyed by forge, keys, builds and commits are looked up
+-- by owner and name alone. A route serving them for another forge would hand
+-- out github.com @o/r@'s key, commits or status under that forge's @o/r@, after
+-- an access check made against the other forge. Such routes use this instead
+-- of 'routeRepoId' until then.
+githubRepoId :: ForgeSlug -> GhRepoOwner -> GhRepoName -> Maybe RepoId
+githubRepoId slug owner name = RepoId githubForge owner name <$ guard (slug == githubForge)
+
+-- | 'routeRepoId' against 'Env.forges'. A URL naming no repository is a 404,
+-- like a repository that does not exist, rather than the server error the
+-- forge lookup would otherwise raise.
+repoIdFromRoute :: ForgeSlug -> GhRepoOwner -> GhRepoName -> M RepoId
+repoIdFromRoute slug owner name = do
+  configured <- view #forges
+  orNotFound $ routeRepoId configured slug owner name
+
+-- | 'githubRepoId', with a 404 for any other forge.
+githubRepoIdFromRoute :: ForgeSlug -> GhRepoOwner -> GhRepoName -> M RepoId
+githubRepoIdFromRoute slug owner name = orNotFound $ githubRepoId slug owner name
+
+orNotFound :: Maybe a -> M a
+orNotFound = maybe (throw NotFound) pure
 
 getRunWithAccess :: Access -> Maybe User -> RunId -> M Run
 getRunWithAccess access user' runId = do

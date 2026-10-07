@@ -4,6 +4,7 @@ module Garnix.API.CommitSpec where
 
 import Control.Lens
 import Data.Aeson.Lens
+import Data.Map.Strict qualified as Map
 import Garnix.API.Commits
 import Garnix.DB qualified as DB
 import Garnix.Monad
@@ -390,6 +391,27 @@ spec = inM $ aroundM_ suppressLogsWhenPassing $ beforeM_ truncateDBM $ describe 
       void $ mkTestCommits owner "target-repo"
       result <- assert200 $ testServer.get $ "/api/commits/repo/" <> cs (getGhLogin $ user ^. githubLogin) <> "/target-repo"
       liftIO $ length (result ^?! responseBody . key "commits" . _Array) `shouldBe` 2
+
+    it "answers as /api/commits/repo/github/<owner>/<name>" $ GH.withFakeGithubInterface $ \st -> withServer $ \testServer -> do
+      GH.mkRepo st "target-user" "target-repo" identity
+      void $ mkTestCommits "target-user" "target-repo"
+      old <- assert200 $ testServer.get "/api/commits/repo/target-user/target-repo"
+      new <- assert200 $ testServer.get "/api/commits/repo/github/target-user/target-repo"
+      liftIO $ length (new ^?! responseBody . key "commits" . _Array) `shouldBe` 2
+      liftIO $ new ^. responseBody `shouldBe` old ^. responseBody
+
+    it "returns 404 under a forge that is not configured" $ GH.withFakeGithubInterface $ \st -> withServer $ \testServer -> do
+      GH.mkRepo st "target-user" "target-repo" identity
+      void $ mkTestCommits "target-user" "target-repo"
+      result <- testServer.get "/api/commits/repo/nowhere/target-user/target-repo"
+      result `shouldHaveStatusCode` 404
+
+    it "returns 404 under a configured forge other than github, whose commits are not kept apart yet" $ GH.withFakeGithubInterface $ \st -> do
+      GH.mkRepo st "target-user" "target-repo" identity
+      void $ mkTestCommits "target-user" "target-repo"
+      local (#forges %~ Map.insert "git.example" (testForgeInstance "git.example" GiteaForgeKind)) $ withServer $ \testServer -> do
+        result <- testServer.get "/api/commits/repo/git.example/target-user/target-repo"
+        result `shouldHaveStatusCode` 404
 
     it "returns empty list for a repo that has no commits" $ GH.withFakeGithubInterface $ \st -> withServer $ \testServer -> do
       GH.mkRepo st "target-user" "target-repo" identity

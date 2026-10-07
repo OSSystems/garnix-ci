@@ -1,6 +1,9 @@
+{-# LANGUAGE OverloadedRecordDot #-}
+
 module Garnix.API.BadgesSpec (spec) where
 
 import Control.Lens
+import Data.Map.Strict qualified as Map
 import Data.String.Interpolate
 import Garnix.API.Badges
 import Garnix.Monad
@@ -10,8 +13,10 @@ import Garnix.Prelude
 import Garnix.TestHelpers
 import Garnix.TestHelpers.Deprecated qualified as Deprecated
 import Garnix.TestHelpers.GithubInterface qualified as GH
-import Garnix.TestHelpers.Monad (aroundM_, beforeM_, inM, shouldBeM, suppressLogsWhenPassing)
+import Garnix.TestHelpers.Monad (aroundM_, beforeM_, inM, shouldBeM, shouldContainM, suppressLogsWhenPassing)
+import Garnix.TestHelpers.WithServer
 import Garnix.Types hiding (context)
+import Network.Wreq (responseBody)
 import Test.Hspec
 
 spec :: Spec
@@ -139,6 +144,32 @@ spec = do
           void $ withBuild $ \b -> b & status ?~ Failure
           badge <- badgesAPI (RepoId githubForge repositoryLogin repositoryName) repositoryBranch
           badgeMessage badge `shouldBeM` "2 succeeded, 2 failed, and 2 in progress"
+
+    describe "/api/badges" $ do
+      let pendingBuild = void $ testBuild $ \b ->
+            b
+              & repoUser .~ repositoryLogin
+              & repoName .~ repositoryName
+              & branch .~ repositoryBranch
+              & package .~ "Build starting"
+              & status .~ Nothing
+      it "answers the forge-less route as the github one" $ withServer $ \testServer -> do
+        pendingBuild
+        old <- assert200 $ testServer.get "/api/badges/owner/repo?branch=branch"
+        new <- assert200 $ testServer.get "/api/badges/github/owner/repo?branch=branch"
+        (new ^. responseBody) `shouldBeM` (old ^. responseBody)
+        (cs (old ^. responseBody) :: String) `shouldContainM` "build in progress"
+
+      it "returns 404 for a forge that is not configured" $ withServer $ \testServer -> do
+        pendingBuild
+        response <- testServer.get "/api/badges/nowhere/owner/repo?branch=branch"
+        response `shouldHaveStatusCode` 404
+
+      it "returns 404 under a configured forge other than github, whose builds are not kept apart yet" $ do
+        pendingBuild
+        local (#forges %~ Map.insert "git.example" (testForgeInstance "git.example" GiteaForgeKind)) $ withServer $ \testServer -> do
+          response <- testServer.get "/api/badges/git.example/owner/repo?branch=branch"
+          response `shouldHaveStatusCode` 404
 
 repositoryLogin :: GhRepoOwner
 repositoryLogin = GhRepoOwner (GhLogin "owner")
