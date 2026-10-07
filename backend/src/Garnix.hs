@@ -455,6 +455,7 @@ withEnv testFeatures buildLogsDir buildLogsReportingPort action = do
   hostingDomain <- cs . fromMaybe "" <$> lookupEnv "GARNIX_HOSTING_DOMAIN"
   statsReportUrl <- fmap cs <$> lookupEnv "GARNIX_STATS_REPORT_URL"
   deployMutex <- newKeyedMutex
+  githubPublicityCache <- newTVarIO mempty
   hostingSshKeys <-
     maybe [] (map cs . filter (not . T.null) . T.splitOn ":" . cs)
       <$> lookupEnv "GARNIX_HOSTING_SSH_KEYS"
@@ -539,6 +540,7 @@ withEnv testFeatures buildLogsDir buildLogsReportingPort action = do
               hostingDomain,
               statsReportUrl,
               deployMutex,
+              githubPublicityCache,
               hostingBudget,
               warmPoolTargets,
               hostingSshKeys,

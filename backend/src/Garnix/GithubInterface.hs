@@ -159,6 +159,16 @@ realGithubInterface =
         executeAppRequest iAuth req
           >>= handleGithubRequestErrors "getRepoPublicity" repoId'
           >>= \r -> pure $ RepoIsPublic $ not $ GH.repoPrivate r,
+      _githubInterfaceGetRepoPrivate = \token repoId'@(RepoId _forge owner repo) -> do
+        mgr <- view #manager
+        let request = GH.repositoryR (coerce owner) (coerce repo)
+        _retryGithubRequest
+          ( liftIO $ case token of
+              Nothing -> GH.executeRequestWithMgr' mgr request
+              Just token' -> GH.executeRequestWithMgr mgr (GH.OAuth $ cs $ getGhToken token') request
+          )
+          >>= fmap GH.repoPrivate
+          . handleGithubRequestErrors "getRepoPrivate" repoId',
       _githubInterfaceGetInstalledOrgs = getInstalledOrgs,
       _githubInterfaceGetReposInInstallationAccessibleTo = getReposInInstallationAccessibleTo,
       _githubInterfaceOpenGithubPullRequest = openGithubPullRequestInternal,

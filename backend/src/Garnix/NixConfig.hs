@@ -4,6 +4,7 @@ module Garnix.NixConfig
     getNetRcFileSetting,
     addNixConfigEnvironment,
     githubAccessTokenNixConfig,
+    githubAccessToken,
     nixConfDefaults,
     NetRcEntry (..),
     renderNetRcEntries,
@@ -12,6 +13,7 @@ where
 
 import Cradle
 import Data.Map.Strict qualified as Map
+import Data.Maybe (listToMaybe)
 import Data.Text qualified as T
 import Garnix.Prelude
 import Garnix.Types (GhToken (..), NetRcFile (..), NixConfig (..), accessTokensSetting)
@@ -23,6 +25,12 @@ defaultNixConfig =
 
 githubAccessTokenNixConfig :: GhToken -> NixConfig
 githubAccessTokenNixConfig token = NixConfig $ Map.insert accessTokensSetting ("github.com=" <> cs (getGhToken token)) mempty
+
+-- | The token nix uses for github.com, set by 'githubAccessTokenNixConfig'.
+githubAccessToken :: NixConfig -> Maybe GhToken
+githubAccessToken config = do
+  tokens <- Map.lookup accessTokensSetting (getNixConfig config)
+  listToMaybe [GhToken (cs token) | Just token <- stripPrefix "github.com=" <$> words tokens]
 
 fromNetRcFile :: NetRcFile -> NixConfig
 fromNetRcFile file = NixConfig $ Map.insert "netrc-file" (getNetRcFile file) mempty

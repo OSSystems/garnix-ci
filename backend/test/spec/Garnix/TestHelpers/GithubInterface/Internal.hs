@@ -240,6 +240,11 @@ mkFakeGithubInterface = do
             case repo of
               Just repo -> pure $ repo ^. #publicity
               Nothing -> throw $ NoSuchRepo {_owner = owner, _name = name},
+          _githubInterfaceGetRepoPrivate = \_ (RepoId _forge owner name) -> do
+            repo <- lookupRepoImpl repoCollection owner name
+            case repo of
+              Just repo -> pure $ not $ isRepoPublic $ repo ^. #publicity
+              Nothing -> throw $ NoSuchRepo {_owner = owner, _name = name},
           _githubInterfaceGetRepoCollaborators = \_iAuth (RepoId _forge owner repo) -> do
             repo <- lookupRepoImpl repoCollection owner repo
             case repo of
