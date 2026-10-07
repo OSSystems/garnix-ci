@@ -9,6 +9,17 @@ const nextConfig = {
   images: { unoptimized: true },
   reactStrictMode: false,
   skipTrailingSlashRedirect: true,
+  // Repository pages name their forge since multi-forge support; the old
+  // forge-less URLs (bookmarks, links in READMEs) are github.com's. Temporary
+  // (307) on purpose: browsers cache a permanent redirect for good, so a
+  // rollback would leave them on /repo/github/... with no page to serve it.
+  redirects: async () => [
+    {
+      source: "/repo/:owner/:repo",
+      destination: "/repo/github/:owner/:repo",
+      permanent: false,
+    },
+  ],
   rewrites: () => {
     if (process.env.GARNIX_SERVER_ORIGIN != null) {
       return [

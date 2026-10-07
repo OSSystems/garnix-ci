@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { defaultForgeSlug } from "./forges";
 import { APIResult, fetchFromAPI } from ".";
 
 export const statusSchema = z
@@ -15,6 +16,7 @@ export const buildSchema = z
   .object({
     id: z.string(),
     branch: z.string().optional(),
+    forge: z.string().optional(),
     repo_user: z.string(),
     repo_name: z.string(),
     req_user: z.string(),
@@ -29,6 +31,7 @@ export const buildSchema = z
   .transform((build) => ({
     ...build,
     tag: "Build" as const,
+    forge: build.forge ?? defaultForgeSlug,
     repoUser: build.repo_user,
     repoName: build.repo_name,
     reqUser: build.req_user,

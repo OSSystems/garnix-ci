@@ -1,10 +1,12 @@
 import { z } from "zod";
 import { Build, buildSchema } from "./build";
 import { Run, runSchema } from "./run";
+import { defaultForgeSlug } from "./forges";
 import { APIResult, Ok, fetchFromAPI } from ".";
 
-const commitSummarySchema = z
+export const commitSummarySchema = z
   .object({
+    forge: z.string().optional(),
     repo_owner: z.string(),
     repo_name: z.string(),
     git_commit: z.string(),
@@ -18,6 +20,7 @@ const commitSummarySchema = z
   })
   .transform((commit) => ({
     ...commit,
+    forge: commit.forge ?? defaultForgeSlug,
     repoUser: commit.repo_owner,
     repoName: commit.repo_name,
     gitCommit: commit.git_commit,
@@ -40,13 +43,14 @@ export const getCommits = async (): Promise<
 };
 
 export const getCommitsForRepo = async (
+  forge: string,
   repoOwner: string,
   repoName: string,
 ): Promise<APIResult<Array<CommitSummary>>> => {
   const response = await fetchFromAPI(
     z.object({ commits: z.array(commitSummarySchema) }),
     "GET",
-    `commits/repo/${repoOwner}/${repoName}`,
+    `commits/repo/${forge}/${repoOwner}/${repoName}`,
   );
   if (!response.ok) return response;
   return Ok(response.data.commits);
@@ -67,6 +71,3 @@ export const getCommit = async (
     `commits/${commit}`,
   );
 };
-
-export const getReqUserUrl = (build: Build | CommitSummary) =>
-  `https://github.com/${build.reqUser}`;

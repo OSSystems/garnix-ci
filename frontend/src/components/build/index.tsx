@@ -7,9 +7,12 @@ import repoIcon from "@/components/icons/repo.svg";
 import branchIcon from "@/components/icons/branch.svg";
 import commitIcon from "@/components/icons/commit.svg";
 import timestampIcon from "@/components/icons/timestamp.svg";
+import shareIcon from "@/components/icons/share.svg";
 import { formatCommitSha } from "@/utils/format";
 import { diffTime, formatDurationLong } from "@/utils/duration";
-import { CommitSummary, getReqUserUrl } from "@/services/commit";
+import { CommitSummary } from "@/services/commit";
+import { Forge, forgeHost, forgeLinks, repoPath } from "@/services/forges";
+import { useForge } from "@/store/configContext";
 import styles from "./styles.module.css";
 
 type Props = {
@@ -18,24 +21,37 @@ type Props = {
   className?: string;
 };
 
-const createHeaderProps = (commit: CommitSummary) => {
+const createHeaderProps = (commit: CommitSummary, forge?: Forge) => {
+  const links = forge && forgeLinks(forge);
   return [
     {
       icon: repoIcon,
-      label: "github repository",
-      url: `/repo/${commit.repoUser}/${commit.repoName}`,
+      label: "repository",
+      url: repoPath(commit),
       value: `${commit.repoUser}/${commit.repoName}`,
     },
     {
       icon: branchIcon,
       label: "branch",
+      url: links && commit.branch && links.branch(commit, commit.branch),
       value: commit.branch,
     },
     {
       icon: commitIcon,
       label: "commit",
+      url: links?.commit(commit, commit.gitCommit),
       value: formatCommitSha(commit),
     },
+    ...(forge && links
+      ? [
+          {
+            icon: shareIcon,
+            label: "source",
+            url: links.repo(commit),
+            value: `view on ${forgeHost(forge)}`,
+          },
+        ]
+      : []),
   ];
 };
 
@@ -44,6 +60,7 @@ export const CommitBuildsSummary = ({
   commit,
   className,
 }: Props) => {
+  const forge = useForge(commit.forge);
   const wrapper = link
     ? (children: ReactNode) => (
         <Link href={`/commit/${commit.gitCommit}`} variant="wrapper">
@@ -57,20 +74,24 @@ export const CommitBuildsSummary = ({
     >
       <div>
         <div className={styles.header}>
-          {createHeaderProps(commit).map(({ icon, label, url, value }) => (
-            <Text key={label} className={styles.status}>
-              <Image key={label} src={icon} alt={label} />
-              {link || !url ? value : <Link href={url}>{value}</Link>}
-            </Text>
-          ))}
+          {createHeaderProps(commit, forge).map(
+            ({ icon, label, url, value }) => (
+              <Text key={label} className={styles.status}>
+                <Image key={label} src={icon} alt={label} />
+                {link || !url ? value : <Link href={url}>{value}</Link>}
+              </Text>
+            ),
+          )}
         </div>
         <Text className={`${styles.timestamp} ${styles.status}`}>
           <Image src={timestampIcon} alt="timestamp" />
           {formatDurationLong(diffTime(new Date(), commit.startTime))} ago by{" "}
-          {link ? (
+          {link || !forge ? (
             `@${commit.reqUser}`
           ) : (
-            <Link href={getReqUserUrl(commit)}>@{commit.reqUser}</Link>
+            <Link href={forgeLinks(forge).user(commit.reqUser)}>
+              @{commit.reqUser}
+            </Link>
           )}
         </Text>
       </div>
