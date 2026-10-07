@@ -10,7 +10,6 @@ import Garnix.Monad
 import Garnix.ParseHttpBasicAuth
 import Garnix.Prelude
 import Garnix.Types hiding (login)
-import GitHub qualified as GH
 import Network.OAuth2 qualified as OA
 import Servant.Auth.Server
   ( Auth,
@@ -278,27 +277,8 @@ callbackHelper githubOauth (Just code) = do
   credentials <-
     exchangeOauthCode githubForge (OA.oauthCallback ghOauth) code
       <?> "exchanging the oauth code"
-  let auth = GH.OAuth $ cs $ credentials ^. accessToken
-  eGhUser <- liftIO (GH.github auth GH.userInfoCurrentR) <?> "calling userInfoCurrentR"
-  case eGhUser of
-    Left e -> throw $ OtherError $ show e
-    Right ghUser -> do
-      e <- getEmail auth ghUser <?> "calling getEmail"
-      pure
-        ( GhLogin . GH.untagName $ GH.userLogin ghUser,
-          e,
-          credentials
-        )
-  where
-    getEmail auth ghUser = case GH.userEmail ghUser of
-      Just e -> pure $ Email e
-      Nothing -> do
-        emails <-
-          liftIO (GH.github auth $ GH.currentUserEmailsR GH.FetchAll)
-            <?> "calling currentUserEmailsR"
-        case find GH.emailPrimary <$> emails of
-          Right (Just e') -> pure $ Email $ GH.emailAddress e'
-          _ -> throw $ OtherError "No email address"
+  (login', email') <- getCurrentUser githubForge (credentials ^. accessToken)
+  pure (login', email', credentials)
 
 finishSignup ::
   AuthResult (CreatingUser (GhUserCredentials Text)) ->

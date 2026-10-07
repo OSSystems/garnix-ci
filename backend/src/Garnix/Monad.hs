@@ -452,6 +452,8 @@ data Forge = Forge
     _forgeOpenPullRequest :: (HasCallStack) => RepoId -> PullRequest -> M PullRequestResult,
     _forgeExchangeOauthCode :: (HasCallStack) => Text -> OAuthCode -> M (GhUserCredentials Text),
     _forgeRefreshUserCredentials :: (HasCallStack) => Text -> M (GhUserCredentials Text),
+    -- | The login and primary email of the user an OAuth access token belongs to.
+    _forgeGetCurrentUser :: (HasCallStack) => Text -> M (GhLogin, Email),
     _forgeGetPullRequestsForCommit :: (HasCallStack) => RepoInfo -> CommitHash -> M [GhPullRequestId],
     _forgeCommentOnPullRequest :: (HasCallStack) => RepoInfo -> GhPullRequestId -> Text -> M ()
   }
@@ -616,6 +618,11 @@ refreshUserCredentials slug token = do
   forge' <- forgeFor slug
   _forgeRefreshUserCredentials forge' token
 
+getCurrentUser :: (HasCallStack) => ForgeSlug -> Text -> M (GhLogin, Email)
+getCurrentUser slug accessToken' = do
+  forge' <- forgeFor slug
+  _forgeGetCurrentUser forge' accessToken'
+
 getPullRequestsForCommit :: (HasCallStack) => RepoInfo -> CommitHash -> M [GhPullRequestId]
 getPullRequestsForCommit repoInfo commit' = do
   forge' <- forgeFor (repoInfo ^. repoId . forge)
@@ -700,12 +707,30 @@ githubForgeApi =
         gh _githubInterfaceExchangeOauthCode >>= \f -> f callbackUrl code,
       _forgeRefreshUserCredentials = \token ->
         gh _githubInterfaceRefreshUserCredentials >>= \f -> f token,
+      _forgeGetCurrentUser = githubCurrentUser,
       _forgeGetPullRequestsForCommit = \repoInfo commit' ->
         gh _githubInterfaceGetPullRequestsForCommit >>= \f -> f repoInfo commit',
       _forgeCommentOnPullRequest = \repoInfo prId body ->
         gh _githubInterfaceCommentOnPullRequest >>= \f -> f repoInfo prId body
     }
   where
+    githubCurrentUser accessToken' = do
+      let auth = GH.OAuth $ cs accessToken'
+      eGhUser <- liftIO (GH.github auth GH.userInfoCurrentR) <?> "calling userInfoCurrentR"
+      case eGhUser of
+        Left e -> throw $ OtherError $ show e
+        Right ghUser -> do
+          e <- githubEmail auth ghUser <?> "calling getEmail"
+          pure (GhLogin . GH.untagName $ GH.userLogin ghUser, e)
+    githubEmail auth ghUser = case GH.userEmail ghUser of
+      Just e -> pure $ Email e
+      Nothing -> do
+        emails <-
+          liftIO (GH.github auth $ GH.currentUserEmailsR GH.FetchAll)
+            <?> "calling currentUserEmailsR"
+        case find GH.emailPrimary <$> emails of
+          Right (Just e') -> pure $ Email $ GH.emailAddress e'
+          _ -> throw $ OtherError "No email address"
     -- Lazy on purpose: the 'GithubInterface' decides whether it needs the
     -- installation, and test fakes that don't are handed 'undefined'.
     installationAuthOf = \case
