@@ -37,7 +37,7 @@ getStoreHashPermission storeHash authorization = do
       [] -> pure Allowed
       repos -> do
         permissions <- forM repos $ \repo -> do
-          getRepoPermissions (_forgeLoginGhLogin <$> mLogin) repo
+          getRepoPermissions mLogin repo
         pure $ if Allowed `elem` permissions then Allowed else Disallowed
   where
     isAccessTokenValidCached :: StoreHash -> ForgeLogin -> AccessToken -> M Bool

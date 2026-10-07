@@ -1,5 +1,6 @@
 module Garnix.Access
   ( Access (..),
+    canCancelBuild,
     getBuildWithAccess,
     getRunWithAccess,
     hasAccessTo,
@@ -77,22 +78,40 @@ getBuildWithAccess access user' buildId = do
   when (not hasAccess) $ throw (NoSuchBuild buildId)
   pure build
 
+-- | @reqUser@ is the account that requested the build, which lives on the
+-- repository's forge.
 hasAccessTo :: Maybe User -> RepoPublicity -> GhLogin -> RepoId -> M Bool
 hasAccessTo user' repoIsPublic reqUser repo
-  | user' ^? _Just . githubLogin == Just reqUser = pure True
+  | isRequester user' reqUser repo = pure True
   | otherwise = hasAccessToRepo user' repoIsPublic repo
+
+isRequester :: Maybe User -> GhLogin -> RepoId -> Bool
+isRequester user' reqUser repo = loginOnRepoForge user' repo == Just reqUser
+
+-- | Admins of one forge instance are not admins of another one's repositories.
+isAdminOf :: Maybe User -> RepoId -> Bool
+isAdminOf user' repo =
+  isJust (loginOnRepoForge user' repo) && user' ^? _Just . subscriptionType == Just Admin
+
+loginOnRepoForge :: Maybe User -> RepoId -> Maybe GhLogin
+loginOnRepoForge user' repo = loginOnForgeOf repo . userForgeLogin =<< user'
 
 hasAccessToRepo :: Maybe User -> RepoPublicity -> RepoId -> M Bool
 hasAccessToRepo user' repoIsPublic repo
   | isRepoPublic repoIsPublic = pure True
-  | user' ^? _Just . subscriptionType == Just Admin = pure True
+  | isAdminOf user' repo = pure True
   | otherwise = case user' of
       Nothing -> pure False
       Just user -> do
         collaborators <- getCollaborators repo
         case collaborators of
           RepoNotFound -> pure False
-          GhCollaborators collaborators' -> pure $ (user ^. githubLogin) `elem` collaborators'
+          GhCollaborators collaborators' -> pure $ isCollaborator user repo collaborators'
+
+-- | Collaborators are listed by login on the repository's forge.
+isCollaborator :: User -> RepoId -> [GhLogin] -> Bool
+isCollaborator user repo collaborators =
+  maybe False (`elem` collaborators) (loginOnForgeOf repo (userForgeLogin user))
 
 getCollaborators :: RepoId -> M GhCollaborators
 getCollaborators repo = do
@@ -102,12 +121,12 @@ getCollaborators repo = do
 
 canCancelBuild :: Maybe User -> RepoPublicity -> GhLogin -> RepoId -> M Bool
 canCancelBuild user' _ reqUser repo
-  | user' ^? _Just . subscriptionType == Just Admin = pure True
-  | user' ^? _Just . githubLogin == Just reqUser = pure True
+  | isAdminOf user' repo = pure True
+  | isRequester user' reqUser repo = pure True
   | otherwise = case user' of
       Nothing -> pure False
       Just user -> do
         collaborators <- getCollaborators repo
         case collaborators of
           RepoNotFound -> pure False
-          GhCollaborators collaborators' -> pure $ (user ^. githubLogin) `elem` collaborators'
+          GhCollaborators collaborators' -> pure $ isCollaborator user repo collaborators'
