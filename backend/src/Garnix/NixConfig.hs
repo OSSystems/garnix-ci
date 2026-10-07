@@ -5,13 +5,17 @@ module Garnix.NixConfig
     addNixConfigEnvironment,
     githubAccessTokenNixConfig,
     nixConfDefaults,
+    NetRcEntry (..),
+    renderNetRcEntries,
   )
 where
 
 import Cradle
 import Data.Map.Strict qualified as Map
+import Data.Text qualified as T
 import Garnix.Prelude
 import Garnix.Types (GhToken (..), NetRcFile (..), NixConfig (..), accessTokensSetting)
+import Prelude qualified
 
 defaultNixConfig :: NixConfig
 defaultNixConfig =
@@ -22,6 +26,24 @@ githubAccessTokenNixConfig token = NixConfig $ Map.insert accessTokensSetting ("
 
 fromNetRcFile :: NetRcFile -> NixConfig
 fromNetRcFile file = NixConfig $ Map.insert "netrc-file" (getNetRcFile file) mempty
+
+-- | One @machine@ of a netrc file.
+data NetRcEntry = NetRcEntry
+  { _netRcEntryMachine :: Text,
+    _netRcEntryLogin :: Text,
+    _netRcEntryPassword :: Text
+  }
+  deriving stock (Eq)
+
+instance Show NetRcEntry where
+  show (NetRcEntry machine login _password) =
+    "NetRcEntry " <> Prelude.show machine <> " " <> Prelude.show login <> " <password>"
+
+renderNetRcEntries :: [NetRcEntry] -> Text
+renderNetRcEntries = T.unlines . concatMap render
+  where
+    render (NetRcEntry machine login password) =
+      ["machine " <> machine, "login " <> login, "password " <> password]
 
 getNetRcFileSetting :: NixConfig -> Maybe NetRcFile
 getNetRcFileSetting (NixConfig m) = NetRcFile <$> Map.lookup "netrc-file" m

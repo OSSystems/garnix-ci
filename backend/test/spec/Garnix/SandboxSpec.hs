@@ -7,9 +7,9 @@ import Control.Monad.Trans.Control (liftBaseOp_)
 import Cradle
 import Data.String.Interpolate
 import Data.Text qualified as T
-import Garnix.Build.Helpers (withInternalCacheToken)
+import Garnix.Build.Helpers (withInternalCacheToken, withNetRcEntries)
 import Garnix.DB qualified as DB
-import Garnix.NixConfig (addNixConfigEnvironment, nixConfDefaults)
+import Garnix.NixConfig (NetRcEntry (..), addNixConfigEnvironment, nixConfDefaults)
 import Garnix.Prelude
 import Garnix.Sandbox
 import Garnix.TestHelpers.Monad
@@ -212,6 +212,65 @@ spec = inM $ do
             [ "machine cache.garnix.io",
               "login huhu",
               "password " <> cs (getInternalCacheToken token)
+            ]
+
+    it "offers the netrc file as ~/.netrc too when asked, for the git nix runs" $ do
+      let dummyUser = ForgeLogin githubForge "huhu"
+      withInternalCacheToken dummyUser $ do
+        nixConfig <- view #userNixConfig
+        StdoutTrimmed fromSetting <-
+          failIfErr
+            $ (>>= run)
+            $ cmd "sh"
+            & addArgs ["-c", "cat $(nix config show | grep netrc-file | awk '{ print $3 }')" :: String]
+            & addNixConfigEnvironment nixConfig
+            & pure
+            & inNixSandbox [] Nothing
+        StdoutTrimmed fromHome <-
+          failIfErr
+            $ (>>= run)
+            $ cmd "sh"
+            & addArgs ["-c", "cat ~/.netrc" :: String]
+            & addNixConfigEnvironment nixConfig
+            & pure
+            & inNixSandboxWithHomeNetrc [] Nothing
+        fromHome `shouldBeM` fromSetting
+
+    it "offers no ~/.netrc unless asked" $ do
+      let dummyUser = ForgeLogin githubForge "huhu"
+      withInternalCacheToken dummyUser $ do
+        nixConfig <- view #userNixConfig
+        (exitCode, StdoutTrimmed out) <-
+          (>>= run)
+            $ cmd "sh"
+            & addArgs ["-c", "cat ~/.netrc" :: String]
+            & addNixConfigEnvironment nixConfig
+            & pure
+            & inNixSandbox [] Nothing
+        (exitCode /= ExitSuccess, out) `shouldBeM` (True, "")
+
+    it "keeps the netrc entries already set up when adding more" $ do
+      let dummyUser = ForgeLogin githubForge "huhu"
+          giteaEntry = NetRcEntry "git.example.com" "x-access-token" "bot-token"
+      token <- DB.getUserInternalToken dummyUser
+      withInternalCacheToken dummyUser $ withNetRcEntries [giteaEntry] $ do
+        nixConfig <- view #userNixConfig
+        StdoutTrimmed out <-
+          failIfErr
+            $ (>>= run)
+            $ cmd "sh"
+            & addArgs ["-c", "cat $(nix config show | grep netrc-file | awk '{ print $3 }')" :: String]
+            & addNixConfigEnvironment nixConfig
+            & pure
+            & inNixSandbox [] Nothing
+        out
+          `shouldBeM` (T.strip . T.unlines)
+            [ "machine cache.garnix.io",
+              "login " <> cs (forgeLoginText dummyUser),
+              "password " <> cs (getInternalCacheToken token),
+              "machine git.example.com",
+              "login x-access-token",
+              "password bot-token"
             ]
 
     it "allows modifying $PATH and $NIX_CONFIG" $ do
