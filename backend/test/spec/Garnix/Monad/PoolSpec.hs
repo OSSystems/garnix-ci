@@ -21,6 +21,26 @@ import Test.Hspec
 
 spec :: Spec
 spec = do
+  describe "parsePoolSize" $ do
+    it "uses the default when the variable is unset"
+      $ parsePoolSize 50 Nothing
+      `shouldBe` 50
+
+    it "reads a positive integer"
+      $ parsePoolSize 50 (Just "8")
+      `shouldBe` 8
+
+    -- newQSem 0 is a semaphore no acquire can ever pass, so honouring a zero
+    -- here would hang every build with nothing in the log to explain it.
+    it "falls back to the default rather than building a pool nothing can enter" $ do
+      parsePoolSize 50 (Just "0") `shouldBe` 50
+      parsePoolSize 50 (Just "-1") `shouldBe` 50
+
+    it "falls back to the default on anything unparseable" $ do
+      parsePoolSize 50 (Just "") `shouldBe` 50
+      parsePoolSize 50 (Just "eight") `shouldBe` 50
+      parsePoolSize 50 (Just "8x") `shouldBe` 50
+
   describe "newPool" $ do
     it "runs given actions" $ runTestM $ do
       metrics <- view #metrics
