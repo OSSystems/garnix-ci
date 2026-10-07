@@ -448,3 +448,45 @@ getNixpkgsCommitSha = do
   let nixpkgsName = c ^. key "nodes" . key (fromString $ cs rootName) . key "inputs" . key "nixpkgs" . _String
   let sha = c ^. key "nodes" . key (fromString $ cs nixpkgsName) . key "locked" . key "rev" . _String
   pure sha
+
+-- | A configured forge instance whose every API call fails loudly, for specs
+-- that only need the instance to exist. A spec that reaches its API needs a
+-- real fake of that forge instead.
+testForgeInstance :: ForgeSlug -> ForgeKind -> ForgeInstance
+testForgeInstance slug kind =
+  ForgeInstance
+    { _forgeInstanceConfig =
+        ForgeConfig
+          { _forgeConfigSlug = slug,
+            _forgeConfigKind = kind,
+            _forgeConfigWebUrl = "https://" <> getForgeSlug slug,
+            _forgeConfigApiUrl = "https://" <> getForgeSlug slug <> "/api/v1",
+            _forgeConfigWebhookSecret = "test-webhook-secret",
+            _forgeConfigOAuthClientId = "test-client-id",
+            _forgeConfigOAuthClientSecret = "test-client-secret",
+            _forgeConfigApiToken = Just (GhToken "test-api-token"),
+            _forgeConfigAdmins = []
+          },
+      _forgeInstanceForge =
+        Forge
+          { _forgeResolveCredentials = \_ -> noApi "resolveCredentials",
+            _forgeResolveRepo = \_ -> noApi "resolveRepo",
+            _forgeGetDefaultBranch = \_ _ -> noApi "getDefaultBranch",
+            _forgeGetHeadCommit = \_ _ _ -> noApi "getHeadCommit",
+            _forgeNewBuildReport = \_ _ -> noApi "newBuildReport",
+            _forgeUpdateBuildReport = \_ _ _ -> noApi "updateBuildReport",
+            _forgeDoesRepoFileExist = \_ _ -> noApi "doesRepoFileExist",
+            _forgeGetRemote = \_ -> noApi "getRemote",
+            _forgeGetRepoCollaborators = \_ _ -> noApi "getRepoCollaborators",
+            _forgeGetRepoPublicity = \_ _ -> noApi "getRepoPublicity",
+            _forgeOpenPullRequest = \_ _ -> noApi "openPullRequest",
+            _forgeExchangeOauthCode = \_ _ -> noApi "exchangeOauthCode",
+            _forgeRefreshUserCredentials = \_ -> noApi "refreshUserCredentials",
+            _forgeGetCurrentUser = \_ -> noApi "getCurrentUser",
+            _forgeGetPullRequestsForCommit = \_ _ -> noApi "getPullRequestsForCommit",
+            _forgeCommentOnPullRequest = \_ _ _ -> noApi "commentOnPullRequest"
+          }
+    }
+  where
+    noApi :: (HasCallStack) => Text -> M a
+    noApi call = throw $ OtherError $ "testForgeInstance " <> getForgeSlug slug <> " has no API, but " <> call <> " was called"

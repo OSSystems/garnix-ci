@@ -1,7 +1,7 @@
 module Garnix.API.Commits where
 
 import Garnix.API.Runs (RunSummary, toRunSummary)
-import Garnix.Access (hasAccessTo, hasAccessToRepo)
+import Garnix.Access (githubRepoIdFromRoute, hasAccessTo, hasAccessToRepo)
 import Garnix.DB qualified as DB
 import Garnix.Monad
 import Garnix.Prelude
@@ -9,7 +9,10 @@ import Garnix.Types
 import Servant.Auth.Server
 
 data CommitAPI route = CommitAPI
-  { _commitAPIgetCommitsForRepo :: route :- "repo" :> Capture "owner" GhRepoOwner :> Capture "repo" GhRepoName :> Get '[JSON] ListCommits,
+  { -- | The forge-less form predates multi-forge support and names a
+    -- github.com repository; kept as an alias so API clients keep working.
+    _commitAPIgetCommitsForRepo :: route :- "repo" :> Capture "owner" GhRepoOwner :> Capture "repo" GhRepoName :> Get '[JSON] ListCommits,
+    _commitAPIgetCommitsForForgeRepo :: route :- "repo" :> Capture "forge" ForgeSlug :> Capture "owner" GhRepoOwner :> Capture "repo" GhRepoName :> Get '[JSON] ListCommits,
     _commitAPIgetCommitsForUser :: route :- Get '[JSON] ListCommits,
     _commitAPIgetSingleCommit :: route :- Capture "commit" CommitHash :> Get '[JSON] GetCommit
   }
@@ -19,12 +22,14 @@ commitAPI :: AuthResult AuthJwtPayload -> CommitAPI (AsServerT M)
 commitAPI (Authenticated ((^. #user) -> user')) =
   CommitAPI
     { _commitAPIgetCommitsForRepo = \owner name -> getCommitsForRepo (Just user') (RepoId githubForge owner name),
+      _commitAPIgetCommitsForForgeRepo = \slug owner name -> getCommitsForRepo (Just user') =<< githubRepoIdFromRoute slug owner name,
       _commitAPIgetCommitsForUser = getCommitsForUser user',
       _commitAPIgetSingleCommit = getSingleCommit (Just user')
     }
 commitAPI _ =
   CommitAPI
     { _commitAPIgetCommitsForRepo = \owner name -> getCommitsForRepo Nothing (RepoId githubForge owner name),
+      _commitAPIgetCommitsForForgeRepo = \slug owner name -> getCommitsForRepo Nothing =<< githubRepoIdFromRoute slug owner name,
       _commitAPIgetCommitsForUser = throw Unauthorized,
       _commitAPIgetSingleCommit = getSingleCommit Nothing
     }

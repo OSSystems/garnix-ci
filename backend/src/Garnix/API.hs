@@ -16,6 +16,7 @@ import Garnix.API.Hosts (HostsAPI, hostsAPI)
 import Garnix.API.Keys
 import Garnix.API.Modules
 import Garnix.API.Runs (RunAPI, runAPI)
+import Garnix.Access (githubRepoIdFromRoute)
 import Garnix.DB qualified as DB
 import Garnix.Monad
 import Garnix.Prelude
@@ -41,14 +42,20 @@ data WholeAPI r = WholeAPI
     run :: r :- "api" :> "run" :> Auth '[JWT, Cookie] AuthJwtPayload :> ToServantApi RunAPI,
     modules :: r :- "api" :> "modules" :> Auth '[JWT, Cookie] AuthJwtPayload :> ToServantApi ModulesAPI,
     dev :: r :- "api" :> "dev" :> ToServantApi DevAPI,
+    -- | The forge-less key and badge routes predate multi-forge support and
+    -- name a github.com repository. They stay as aliases, not redirects:
+    -- READMEs, shields.io and scripts call them and need not follow one.
     keys :: r :- "api" :> "keys" :> Capture "owner" GhRepoOwner :> Capture "repo" GhRepoName :> "repo-key.public" :> Get '[PlainText] PublicKey,
     actionKeys :: r :- "api" :> "keys" :> Capture "owner" GhRepoOwner :> Capture "repo" GhRepoName :> "actions" :> Capture "action" PackageName :> "key.public" :> Get '[PlainText] PublicKey,
+    forgeKeys :: r :- "api" :> "keys" :> Capture "forge" ForgeSlug :> Capture "owner" GhRepoOwner :> Capture "repo" GhRepoName :> "repo-key.public" :> Get '[PlainText] PublicKey,
+    forgeActionKeys :: r :- "api" :> "keys" :> Capture "forge" ForgeSlug :> Capture "owner" GhRepoOwner :> Capture "repo" GhRepoName :> "actions" :> Capture "action" PackageName :> "key.public" :> Get '[PlainText] PublicKey,
     login :: r :- "api" :> "login" :> ToServantApi LoginAPI,
     signup :: r :- "api" :> "signup" :> ToServantApi SignupAPI,
     whoami :: r :- "api" :> "whoami" :> Auth '[JWT, Cookie] AuthJwtPayload :> Get '[JSON] (Maybe UserDto),
     authJwt :: r :- "api" :> "auth" :> "jwt" :> ToServantApi AuthJwtAPI,
     config :: r :- "api" :> "config" :> Get '[JSON] FrontendConfig,
     badges :: r :- "api" :> "badges" :> Capture "owner" GhRepoOwner :> Capture "repo" GhRepoName :> QueryParam "branch" Branch :> Get '[JSON] Badge,
+    forgeBadges :: r :- "api" :> "badges" :> Capture "forge" ForgeSlug :> Capture "owner" GhRepoOwner :> Capture "repo" GhRepoName :> QueryParam "branch" Branch :> Get '[JSON] Badge,
     waitlist :: r :- "api" :> "waitlist" :> ReqBody '[JSON] Email :> Post '[JSON] (),
     cache :: r :- "api" :> "cache" :> ToServantApi CacheAPI,
     garnixConfigSchema :: r :- "api" :> "garnix-config-schema.json" :> Get '[JSON] JSONSchema,
@@ -91,12 +98,15 @@ wholeAPI =
       authJwt = toServant authJwtAPI,
       keys = \owner name -> Garnix.API.Keys.getRepoPublicKey (RepoId githubForge owner name),
       actionKeys = \owner name -> Garnix.API.Keys.getActionPublicKey (RepoId githubForge owner name),
+      forgeKeys = \slug owner name -> Garnix.API.Keys.getRepoPublicKey =<< githubRepoIdFromRoute slug owner name,
+      forgeActionKeys = \slug owner name action -> githubRepoIdFromRoute slug owner name >>= \repo -> Garnix.API.Keys.getActionPublicKey repo action,
       config = getConfig,
       build = toServant . buildAPI,
       commit = toServant . commitAPI,
       run = toServant . runAPI,
       modules = toServant . modulesAPI,
       badges = \owner name -> badgesAPI (RepoId githubForge owner name),
+      forgeBadges = \slug owner name branch' -> githubRepoIdFromRoute slug owner name >>= \repo -> badgesAPI repo branch',
       waitlist = waitlistAPI,
       cache = toServant cacheAPI,
       garnixConfigSchema = pure garnixConfigJsonSchema,
