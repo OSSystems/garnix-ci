@@ -1,6 +1,7 @@
 module Garnix.API.Auth where
 
 import Control.Lens
+import Data.Map.Strict qualified as Map
 import Garnix.AccessToken
 import Garnix.AccessToken.Types
 import Garnix.DB qualified as DB
@@ -166,28 +167,32 @@ data SignupAPI route = SignupAPI
   }
   deriving (Generic)
 
-loginAPI :: LoginAPI (AsServerT M)
-loginAPI =
+-- | Logging in through one forge instance. The account it yields is the
+-- 'ForgeLogin' on that forge: the same name on another forge is somebody else.
+loginAPI :: ForgeSlug -> LoginAPI (AsServerT M)
+loginAPI slug =
   LoginAPI
-    { _loginAPILogin = login,
+    { _loginAPILogin = login slug,
       _loginAPILogout = logout,
-      _loginAPILoginCallback = loginCallback
+      _loginAPILoginCallback = loginCallback slug
     }
 
-signupAPI :: SignupAPI (AsServerT M)
-signupAPI =
+signupAPI :: ForgeSlug -> SignupAPI (AsServerT M)
+signupAPI slug =
   SignupAPI
-    { _signupAPISignup = signup,
-      _signupAPISignupCallback = signupCallback,
+    { _signupAPISignup = signup slug,
+      _signupAPISignupCallback = signupCallback slug,
       _signupAPIFinishSignup = finishSignup
     }
 
-login :: M LoginLinks
-login = do
+-- | The link is under the @github@ key whichever forge it points to, so that
+-- the response keeps one shape across forges.
+login :: ForgeSlug -> M LoginLinks
+login slug = do
   oaState <- OA.newOAuthState
-  ghOauth <- githubOauthLogin
-  githubLink <- OA.getAuthorize oaState ghOauth "foo"
-  return $ LoginLinks {_loginLinksGithub = githubLink}
+  oauth <- forgeOauth slug LoginFlow
+  link <- OA.getAuthorize oaState oauth "foo"
+  return $ LoginLinks {_loginLinksGithub = link}
 
 logout ::
   M
@@ -199,28 +204,29 @@ logout = do
   cookieSettings' <- view #cookieSettings
   return $ clearSession cookieSettings' ()
 
-signup :: M SignupLinks
-signup = do
+signup :: ForgeSlug -> M SignupLinks
+signup slug = do
   oaState <- OA.newOAuthState
-  ghOauth <- githubOauthSignup
-  githubLink <- OA.getAuthorize oaState ghOauth "foo"
+  oauth <- forgeOauth slug SignupFlow
+  link <- OA.getAuthorize oaState oauth "foo"
   return
     $ SignupLinks
-      { _signupLinksGithub = githubLink
+      { _signupLinksGithub = link
       }
 
 loginCallback ::
+  ForgeSlug ->
   Maybe OAuthCode ->
   M
     ( Headers
         '[Header "Set-Cookie" SetCookie, Header "Set-Cookie" SetCookie]
         GhLogin
     )
-loginCallback code = do
-  (login', _, credentials) <- callbackHelper githubOauthLogin code
+loginCallback slug code = do
+  (login', _, credentials) <- callbackHelper slug LoginFlow code
   cookieSettings' <- sessionCookieSettings
   jwtSettings' <- view #jwtSettings
-  user <- DB.getUser (ForgeLogin githubForge login') <?> "calling getUser"
+  user <- DB.getUser login' <?> "calling getUser"
   storeCredentialsFor (user ^. id) credentials <?> "storing the github credentials"
   mApplyCookies <-
     liftIO (acceptLogin cookieSettings' jwtSettings' (WebSession user))
@@ -234,35 +240,28 @@ loginCallback code = do
         ^. githubLogin
 
 signupCallback ::
+  ForgeSlug ->
   Maybe OAuthCode ->
   M
     ( Headers
         '[Header "Set-Cookie" SetCookie, Header "Set-Cookie" SetCookie]
         (CreatingUser ())
     )
-signupCallback code = do
-  (login', email', credentials) <- callbackHelper githubOauthSignup code
-  eUser <- try $ DB.getUser (ForgeLogin githubForge login') <?> "calling getUser"
-  creatingUser <- case eUser of
-    Right _ ->
-      pure
-        $ CreatingUser
-          { _creatingUserExists = True,
-            _creatingUserForge = githubForge,
-            _creatingUserGithubLogin = login',
-            _creatingUserEmail = email',
-            _creatingUserGithubToken = credentials
-          }
-    Left ErrorWithContext {err = NoSuchUser {}} ->
-      pure
-        $ CreatingUser
-          { _creatingUserExists = False,
-            _creatingUserForge = githubForge,
-            _creatingUserGithubLogin = login',
-            _creatingUserEmail = email',
-            _creatingUserGithubToken = credentials
-          }
+signupCallback slug code = do
+  (login', email', credentials) <- callbackHelper slug SignupFlow code
+  eUser <- try $ DB.getUser login' <?> "calling getUser"
+  exists <- case eUser of
+    Right _ -> pure True
+    Left ErrorWithContext {err = NoSuchUser {}} -> pure False
     Left e -> throwError e
+  let creatingUser =
+        CreatingUser
+          { _creatingUserExists = exists,
+            _creatingUserForge = login' ^. forge,
+            _creatingUserGithubLogin = login' ^. ghLogin,
+            _creatingUserEmail = email',
+            _creatingUserGithubToken = credentials
+          }
   cookieSettings' <- sessionCookieSettings
   jwtSettings' <- view #jwtSettings
   mApplyCookies <- case eUser of
@@ -274,15 +273,15 @@ signupCallback code = do
     Nothing -> throw Unauthorized
     Just applyCookies -> return $ applyCookies (void creatingUser)
 
-callbackHelper :: M OA.OAuth2 -> Maybe OAuthCode -> M (GhLogin, Email, GhUserCredentials Text)
-callbackHelper _ Nothing = throw $ OtherError "'code' param missing"
-callbackHelper githubOauth (Just code) = do
-  ghOauth <- githubOauth
+callbackHelper :: ForgeSlug -> OAuthFlow -> Maybe OAuthCode -> M (ForgeLogin, Email, GhUserCredentials Text)
+callbackHelper _ _ Nothing = throw $ OtherError "'code' param missing"
+callbackHelper slug flow (Just code) = do
+  oauth <- forgeOauth slug flow
   credentials <-
-    exchangeOauthCode githubForge (OA.oauthCallback ghOauth) code
+    exchangeOauthCode slug (OA.oauthCallback oauth) code
       <?> "exchanging the oauth code"
-  (login', email') <- getCurrentUser githubForge (credentials ^. accessToken)
-  pure (login', email', credentials)
+  (login', email') <- getCurrentUser slug (credentials ^. accessToken)
+  pure (ForgeLogin slug login', email', credentials)
 
 finishSignup ::
   AuthResult (CreatingUser (GhUserCredentials Text)) ->
@@ -290,16 +289,12 @@ finishSignup ::
   M (Headers '[Header "Set-Cookie" SetCookie, Header "Set-Cookie" SetCookie] GhLogin)
 finishSignup (Authenticated cUser) addenda = do
   -- The things in AuthResult we can trust, because we put them there
-  mAdminLogin <- view #adminGithubLogin
-  let subType =
-        if Just (cUser ^. githubLogin) == mAdminLogin
-          then Admin
-          else FreeSubscription
+  admins' <- (^. admins) . _forgeInstanceConfig <$> forgeInstanceFor (cUser ^. forge)
   user <-
     DB.newUser
       (ForgeLogin (cUser ^. forge) (cUser ^. githubLogin))
       (addenda ^. email)
-      subType
+      (subscriptionFor admins' (cUser ^. githubLogin))
       (addenda ^. agreeToEmails)
   storeCredentialsFor (user ^. id) (cUser ^. githubToken)
   cookieSettings' <- sessionCookieSettings
@@ -310,32 +305,48 @@ finishSignup (Authenticated cUser) addenda = do
     Just applyCookies -> return $ applyCookies $ user ^. githubLogin
 finishSignup _ _ = throw $ OtherError "Did not receive expected user info"
 
-githubOauthLogin :: M OA.OAuth2
-githubOauthLogin = do
-  clientId <- view #githubClientId
-  ghClientSecret <- view #githubClientSecret
-  fromRelativeUrl <- relativeUrlConverter
-  pure
-    $ OA.OAuth2
-      { oauthClientId = clientId,
-        oauthClientSecret = ghClientSecret,
-        oauthOAuthorizeEndpoint = "https://github.com/login/oauth/authorize",
-        oauthAccessTokenEndpoint = "https://github.com/login/oauth/access_token",
-        oauthCallback = fromRelativeUrl "login/cb",
-        oauthScopes = []
-      }
+-- | A new account administers garnix when its forge instance lists its login
+-- among the admins.
+subscriptionFor :: [GhLogin] -> GhLogin -> SubscriptionType
+subscriptionFor admins' login'
+  | login' `elem` admins' = Admin
+  | otherwise = FreeSubscription
 
-githubOauthSignup :: M OA.OAuth2
-githubOauthSignup = do
-  clientId <- view #githubClientId
-  ghClientSecret <- view #githubClientSecret
+data OAuthFlow = LoginFlow | SignupFlow
+
+-- | The OAuth app of one forge instance.
+forgeOauth :: ForgeSlug -> OAuthFlow -> M OA.OAuth2
+forgeOauth slug flow = do
+  -- The slug comes from the URL: one that names no configured instance is a
+  -- page that does not exist, not a server error.
+  configured <- view #forges
+  config' <- maybe (throw NotFound) (pure . _forgeInstanceConfig) (Map.lookup slug configured)
   fromRelativeUrl <- relativeUrlConverter
-  pure
-    $ OA.OAuth2
-      { oauthClientId = clientId,
-        oauthClientSecret = ghClientSecret,
-        oauthOAuthorizeEndpoint = "https://github.com/login/oauth/authorize",
-        oauthAccessTokenEndpoint = "https://github.com/login/oauth/access_token",
-        oauthCallback = fromRelativeUrl "signup/fill",
-        oauthScopes = []
-      }
+  pure $ forgeOAuth2 fromRelativeUrl slug config' flow
+
+-- | GitHub and Gitea both serve the OAuth app under @/login/oauth/@ on their
+-- web host. The first argument turns a path into an absolute garnix URL.
+forgeOAuth2 :: (Text -> Text) -> ForgeSlug -> ForgeConfig -> OAuthFlow -> OA.OAuth2
+forgeOAuth2 fromRelativeUrl slug config' flow =
+  OA.OAuth2
+    { oauthClientId = config' ^. oAuthClientId,
+      oauthClientSecret = config' ^. oAuthClientSecret,
+      oauthOAuthorizeEndpoint = webUrl' <> "/login/oauth/authorize",
+      oauthAccessTokenEndpoint = webUrl' <> "/login/oauth/access_token",
+      oauthCallback = fromRelativeUrl (oauthCallbackPath slug flow),
+      oauthScopes = []
+    }
+  where
+    webUrl' = config' ^. Garnix.Types.webUrl
+
+-- | Where the forge sends the browser back to. GitHub keeps the callbacks its
+-- OAuth app has always been registered with; every other forge calls back
+-- under its own slug.
+oauthCallbackPath :: ForgeSlug -> OAuthFlow -> Text
+oauthCallbackPath slug flow
+  | slug == githubForge = case flow of
+      LoginFlow -> "login/cb"
+      SignupFlow -> "signup/fill"
+  | otherwise = case flow of
+      LoginFlow -> "auth/" <> getForgeSlug slug <> "/login/cb"
+      SignupFlow -> "auth/" <> getForgeSlug slug <> "/signup/fill"
