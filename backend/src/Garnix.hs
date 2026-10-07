@@ -30,6 +30,7 @@ import Garnix.DB qualified as DB
 import Garnix.DB.FeatureFlags (withRecachedFeatureFlags)
 import Garnix.DB.FeatureFlags.Types (getFeatureFlagConfig)
 import Garnix.Duration
+import Garnix.Forge.Config (forgeInstance, readForgesFile)
 import Garnix.GithubInterface
 import Garnix.Hosting.Budget (hostTotalMiB, hostVcpus, parseBudget, resolveBudget)
 import Garnix.Hosting.Deploy (cleanupUnreadyServers, stopUnusedServers)
@@ -291,6 +292,13 @@ withEnv testFeatures buildLogsDir buildLogsReportingPort action = do
   adminGhLogin <-
     fmap GhLogin
       <$> lookupOptionalSecret "GARNIX_ADMIN_GITHUB_LOGIN" (secretFile "garnix_admin_github_login")
+  -- Forge instances besides github.com; without the file, github.com is the
+  -- only one.
+  otherForges <-
+    lookupEnv "GARNIX_FORGES_FILE"
+      >>= maybe (pure []) readForgesFile
+      >>= either Control.Exception.throwIO pure
+      . traverse (\config -> (config ^. slug,) <$> forgeInstance config)
   nixConfig <-
     lookupOptionalSecret "GITHUB_ACCESS_TOKEN" (secretFile "github_access_token")
       <&> maybe defaultNixConfig (\token -> githubAccessTokenNixConfig (GhToken token) <> defaultNixConfig)
@@ -536,6 +544,7 @@ withEnv testFeatures buildLogsDir buildLogsReportingPort action = do
               hostingSshKeys,
               guestSubnetPrefix
             }
+    env <- pure $ env & #forges %~ (<> Map.fromList otherForges)
     action env
 
 runWith :: Options -> IO ()
