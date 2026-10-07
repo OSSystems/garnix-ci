@@ -1,4 +1,4 @@
-module Garnix.Sandbox (inNixSandbox, SandboxAccessType (..)) where
+module Garnix.Sandbox (inNixSandbox, inNixSandboxWithHomeNetrc, SandboxAccessType (..)) where
 
 import Cradle
 import Cradle.ProcessConfiguration
@@ -12,7 +12,17 @@ import System.Environment (getEnv)
 
 -- A sandbox appropriate for nix commands.
 inNixSandbox :: [(FilePath, SandboxAccessType)] -> Maybe FilePath -> M ProcessConfiguration -> M ProcessConfiguration
-inNixSandbox extraSandboxPaths xdgCacheHome procConfigM = do
+inNixSandbox = nixSandbox False
+
+-- | 'inNixSandbox', also offering nix's netrc file as @~/.netrc@. Nix fetches
+-- @git@ inputs by running git, which ignores nix's netrc-file but reads
+-- @~/.netrc@. Only for fetching private inputs before evaluation: the netrc
+-- file's credentials must not reach a git that @flake.nix@ can point anywhere.
+inNixSandboxWithHomeNetrc :: [(FilePath, SandboxAccessType)] -> Maybe FilePath -> M ProcessConfiguration -> M ProcessConfiguration
+inNixSandboxWithHomeNetrc = nixSandbox True
+
+nixSandbox :: Bool -> [(FilePath, SandboxAccessType)] -> Maybe FilePath -> M ProcessConfiguration -> M ProcessConfiguration
+nixSandbox withHomeNetrc extraSandboxPaths xdgCacheHome procConfigM = do
   procConfig <- procConfigM
   path <- liftIO $ getEnv "PATH"
   let env = fromMaybe identity (environmentModification procConfig) [("PATH", path)]
@@ -25,12 +35,20 @@ inNixSandbox extraSandboxPaths xdgCacheHome procConfigM = do
     Nothing -> liftIO getCurrentDirectory
     Just d -> pure d
   args <- argsForNixSandbox xdgCacheHome dir (extraSandboxPaths ++ netrcFile) env
+  let homeNetrc =
+        if withHomeNetrc
+          then concatMap (\(file, _) -> ["--ro-bind", file, sandboxHome </> ".netrc"]) netrcFile
+          else []
   let oldCommand = executable procConfig : arguments procConfig
   pure
     $ procConfig
       { executable = "bwrap",
-        arguments = args <> oldCommand
+        arguments = args <> homeNetrc <> oldCommand
       }
+
+-- | The home directory of the sandboxed process.
+sandboxHome :: FilePath
+sandboxHome = "/home/nix-runner"
 
 data SandboxAccessType = TryReadOnly | ReadOnly | ReadWrite | LockFile
   deriving (Eq)
@@ -73,7 +91,6 @@ argsForNixSandbox xdgCacheHome workingDir extraPaths env = do
           <> ["--ro-bind-try", "/etc/hostname", "/etc/hostname"]
           <> ["--ro-bind-try", "/etc/static/hostname", "/etc/static/hostname"]
   let systemProgramArgs = ["--ro-bind-try", "/run/current-system/sw", "/run/current-system/sw"]
-  let sandboxHome = "/home/nix-runner"
   for_ xdgCacheHome $ \cache ->
     liftIO $ createDirectoryIfMissing True (cache </> "nix/gitv3")
   let homeArgs =
