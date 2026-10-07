@@ -879,7 +879,7 @@ spec = do
                       RerunEvent
                         { reqUser = "owner",
                           ghRunId = fromJust $ build ^. githubRunId,
-                          installAuth = undefined,
+                          credentials = undefined,
                           token = undefined,
                           repoIsPublic = RepoIsPublic True
                         }

@@ -10,7 +10,6 @@ import Garnix.ExpiringCache
 import Garnix.Monad
 import Garnix.Prelude
 import Garnix.Types
-import GitHub.Data.Id (Id (..))
 import System.IO.Unsafe qualified
 
 data Permission
@@ -27,15 +26,14 @@ getRepoPermissions mUser repoId'@(RepoId _forge owner repo) =
         ("repo_perm_owner", show owner),
         ("repo_perm_repo", show repo)
       ]
-    $ getGarnixInstallationId repoId'
+    $ resolveCredentials repoId'
     >>= \case
       Nothing -> do
         log Warning "Cache.getRepoPermissions: could not get garnixInstallationId"
         pure Disallowed
-      Just id -> do
+      Just credentials' -> do
         log Informational "Cache.getRepoPermissions: got garnixInstallationId"
-        iAuth <- getInstallation (Id $ fromInteger id)
-        repoPublicity <- try $ getRepoPublicity iAuth repoId'
+        repoPublicity <- try $ getRepoPublicity credentials' repoId'
         log Informational $ "repoPublicity: " <> show repoPublicity
         case (repoPublicity, mUser) of
           (Left err, _) -> do
@@ -48,7 +46,7 @@ getRepoPermissions mUser repoId'@(RepoId _forge owner repo) =
             log Informational "repo is private and no authentication claim"
             pure Disallowed
           (Right (RepoIsPublic False), Just user) -> do
-            collaborators <- getRepoCollaborators iAuth repoId'
+            collaborators <- getRepoCollaborators credentials' repoId'
             case collaborators of
               RepoNotFound -> do
                 log Warning "Repository not found, denying access"

@@ -106,7 +106,7 @@ createPullRequest user = do
 
         pushNewBranch repoAndModuleValues commitInfo baseBranch newBranch
 
-        openPullRequest commitInfo baseBranch newBranch
+        openModulesPullRequest commitInfo baseBranch newBranch
   where
     pushNewBranch :: ModuleValues.GetRepoAndModuleValues -> CommitInfo -> Branch -> Branch -> M ()
     pushNewBranch repoAndModuleValues commitInfo baseBranch newBranch = do
@@ -117,9 +117,9 @@ createPullRequest user = do
         SubProcess.runGitProcess ["commit", "-am", "Add garnix modules."]
         SubProcess.runGitProcess ["push", realRemoteUrl remoteUrl, getBranch newBranch]
 
-    openPullRequest :: CommitInfo -> Branch -> Branch -> M PullRequestResult
-    openPullRequest commitInfo baseBranch newBranch =
-      openGithubPullRequest
+    openModulesPullRequest :: CommitInfo -> Branch -> Branch -> M PullRequestResult
+    openModulesPullRequest commitInfo baseBranch newBranch =
+      openPullRequest
         (commitInfo ^. repoInfo . repoId)
         PullRequest
           { _pullRequestTitle = "Enable garnix modules",

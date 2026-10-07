@@ -9,8 +9,6 @@ import Garnix.Monad.Async (emptyPromise, logPromiseErrors)
 import Garnix.Monad.Concurrency (forkM)
 import Garnix.Orchestrator
 import Garnix.Prelude
-import Garnix.Reporters.GithubReporter (mkGithubReporter)
-import Garnix.Reporters.OpenSearchReporter (openSearchReporter)
 import Garnix.Types as Types
 import GitHub (untagId)
 import GitHub.App.Auth qualified as GH
@@ -73,7 +71,7 @@ ghWebhookCheckSuite ev
             CommitInfo
               { _commitInfoReqUser = ForgeLogin githubForge . GhLogin . whUserLogin $ senderOfEvent ev,
                 _commitInfoRepoPublicity = RepoIsPublic . not . whRepoIsPrivate $ repoForEvent ev,
-                _commitInfoRepoInfo = RepoInfo iAuth tok repoId',
+                _commitInfoRepoInfo = RepoInfo (GithubInstallationCredentials iAuth) tok repoId',
                 _commitInfoBranch = branch',
                 _commitInfoPrFromFork = Nothing,
                 _commitInfoCommit = commit'
@@ -84,9 +82,8 @@ ghWebhookCheckSuite ev
           throw $ OtherError "Check suite without app. Don't know how to proceed"
         Just app -> do
           pure (app ^. id == untagId clientId)
-      let reporter = openSearchReporter <> mkGithubReporter (commitInfo ^. repoInfo) (commitInfo ^. commit)
       if isGarnixApp
-        then handleCommit reporter (evCheckSuiteAction ev == CheckSuiteEventActionRerequested) commitInfo
+        then handleForgeEvent $ CommitPushed (evCheckSuiteAction ev == CheckSuiteEventActionRerequested) commitInfo
         else do
           log Informational "Ignoring check suite event from non-Garnix app"
           emptyPromise
@@ -110,11 +107,11 @@ ghWebhookCheckRun ev
             RerunEvent
               { reqUser,
                 ghRunId,
-                installAuth = iAuth,
+                credentials = GithubInstallationCredentials iAuth,
                 token,
                 repoIsPublic = RepoIsPublic . not . whRepoIsPrivate $ repoForEvent ev
               }
-      handleRerun rerunEvent
+      void $ handleForgeEvent $ RunRerequested rerunEvent
   | otherwise = pure ()
 
 -- | Triggers two things:
@@ -154,13 +151,12 @@ ghWebhookPullRequest ev = do
             CommitInfo
               { _commitInfoReqUser = ForgeLogin githubForge . GhLogin . whUserLogin $ senderOfEvent ev,
                 _commitInfoRepoPublicity = RepoIsPublic . not . whRepoIsPrivate $ repoForEvent ev,
-                _commitInfoRepoInfo = RepoInfo iAuth tok repoId',
+                _commitInfoRepoInfo = RepoInfo (GithubInstallationCredentials iAuth) tok repoId',
                 _commitInfoBranch = Nothing,
                 _commitInfoPrFromFork = prFromFork,
                 _commitInfoCommit = commit'
               }
-      let reporter = openSearchReporter <> mkGithubReporter (commitInfo ^. repoInfo) (commitInfo ^. commit)
-      handlePullRequest reporter commitInfo (GhPullRequestId $ fromIntegral $ ev ^. number)
+      handleForgeEvent $ PullRequestUpdated commitInfo (GhPullRequestId $ fromIntegral $ ev ^. number)
 
     getFromTo :: PullRequestEvent -> M (HookRepository, HookRepository)
     getFromTo ev = do
@@ -191,13 +187,12 @@ ghWebhookPush ev
             CommitInfo
               { _commitInfoReqUser = ForgeLogin githubForge reqUser,
                 _commitInfoRepoPublicity = RepoIsPublic . not . whRepoIsPrivate $ repoForEvent ev,
-                _commitInfoRepoInfo = RepoInfo iAuth tok repoId',
+                _commitInfoRepoInfo = RepoInfo (GithubInstallationCredentials iAuth) tok repoId',
                 _commitInfoBranch = branch',
                 _commitInfoPrFromFork = Nothing,
                 _commitInfoCommit = commit'
               }
-      let reporter = openSearchReporter <> mkGithubReporter (commitInfo ^. repoInfo) (commitInfo ^. commit)
-      handleCommit reporter False commitInfo
+      handleForgeEvent $ CommitPushed False commitInfo
   where
     branch' = case T.splitOn "/" (evPushRef ev) of
       "refs" : "heads" : rest -> Just . Branch $ T.intercalate "/" rest

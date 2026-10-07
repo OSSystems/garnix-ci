@@ -73,7 +73,7 @@ renew userId stored = do
   case stored ^. refreshTokenExpiresAt of
     Just expiresAt | expiresAt <= now -> throw GithubSessionExpired
     _ -> pure ()
-  renewed <- refreshUserCredentials =<< decryptSecret encryptedRefreshToken
+  renewed <- refreshUserCredentials githubForge =<< decryptSecret encryptedRefreshToken
   storeCredentialsFor userId renewed
   pure $ GhToken $ renewed ^. accessToken
 

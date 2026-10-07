@@ -41,6 +41,7 @@ import Data.Aeson (Key)
 import Data.Aeson.Lens (key, _String)
 import Data.Either (fromRight)
 import Data.IORef (newIORef, readIORef, writeIORef)
+import Data.Map.Strict qualified as Map
 import Data.Pool qualified as Pool
 import Data.String.Conversions (SBS)
 import Data.String.Interpolate (i)
@@ -284,6 +285,10 @@ withTestEnvironment tempDir action = do
                       },
                   githubWebhookSecret = "github-webhook-secret",
                   githubInterface = ghInterface,
+                  forges =
+                    Map.singleton
+                      githubForge
+                      (githubForgeInstance "github-webhook-secret" "github-client-id" "github-client-secret" Nothing),
                   cookieSettings = defaultCookieSettings {cookieXsrfSetting = Nothing},
                   jwtSettings = defaultJWTSettings $ fromSecret $ cs jwtKey,
                   sessionLifetime = defaultSessionLifetime,

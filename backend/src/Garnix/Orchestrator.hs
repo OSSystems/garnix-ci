@@ -1,7 +1,9 @@
 {-# LANGUAGE DuplicateRecordFields #-}
 
 module Garnix.Orchestrator
-  ( handlePullRequest,
+  ( ForgeEvent (..),
+    handleForgeEvent,
+    handlePullRequest,
     handleCommit,
     handleRerun,
     RerunEvent (..),
@@ -21,12 +23,37 @@ import Garnix.Prelude
 import Garnix.Reporters.GithubReporter (mkGithubReporter)
 import Garnix.Reporters.OpenSearchReporter (openSearchReporter)
 import Garnix.Types as Types hiding (ghRunId)
-import GitHub.App.Auth qualified as GH
+
+-- | What a forge's webhook asks garnix to do, in terms every forge can
+-- produce. Each forge's webhook handler verifies and parses its own payloads
+-- into one of these and hands it to 'handleForgeEvent'.
+data ForgeEvent
+  = -- | A commit landed on a branch. The flag is set when the forge asked for
+    -- the commit to be built again even if it was built before.
+    CommitPushed Bool CommitInfo
+  | -- | A pull request was opened or its head moved.
+    PullRequestUpdated CommitInfo GhPullRequestId
+  | -- | Someone asked the forge to rerun a single build. Only forges whose
+    -- reports carry a rerun button (GitHub check runs) send this.
+    RunRerequested RerunEvent
+
+handleForgeEvent :: (HasCallStack) => ForgeEvent -> M (Promise ())
+handleForgeEvent = \case
+  CommitPushed allowDuplicateRun commitInfo ->
+    handleCommit (reporterFor commitInfo) allowDuplicateRun commitInfo
+  PullRequestUpdated commitInfo prId ->
+    handlePullRequest (reporterFor commitInfo) commitInfo prId
+  RunRerequested rerunEvent -> do
+    handleRerun rerunEvent
+    emptyPromise
+  where
+    reporterFor commitInfo =
+      openSearchReporter <> mkGithubReporter (commitInfo ^. repoInfo) (commitInfo ^. commit)
 
 data RerunEvent = RerunEvent
   { reqUser :: GhLogin,
     ghRunId :: GhRunId,
-    installAuth :: GH.InstallationAuth,
+    credentials :: ForgeCredentials,
     token :: GhToken,
     repoIsPublic :: RepoPublicity
   }
@@ -87,7 +114,7 @@ handleRerun ev = do
           CommitInfo
             { _commitInfoReqUser = ForgeLogin githubForge (ev ^. #reqUser),
               _commitInfoRepoPublicity = ev ^. #repoIsPublic,
-              _commitInfoRepoInfo = RepoInfo (ev ^. #installAuth) (ev ^. #token) (RepoId githubForge (build' ^. repoUser) (build' ^. repoName)),
+              _commitInfoRepoInfo = RepoInfo (ev ^. #credentials) (ev ^. #token) (RepoId githubForge (build' ^. repoUser) (build' ^. repoName)),
               _commitInfoBranch = build' ^. branch,
               _commitInfoPrFromFork = build' ^. prFromFork,
               _commitInfoCommit = build' ^. gitCommit

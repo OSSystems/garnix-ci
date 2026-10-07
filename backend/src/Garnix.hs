@@ -297,12 +297,12 @@ withEnv testFeatures buildLogsDir buildLogsReportingPort action = do
           accessKeyId <-
             ( lookupEnv "S3_CACHE_ACCESS_KEY_ID"
                 >>= maybe (BSC.readFile (secretFile "s3-cache-access-key-id")) (pure . cs)
-              )
+            )
               <&> Amazonka.AccessKey
           secretAccessKey <-
             ( lookupEnv "S3_CACHE_SECRET_ACCESS_KEY"
                 >>= maybe (BSC.readFile (secretFile "s3-cache-secret-access-key")) (pure . cs)
-              )
+            )
               <&> Amazonka.SecretKey
           region <- cs <$> getEnv "S3_CACHE_REGION"
           host <- cs <$> getEnv "S3_CACHE_HOST"
@@ -471,6 +471,10 @@ withEnv testFeatures buildLogsDir buildLogsReportingPort action = do
               evalMemoryConfig = evalMemoryConfig,
               githubWebhookSecret = ghK,
               githubInterface = realGithubInterface,
+              forges =
+                Map.singleton
+                  githubForge
+                  (githubForgeInstance ghK ghClientId ghClientSecret adminGhLogin),
               cookieSettings =
                 defaultCookieSettings
                   { cookieXsrfSetting = Nothing,

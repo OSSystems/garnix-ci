@@ -94,7 +94,7 @@ defaultCommitInfo =
 defaultRepoInfo :: RepoInfo
 defaultRepoInfo =
   RepoInfo
-    { _repoInfoInstallationAuth = error "defaultEventInfo does not set installation auth",
+    { _repoInfoCredentials = GithubInstallationCredentials (error "defaultEventInfo does not set installation auth"),
       _repoInfoGhToken = GhToken "",
       _repoInfoRepoId = RepoId githubForge "owner" "repo"
     }

@@ -25,7 +25,7 @@ import Garnix qualified
 import Garnix.DB qualified as DB
 import Garnix.Monad
 import Garnix.Prelude hiding (get, put)
-import Garnix.Types hiding (login, statusCode)
+import Garnix.Types hiding (apiUrl, login, statusCode)
 import Network.HTTP.Client (ManagerSettings (managerModifyRequest), Request (redirectCount), createCookieJar, defaultManagerSettings)
 import Network.HTTP.Types (HeaderName)
 import Network.Wai.Handler.Warp (Port, testWithApplication)

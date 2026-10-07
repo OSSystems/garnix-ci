@@ -63,6 +63,9 @@ instance Loggable GhLogin where
 instance Loggable InstallationAuth where
   asLog _ = []
 
+instance Loggable ForgeCredentials where
+  asLog _ = []
+
 instance Loggable BuildId where
   asLog id = [("buildId", getHashId hash <> "(" <> show (hash ^. hashIdInt) <> ")")]
     where

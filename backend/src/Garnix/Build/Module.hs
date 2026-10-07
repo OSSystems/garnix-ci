@@ -22,29 +22,26 @@ import Garnix.Monad.SubProcess qualified as SubProcess
 import Garnix.NixConfig qualified as NixConfig
 import Garnix.Prelude
 import Garnix.Sandbox
-import Garnix.Types (Branch (..), CommitInfo (..), Error (..), ForgeLogin (..), GhLogin, RepoId (..), RepoInfo (..), getCommitHash, getGhLogin, getGhRepoName, getGhRepoOwner, githubForge)
-import GitHub.Data.Id (Id (Id))
+import Garnix.Types (Branch (..), CommitInfo (..), Error (..), ForgeLogin (..), GhLogin, RepoId (..), credentials, getCommitHash, getGhLogin, getGhRepoName, getGhRepoOwner, ghToken, githubForge)
 
 getCommitInfo :: GhLogin -> ModuleValues.GetRepoAndModuleValues -> M CommitInfo
 getCommitInfo reqUser modules = do
   case (modules ^. #repo_user, modules ^. #repo_name) of
     (Just user, Just repo) -> do
       let repoId' = RepoId githubForge user repo
-      installationId <- getGarnixInstallationId repoId'
-      iAuth <- case installationId of
-        Nothing -> throw $ NoSuchRepo {_owner = user, _name = repo}
-        Just id -> getInstallation (Id $ fromInteger id)
-      repoPublicity <- getRepoPublicity iAuth repoId'
-      getDefaultBranch (Just iAuth) repoId' >>= \case
+      repoInfo' <-
+        resolveRepo repoId'
+          >>= maybe (throw $ NoSuchRepo {_owner = user, _name = repo}) pure
+      repoPublicity <- getRepoPublicity (repoInfo' ^. credentials) repoId'
+      getDefaultBranch (Just $ repoInfo' ^. credentials) repoId' >>= \case
         Nothing -> throw $ NoSuchRepo {_owner = user, _name = repo}
         Just branch -> do
-          token <- getAccessToken iAuth
-          commit <- getHeadCommit token repoId' branch
+          commit <- getHeadCommit (repoInfo' ^. ghToken) repoId' branch
           pure
             $ CommitInfo
               { _commitInfoReqUser = ForgeLogin githubForge reqUser,
                 _commitInfoRepoPublicity = repoPublicity,
-                _commitInfoRepoInfo = RepoInfo iAuth token repoId',
+                _commitInfoRepoInfo = repoInfo',
                 _commitInfoBranch = Just branch,
                 _commitInfoPrFromFork = Nothing,
                 _commitInfoCommit = commit

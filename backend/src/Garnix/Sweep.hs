@@ -15,7 +15,6 @@ import Garnix.Prelude
 import Garnix.Reporters.GithubReporter (mkGithubReporter)
 import Garnix.Reporters.OpenSearchReporter (openSearchReporter)
 import Garnix.Types
-import GitHub.Data.Id (Id (Id))
 
 heartbeat :: M ()
 heartbeat = DB.upsertEvalHeartbeat
@@ -113,13 +112,7 @@ withRepoInfo repo subjects action = do
     Left problem -> skip $ "could not get credentials for it: " <> problem
   where
     fetchCredentials :: M (Maybe RepoInfo)
-    fetchCredentials =
-      getGarnixInstallationId repo >>= \case
-        Nothing -> pure Nothing
-        Just installationId -> do
-          installationAuth <- getInstallation (Id (fromInteger installationId))
-          token <- getAccessToken installationAuth
-          pure $ Just $ RepoInfo installationAuth token repo
+    fetchCredentials = resolveRepo repo
 
     skip reason =
       log Warning

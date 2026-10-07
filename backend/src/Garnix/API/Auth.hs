@@ -276,7 +276,7 @@ callbackHelper _ Nothing = throw $ OtherError "'code' param missing"
 callbackHelper githubOauth (Just code) = do
   ghOauth <- githubOauth
   credentials <-
-    exchangeOauthCode (OA.oauthCallback ghOauth) code
+    exchangeOauthCode githubForge (OA.oauthCallback ghOauth) code
       <?> "exchanging the oauth code"
   let auth = GH.OAuth $ cs $ credentials ^. accessToken
   eGhUser <- liftIO (GH.github auth GH.userInfoCurrentR) <?> "calling userInfoCurrentR"

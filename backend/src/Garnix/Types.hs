@@ -802,6 +802,38 @@ newtype ForgeSlug = ForgeSlug {getForgeSlug :: Text}
 githubForge :: ForgeSlug
 githubForge = ForgeSlug "github"
 
+-- | Which API a forge instance speaks. Several instances can share a kind,
+-- e.g. two Gitea servers; they are told apart by their 'ForgeSlug'.
+data ForgeKind
+  = GithubForgeKind
+  | GiteaForgeKind
+  deriving stock (Eq, Show, Generic, Enum, Bounded)
+
+-- | The configuration of one forge instance garnix talks to.
+data ForgeConfig = ForgeConfig
+  { _forgeConfigSlug :: ForgeSlug,
+    _forgeConfigKind :: ForgeKind,
+    -- | Where people browse the forge, e.g. @https://github.com@. Links to
+    -- repositories, commits and users are built from it.
+    _forgeConfigWebUrl :: Text,
+    -- | Base of the forge's REST API, e.g. @https://api.github.com@.
+    _forgeConfigApiUrl :: Text,
+    -- | Shared secret the forge signs its webhook deliveries with.
+    _forgeConfigWebhookSecret :: StrictByteString,
+    _forgeConfigOAuthClientId :: Text,
+    _forgeConfigOAuthClientSecret :: Text,
+    -- | A bot token for forges that are called with one ('ApiTokenCredentials').
+    -- GitHub mints installation tokens instead and leaves this empty.
+    _forgeConfigApiToken :: Maybe GhToken,
+    -- | Logins on this forge that administer garnix.
+    _forgeConfigAdmins :: [GhLogin]
+  }
+
+instance Show ForgeConfig where
+  show config =
+    "ForgeConfig <secrets> "
+      <> Prelude.show (_forgeConfigSlug config, _forgeConfigKind config, _forgeConfigApiUrl config)
+
 -- | A repository, fully qualified by the forge it lives on.
 --
 -- This is deliberately a product of all three components: there is no way to
@@ -1632,15 +1664,25 @@ data CommitInfo = CommitInfo
   }
   deriving stock (Show)
 
+-- | How garnix authenticates to the forge a repository lives on, beyond the
+-- token in '_repoInfoGhToken'.
+data ForgeCredentials
+  = -- | A GitHub App installation, which can mint further installation tokens.
+    GithubInstallationCredentials InstallationAuth
+  | -- | A forge that is called with a plain API token and nothing else; the
+    -- token is the one in '_repoInfoGhToken'.
+    ApiTokenCredentials
+
 data RepoInfo = RepoInfo
-  { _repoInfoInstallationAuth :: InstallationAuth,
+  { _repoInfoCredentials :: ForgeCredentials,
+    -- | The token used to call the forge's API and to clone the repository.
     _repoInfoGhToken :: GhToken,
     _repoInfoRepoId :: RepoId
   }
 
 instance Show RepoInfo where
-  show (RepoInfo _iAuth _ghToken repoId') =
-    "RepoInfo <iAuth> <ghToken>" <> Prelude.show repoId'
+  show (RepoInfo _credentials _ghToken repoId') =
+    "RepoInfo <credentials> <ghToken>" <> Prelude.show repoId'
 
 data PackageInfo = PackageInfo
   { _packageInfoPackageType :: PackageType,
@@ -1679,6 +1721,7 @@ data DatabaseConnection
 makeFields ''Repo
 makeFields ''RepoId
 makeFields ''ForgeLogin
+makeFields ''ForgeConfig
 makeFields ''Build
 makeFields ''OpenSearchMessage
 makeFields ''Package
@@ -1703,6 +1746,7 @@ makePrisms ''Build
 makePrisms ''CommitInfo
 makePrisms ''PackageInfo
 makePrisms ''RepoInfo
+makePrisms ''ForgeCredentials
 makePrisms ''CommitStatus
 makePrisms ''CheckStatus
 makePrisms ''Commit

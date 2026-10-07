@@ -6,7 +6,6 @@ import Garnix.DB qualified as DB
 import Garnix.Monad
 import Garnix.Prelude
 import Garnix.Types
-import GitHub.Data.Id (Id (..))
 import Servant.Auth.Server
 
 data CommitAPI route = CommitAPI
@@ -52,11 +51,10 @@ instance ToJSON GetCommit where
 
 getCommitsForRepo :: (HasCallStack) => Maybe User -> RepoId -> M ListCommits
 getCommitsForRepo user repo@(RepoId _forge repoOwner repoName) = do
-  installationId <- getGarnixInstallationId repo
-  iAuth <- case installationId of
-    Nothing -> throw $ NoSuchRepo {_owner = repoOwner, _name = repoName}
-    Just id -> getInstallation (Id $ fromInteger id)
-  repoPublicity <- getRepoPublicity iAuth repo
+  credentials' <-
+    resolveCredentials repo
+      >>= maybe (throw $ NoSuchRepo {_owner = repoOwner, _name = repoName}) pure
+  repoPublicity <- getRepoPublicity credentials' repo
   hasAccess <- hasAccessToRepo user repoPublicity repo
   when (not hasAccess) $ throw NoSuchRepo {_owner = repoOwner, _name = repoName}
   ListCommits <$> DB.getCommitsByOwnerAndRepo repo

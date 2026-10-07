@@ -11,7 +11,6 @@ import Garnix.DB qualified as DB
 import Garnix.Monad
 import Garnix.Prelude
 import Garnix.Types as Types
-import GitHub.Data.Id (Id (Id))
 
 data Access = Read | Cancel
 
@@ -25,11 +24,10 @@ getRunWithAccess access user' runId = do
     Just run -> pure run
     Nothing -> throw (NoSuchRun runId)
   let runRepo = RepoId githubForge (run ^. repoUser) (run ^. repoName)
-  installationId <- getGarnixInstallationId runRepo
-  iAuth <- case installationId of
-    Nothing -> throw $ OtherError "Failed to look up installation auth"
-    Just id -> getInstallation (Id $ fromInteger id)
-  repoPublicity <- getRepoPublicity iAuth runRepo
+  credentials' <-
+    resolveCredentials runRepo
+      >>= maybe (throw $ OtherError "Failed to look up the repository's credentials") pure
+  repoPublicity <- getRepoPublicity credentials' runRepo
   hasAccess <- accessCheck user' repoPublicity (run ^. reqUser) runRepo
   when (not hasAccess) $ throw (NoSuchRun runId)
   pure run
@@ -63,12 +61,9 @@ hasAccessToRepo user' repoIsPublic repo
 
 getCollaborators :: RepoId -> M GhCollaborators
 getCollaborators repo = do
-  installationId <- getGarnixInstallationId repo
-  case installationId of
+  resolveCredentials repo >>= \case
     Nothing -> pure RepoNotFound
-    Just id -> do
-      iAuth <- getInstallation (Id $ fromInteger id)
-      getRepoCollaborators iAuth repo
+    Just credentials' -> getRepoCollaborators credentials' repo
 
 canCancelBuild :: Maybe User -> RepoPublicity -> GhLogin -> RepoId -> M Bool
 canCancelBuild user' _ reqUser repo

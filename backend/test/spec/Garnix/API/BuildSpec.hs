@@ -131,7 +131,7 @@ spec = inM $ aroundM_ suppressLogsWhenPassing $ beforeM_ truncateDBM $ do
                   _commitInfoRepoPublicity = RepoIsPublic True,
                   _commitInfoRepoInfo =
                     RepoInfo
-                      { _repoInfoInstallationAuth = undefined,
+                      { _repoInfoCredentials = undefined,
                         _repoInfoGhToken = undefined,
                         _repoInfoRepoId = RepoId githubForge "owner" "repo"
                       },
@@ -300,7 +300,7 @@ spec = inM $ aroundM_ suppressLogsWhenPassing $ beforeM_ truncateDBM $ do
                   _commitInfoRepoPublicity = RepoIsPublic True,
                   _commitInfoRepoInfo =
                     RepoInfo
-                      { _repoInfoInstallationAuth = undefined,
+                      { _repoInfoCredentials = undefined,
                         _repoInfoGhToken = undefined,
                         _repoInfoRepoId = RepoId githubForge "owner" "repo"
                       },

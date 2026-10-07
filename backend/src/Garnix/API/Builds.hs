@@ -12,7 +12,6 @@ import Garnix.Prelude
 import Garnix.Reporters.OpenSearchReporter (openSearchReporter)
 import Garnix.Types
 import Garnix.UserLogs (getLogLines)
-import GitHub.Data.Id (Id (Id))
 import Servant.API (Put)
 import Servant.API.ContentTypes
 import Servant.API.Stream
@@ -64,17 +63,14 @@ instance FromJSON SubmitTestBuild
 submitTestBuild :: SubmitTestBuild -> M ()
 submitTestBuild SubmitTestBuild {owner, repo, testCommit} = do
   let repoId' = RepoId githubForge owner repo
-  installationId <- getGarnixInstallationId repoId'
-  case installationId of
+  resolveRepo repoId' >>= \case
     Nothing -> throw NotFound
-    Just id -> do
-      iAuth <- getInstallation (Id $ fromInteger id)
-      tok <- getAccessToken iAuth
+    Just repoInfo' -> do
       let commitInfo =
             CommitInfo
               { _commitInfoReqUser = ForgeLogin githubForge "garnix-io",
                 _commitInfoRepoPublicity = RepoIsPublic False,
-                _commitInfoRepoInfo = RepoInfo iAuth tok repoId',
+                _commitInfoRepoInfo = repoInfo',
                 _commitInfoBranch = Nothing,
                 _commitInfoPrFromFork = Just $ PrFromFork $ getGhLogin (getGhRepoOwner owner) <> "/" <> getGhRepoName repo,
                 _commitInfoCommit = testCommit

@@ -22,6 +22,7 @@ import Data.ByteString.Lazy qualified as BSL
 import Data.Containers.ListUtils (nubOrd)
 import Data.HashSet (HashSet)
 import Data.Map.Strict (Map)
+import Data.Map.Strict qualified as Map
 import Data.Set qualified as Set
 import Data.Text qualified as T
 import Data.Text.Format.Numbers (PrettyCfg (PrettyCfg), prettyF)
@@ -96,7 +97,12 @@ data Env = Env
     githubClientId :: Text,
     adminGithubLogin :: Maybe GhLogin,
     buildLogsReportingPort :: Maybe Int,
+    -- | The GitHub App API. Only the GitHub 'Forge' and the GitHub-specific
+    -- account pages use it; everything else goes through 'forges'.
     githubInterface :: GithubInterface,
+    -- | Every forge instance garnix talks to, keyed by the slug repositories
+    -- name it with.
+    forges :: Map ForgeSlug ForgeInstance,
     -- | A thread-safe version of `CWD`
     workingDir :: FilePath,
     nixXdgCacheDir :: Maybe FilePath,
@@ -419,6 +425,43 @@ data GithubInterface = GithubInterface
     _githubInterfaceCommentOnPullRequest :: (HasCallStack) => RepoInfo -> GhPullRequestId -> Text -> M ()
   }
 
+-- | Everything garnix asks of a forge, for one configured instance.
+--
+-- Methods that act on a repository's behalf take the 'ForgeCredentials' (or
+-- the whole 'RepoInfo') that '_forgeResolveRepo' produced for it, so callers
+-- never see how a particular forge authenticates.
+data Forge = Forge
+  { -- | Credentials garnix holds for a repository, or 'Nothing' when garnix is
+    -- not installed on it. Cheaper than '_forgeResolveRepo' when no token is
+    -- needed.
+    _forgeResolveCredentials :: (HasCallStack) => RepoId -> M (Maybe ForgeCredentials),
+    -- | Credentials and an API token for a repository, or 'Nothing' when
+    -- garnix is not installed on it.
+    _forgeResolveRepo :: (HasCallStack) => RepoId -> M (Maybe RepoInfo),
+    -- | Without credentials the forge is asked anonymously.
+    _forgeGetDefaultBranch :: (HasCallStack) => Maybe ForgeCredentials -> RepoId -> M (Maybe Branch),
+    _forgeGetHeadCommit :: (HasCallStack) => GhToken -> RepoId -> Branch -> M CommitHash,
+    _forgeNewBuildReport :: (HasCallStack) => RepoInfo -> GhRunReport -> M GhRunId,
+    _forgeUpdateBuildReport :: (HasCallStack) => GhRunId -> GhRunReport -> RepoInfo -> M (),
+    _forgeDoesRepoFileExist :: (HasCallStack) => CommitInfo -> FilePath -> M DoesFileExist,
+    _forgeGetRemote :: (HasCallStack) => CommitInfo -> M RemoteUrl,
+    -- | The credentials are those of the repository asking, which need not be
+    -- the one asked about.
+    _forgeGetRepoCollaborators :: (HasCallStack) => ForgeCredentials -> RepoId -> M GhCollaborators,
+    _forgeGetRepoPublicity :: (HasCallStack) => ForgeCredentials -> RepoId -> M RepoPublicity,
+    _forgeOpenPullRequest :: (HasCallStack) => RepoId -> PullRequest -> M PullRequestResult,
+    _forgeExchangeOauthCode :: (HasCallStack) => Text -> OAuthCode -> M (GhUserCredentials Text),
+    _forgeRefreshUserCredentials :: (HasCallStack) => Text -> M (GhUserCredentials Text),
+    _forgeGetPullRequestsForCommit :: (HasCallStack) => RepoInfo -> CommitHash -> M [GhPullRequestId],
+    _forgeCommentOnPullRequest :: (HasCallStack) => RepoInfo -> GhPullRequestId -> Text -> M ()
+  }
+
+-- | A configured forge instance: what it is, and how to talk to it.
+data ForgeInstance = ForgeInstance
+  { _forgeInstanceConfig :: ForgeConfig,
+    _forgeInstanceForge :: Forge
+  }
+
 -- * Provisioner
 
 -- | The seam between hosting and whatever actually creates servers.
@@ -486,46 +529,6 @@ getAccessToken iAuth = do
   gh <- view #githubInterface
   _githubInterfaceGetAccessToken gh iAuth
 
-getDefaultBranch :: Maybe GHA.InstallationAuth -> RepoId -> M (Maybe Branch)
-getDefaultBranch miAuth repo = do
-  gh <- view #githubInterface
-  _githubInterfaceGetDefaultBranch gh miAuth repo
-
-getHeadCommit :: GhToken -> RepoId -> Branch -> M CommitHash
-getHeadCommit token repo branch = do
-  gh <- view #githubInterface
-  _githubInterfaceGetHeadCommit gh token repo branch
-
-newBuildReport :: RepoInfo -> GhRunReport -> M GhRunId
-newBuildReport repoInfo build' = do
-  gh <- view #githubInterface
-  _githubInterfaceNewBuildReport gh repoInfo build'
-
-updateBuildReport :: GhRunId -> GhRunReport -> RepoInfo -> M ()
-updateBuildReport runId' runReport repoInfo = do
-  gh <- view #githubInterface
-  _githubInterfaceUpdateBuildReport gh runId' runReport repoInfo
-
-getRemote :: (HasCallStack) => CommitInfo -> M RemoteUrl
-getRemote commitInfo = do
-  gh <- view #githubInterface
-  _githubInterfaceGetRemote gh commitInfo
-
-getRepoCollaborators :: (HasCallStack) => InstallationAuth -> RepoId -> M GhCollaborators
-getRepoCollaborators iAuth repo = do
-  gh <- view #githubInterface
-  _githubInterfaceGetRepoCollaborators gh iAuth repo
-
-doesRepoFileExist :: (HasCallStack) => CommitInfo -> FilePath -> M DoesFileExist
-doesRepoFileExist commitInfo path = do
-  gh <- view #githubInterface
-  _githubInterfaceDoesRepoFileExist gh commitInfo path
-
-getRepoPublicity :: (HasCallStack) => InstallationAuth -> RepoId -> M RepoPublicity
-getRepoPublicity iAuth repo = do
-  gh <- view #githubInterface
-  _githubInterfaceGetRepoPublicity gh iAuth repo
-
 getInstalledOrgs :: (HasCallStack) => GhToken -> M [GhUserOrgMembership]
 getInstalledOrgs tok = do
   gh <- view #githubInterface
@@ -536,30 +539,185 @@ getReposInInstallationAccessibleTo installation token = do
   gh <- view #githubInterface
   _githubInterfaceGetReposInInstallationAccessibleTo gh installation token
 
-openGithubPullRequest :: (HasCallStack) => RepoId -> PullRequest -> M PullRequestResult
-openGithubPullRequest repo pr = do
-  gh <- view #githubInterface
-  _githubInterfaceOpenGithubPullRequest gh repo pr
+-- * Forge accessors
 
-exchangeOauthCode :: (HasCallStack) => Text -> OAuthCode -> M (GhUserCredentials Text)
-exchangeOauthCode callbackUrl code = do
-  gh <- view #githubInterface
-  _githubInterfaceExchangeOauthCode gh callbackUrl code
+forgeInstanceFor :: (HasCallStack) => ForgeSlug -> M ForgeInstance
+forgeInstanceFor slug = do
+  configured <- view #forges
+  case Map.lookup slug configured of
+    Just instance' -> pure instance'
+    Nothing -> throw $ OtherError $ "No forge is configured under the slug " <> getForgeSlug slug
 
-refreshUserCredentials :: (HasCallStack) => Text -> M (GhUserCredentials Text)
-refreshUserCredentials token = do
-  gh <- view #githubInterface
-  _githubInterfaceRefreshUserCredentials gh token
+forgeFor :: (HasCallStack) => ForgeSlug -> M Forge
+forgeFor slug = _forgeInstanceForge <$> forgeInstanceFor slug
+
+resolveCredentials :: (HasCallStack) => RepoId -> M (Maybe ForgeCredentials)
+resolveCredentials repo = do
+  forge' <- forgeFor (repo ^. forge)
+  _forgeResolveCredentials forge' repo
+
+resolveRepo :: (HasCallStack) => RepoId -> M (Maybe RepoInfo)
+resolveRepo repo = do
+  forge' <- forgeFor (repo ^. forge)
+  _forgeResolveRepo forge' repo
+
+getDefaultBranch :: (HasCallStack) => Maybe ForgeCredentials -> RepoId -> M (Maybe Branch)
+getDefaultBranch credentials' repo = do
+  forge' <- forgeFor (repo ^. forge)
+  _forgeGetDefaultBranch forge' credentials' repo
+
+getHeadCommit :: (HasCallStack) => GhToken -> RepoId -> Branch -> M CommitHash
+getHeadCommit token repo branch = do
+  forge' <- forgeFor (repo ^. forge)
+  _forgeGetHeadCommit forge' token repo branch
+
+newBuildReport :: (HasCallStack) => RepoInfo -> GhRunReport -> M GhRunId
+newBuildReport repoInfo build' = do
+  forge' <- forgeFor (repoInfo ^. repoId . forge)
+  _forgeNewBuildReport forge' repoInfo build'
+
+updateBuildReport :: (HasCallStack) => GhRunId -> GhRunReport -> RepoInfo -> M ()
+updateBuildReport runId' runReport repoInfo = do
+  forge' <- forgeFor (repoInfo ^. repoId . forge)
+  _forgeUpdateBuildReport forge' runId' runReport repoInfo
+
+getRemote :: (HasCallStack) => CommitInfo -> M RemoteUrl
+getRemote commitInfo = do
+  forge' <- forgeFor (commitInfo ^. repoInfo . repoId . forge)
+  _forgeGetRemote forge' commitInfo
+
+getRepoCollaborators :: (HasCallStack) => ForgeCredentials -> RepoId -> M GhCollaborators
+getRepoCollaborators credentials' repo = do
+  forge' <- forgeFor (repo ^. forge)
+  _forgeGetRepoCollaborators forge' credentials' repo
+
+doesRepoFileExist :: (HasCallStack) => CommitInfo -> FilePath -> M DoesFileExist
+doesRepoFileExist commitInfo path = do
+  forge' <- forgeFor (commitInfo ^. repoInfo . repoId . forge)
+  _forgeDoesRepoFileExist forge' commitInfo path
+
+getRepoPublicity :: (HasCallStack) => ForgeCredentials -> RepoId -> M RepoPublicity
+getRepoPublicity credentials' repo = do
+  forge' <- forgeFor (repo ^. forge)
+  _forgeGetRepoPublicity forge' credentials' repo
+
+openPullRequest :: (HasCallStack) => RepoId -> PullRequest -> M PullRequestResult
+openPullRequest repo pr = do
+  forge' <- forgeFor (repo ^. forge)
+  _forgeOpenPullRequest forge' repo pr
+
+exchangeOauthCode :: (HasCallStack) => ForgeSlug -> Text -> OAuthCode -> M (GhUserCredentials Text)
+exchangeOauthCode slug callbackUrl code = do
+  forge' <- forgeFor slug
+  _forgeExchangeOauthCode forge' callbackUrl code
+
+refreshUserCredentials :: (HasCallStack) => ForgeSlug -> Text -> M (GhUserCredentials Text)
+refreshUserCredentials slug token = do
+  forge' <- forgeFor slug
+  _forgeRefreshUserCredentials forge' token
 
 getPullRequestsForCommit :: (HasCallStack) => RepoInfo -> CommitHash -> M [GhPullRequestId]
 getPullRequestsForCommit repoInfo commit' = do
-  gh <- view #githubInterface
-  _githubInterfaceGetPullRequestsForCommit gh repoInfo commit'
+  forge' <- forgeFor (repoInfo ^. repoId . forge)
+  _forgeGetPullRequestsForCommit forge' repoInfo commit'
 
 commentOnPullRequest :: (HasCallStack) => RepoInfo -> GhPullRequestId -> Text -> M ()
 commentOnPullRequest repoInfo prId body = do
-  gh <- view #githubInterface
-  _githubInterfaceCommentOnPullRequest gh repoInfo prId body
+  forge' <- forgeFor (repoInfo ^. repoId . forge)
+  _forgeCommentOnPullRequest forge' repoInfo prId body
+
+-- * The GitHub forge
+
+-- | The GitHub App installation behind GitHub credentials. Any other kind of
+-- credentials reaching the GitHub forge means a repository was routed to the
+-- wrong forge.
+githubInstallationAuth :: (HasCallStack) => ForgeCredentials -> M InstallationAuth
+githubInstallationAuth = \case
+  GithubInstallationCredentials iAuth -> pure iAuth
+  ApiTokenCredentials -> throw $ OtherError "The GitHub forge was handed credentials for another forge"
+
+-- | The github.com instance, configured from the GitHub App settings garnix
+-- has always read. Its slug is 'githubForge'.
+githubForgeInstance ::
+  -- | Webhook secret
+  StrictByteString ->
+  -- | OAuth client id
+  Text ->
+  -- | OAuth client secret
+  Text ->
+  -- | Admin login
+  Maybe GhLogin ->
+  ForgeInstance
+githubForgeInstance webhookSecret clientId clientSecret admin =
+  ForgeInstance
+    { _forgeInstanceConfig =
+        ForgeConfig
+          { _forgeConfigSlug = githubForge,
+            _forgeConfigKind = GithubForgeKind,
+            _forgeConfigWebUrl = "https://github.com",
+            _forgeConfigApiUrl = "https://api.github.com",
+            _forgeConfigWebhookSecret = webhookSecret,
+            _forgeConfigOAuthClientId = clientId,
+            _forgeConfigOAuthClientSecret = clientSecret,
+            _forgeConfigApiToken = Nothing,
+            _forgeConfigAdmins = toList admin
+          },
+      _forgeInstanceForge = githubForgeApi
+    }
+
+-- | GitHub as a 'Forge', on top of the GitHub App API. It reads
+-- 'githubInterface' from the environment on every call rather than closing
+-- over one, so that tests replacing it with 'local' reach this forge too.
+githubForgeApi :: Forge
+githubForgeApi =
+  Forge
+    { _forgeResolveCredentials = fmap (fmap GithubInstallationCredentials) . resolveInstallation,
+      _forgeResolveRepo = \repo ->
+        resolveInstallation repo >>= \case
+          Nothing -> pure Nothing
+          Just iAuth -> do
+            token <- getAccessToken iAuth
+            pure $ Just $ RepoInfo (GithubInstallationCredentials iAuth) token repo,
+      _forgeGetDefaultBranch = \credentials' repo -> do
+        gh _githubInterfaceGetDefaultBranch >>= \f -> f (installationAuthOf <$> credentials') repo,
+      _forgeGetHeadCommit = \token repo branch ->
+        gh _githubInterfaceGetHeadCommit >>= \f -> f token repo branch,
+      _forgeNewBuildReport = \repoInfo report ->
+        gh _githubInterfaceNewBuildReport >>= \f -> f repoInfo report,
+      _forgeUpdateBuildReport = \runId' report repoInfo ->
+        gh _githubInterfaceUpdateBuildReport >>= \f -> f runId' report repoInfo,
+      _forgeDoesRepoFileExist = \commitInfo path ->
+        gh _githubInterfaceDoesRepoFileExist >>= \f -> f commitInfo path,
+      _forgeGetRemote = \commitInfo ->
+        gh _githubInterfaceGetRemote >>= \f -> f commitInfo,
+      _forgeGetRepoCollaborators = \credentials' repo ->
+        gh _githubInterfaceGetRepoCollaborators >>= \f -> f (installationAuthOf credentials') repo,
+      _forgeGetRepoPublicity = \credentials' repo ->
+        gh _githubInterfaceGetRepoPublicity >>= \f -> f (installationAuthOf credentials') repo,
+      _forgeOpenPullRequest = \repo pr ->
+        gh _githubInterfaceOpenGithubPullRequest >>= \f -> f repo pr,
+      _forgeExchangeOauthCode = \callbackUrl code ->
+        gh _githubInterfaceExchangeOauthCode >>= \f -> f callbackUrl code,
+      _forgeRefreshUserCredentials = \token ->
+        gh _githubInterfaceRefreshUserCredentials >>= \f -> f token,
+      _forgeGetPullRequestsForCommit = \repoInfo commit' ->
+        gh _githubInterfaceGetPullRequestsForCommit >>= \f -> f repoInfo commit',
+      _forgeCommentOnPullRequest = \repoInfo prId body ->
+        gh _githubInterfaceCommentOnPullRequest >>= \f -> f repoInfo prId body
+    }
+  where
+    -- Lazy on purpose: the 'GithubInterface' decides whether it needs the
+    -- installation, and test fakes that don't are handed 'undefined'.
+    installationAuthOf = \case
+      GithubInstallationCredentials iAuth -> iAuth
+      ApiTokenCredentials -> error "The GitHub forge was handed credentials for another forge"
+    gh :: (GithubInterface -> a) -> M a
+    gh method = method <$> view #githubInterface
+    resolveInstallation repo =
+      getGarnixInstallationId repo >>= \case
+        Nothing -> pure Nothing
+        Just installationId ->
+          Just <$> getInstallation (GH.mkId (Proxy @GHA.Installation) (fromInteger installationId))
 
 withWreqOptions :: (Wreq.Options -> IO a) -> M a
 withWreqOptions action = do

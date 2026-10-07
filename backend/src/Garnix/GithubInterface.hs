@@ -342,7 +342,8 @@ getInstalledOrgs (GhToken tok) = do
 -- * Making Github requests
 
 createBuildReportGH :: (HasCallStack) => RepoInfo -> GhRunReport -> M GhRunId
-createBuildReportGH (RepoInfo iAuth _ repoId'@(RepoId _forge (GhRepoOwner (GhLogin repoUser)) (GhRepoName repoName))) report = do
+createBuildReportGH (RepoInfo credentials' _ repoId'@(RepoId _forge (GhRepoOwner (GhLogin repoUser)) (GhRepoName repoName))) report = do
+  iAuth <- githubInstallationAuth credentials'
   run <- fromRunReport report
   res <-
     executeAppRequest @Aeson.Value iAuth
@@ -354,7 +355,8 @@ createBuildReportGH (RepoInfo iAuth _ repoId'@(RepoId _forge (GhRepoOwner (GhLog
         Just v -> pure $ fromInteger v
 
 updateBuildReportGH :: (HasCallStack) => GhRunId -> GhRunReport -> RepoInfo -> M ()
-updateBuildReportGH runId report (RepoInfo iAuth _ repoId'@(RepoId _forge (GhRepoOwner (GhLogin repoUser)) (GhRepoName repoName))) = do
+updateBuildReportGH runId report (RepoInfo credentials' _ repoId'@(RepoId _forge (GhRepoOwner (GhLogin repoUser)) (GhRepoName repoName))) = do
+  iAuth <- githubInstallationAuth credentials'
   run <- fromRunReport report
   res <-
     executeAppRequest @Aeson.Value iAuth
@@ -363,7 +365,8 @@ updateBuildReportGH runId report (RepoInfo iAuth _ repoId'@(RepoId _forge (GhRep
 
 -- | The pull requests a commit is the head of. Only needs @pull_requests: read@.
 getPullRequestsForCommitGH :: (HasCallStack) => RepoInfo -> CommitHash -> M [GhPullRequestId]
-getPullRequestsForCommitGH (RepoInfo iAuth _ repoId'@(RepoId _forge (GhRepoOwner (GhLogin repoUser)) (GhRepoName repoName))) (CommitHash commit') = do
+getPullRequestsForCommitGH (RepoInfo credentials' _ repoId'@(RepoId _forge (GhRepoOwner (GhLogin repoUser)) (GhRepoName repoName))) (CommitHash commit') = do
+  iAuth <- githubInstallationAuth credentials'
   res <-
     executeAppRequest @Aeson.Value iAuth
       $ GH.query ["repos", repoUser, repoName, "commits", commit', "pulls"] []
@@ -373,7 +376,8 @@ getPullRequestsForCommitGH (RepoInfo iAuth _ repoId'@(RepoId _forge (GhRepoOwner
 -- | Comment on a pull request. Unlike check runs, this does trigger a Github
 -- notification. Needs @pull_requests: write@.
 commentOnPullRequestGH :: (HasCallStack) => RepoInfo -> GhPullRequestId -> Text -> M ()
-commentOnPullRequestGH (RepoInfo iAuth _ repoId'@(RepoId _forge (GhRepoOwner (GhLogin repoUser)) (GhRepoName repoName))) (GhPullRequestId prId) body = do
+commentOnPullRequestGH (RepoInfo credentials' _ repoId'@(RepoId _forge (GhRepoOwner (GhLogin repoUser)) (GhRepoName repoName))) (GhPullRequestId prId) body = do
+  iAuth <- githubInstallationAuth credentials'
   res <-
     executeAppRequest @Aeson.Value iAuth
       $ GH.Command
