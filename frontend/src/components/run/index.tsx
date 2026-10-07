@@ -11,6 +11,7 @@ import statusIcon from "@/components/icons/status.svg";
 import { Link } from "@/components/link";
 import { formatDurationShort, diffTime } from "@/utils/duration";
 import { Run } from "@/services/run";
+import { repoPath } from "@/services/forges";
 import { RunLog } from "../buildLog";
 import styles from "./styles.module.css";
 
@@ -19,7 +20,7 @@ const createHeaderProps = (module: Run) => {
     {
       icon: repoIcon,
       label: "Repo",
-      url: `/repo/${module.repoUser}/${module.repoName}`,
+      url: repoPath(module),
       value: `${module.repoUser}/${module.repoName}`,
     },
     {

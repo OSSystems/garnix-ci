@@ -296,7 +296,7 @@ const setupApiMocks = () => {
   };
   fetchMock.doMock(async (req): Promise<MockResponseInit> => {
     const repoKeyUrlRegexp =
-      /[/]api[/]keys[/]([^/]+)[/]([^/]+)[/]repo-key.public/;
+      /[/]api[/]keys[/]github[/]([^/]+)[/]([^/]+)[/]repo-key.public/;
     return match([req.method, req.url])
       .with(["GET", "/api/modules"], () => {
         if (savedConfig == null) {

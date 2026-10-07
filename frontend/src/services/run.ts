@@ -1,11 +1,13 @@
 import { z } from "zod";
 import { statusSchema } from "./build";
+import { defaultForgeSlug } from "./forges";
 import { APIResult, fetchFromAPI } from ".";
 
 export const runSchema = z
   .object({
     id: z.string(),
     name: z.string(),
+    forge: z.string().optional(),
     repo_user: z.string(),
     repo_name: z.string(),
     git_commit: z.string(),
@@ -17,6 +19,7 @@ export const runSchema = z
   .transform((run) => ({
     ...run,
     tag: "Run" as const,
+    forge: run.forge ?? defaultForgeSlug,
     repoUser: run.repo_user,
     repoName: run.repo_name,
     gitCommit: run.git_commit,

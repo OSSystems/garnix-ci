@@ -20,6 +20,7 @@ import terminalIcon from "@/components/icons/terminal.svg";
 import statusIcon from "@/components/icons/status.svg";
 import { DownloadIcon } from "@/components/icons/download";
 import { Build, getBuild } from "@/services/build";
+import { repoPath } from "@/services/forges";
 import { Link } from "@/components/link";
 import { useLoading } from "@/hooks/useLoading";
 import { formatDurationShort, diffTime, fromSecs } from "@/utils/duration";
@@ -34,7 +35,7 @@ const createHeaderProps = (module: Build) => {
     {
       icon: repoIcon,
       label: "Repo",
-      url: `/repo/${module.repoUser}/${module.repoName}`,
+      url: repoPath(module),
       value: `${module.repoUser}/${module.repoName}`,
     },
     {

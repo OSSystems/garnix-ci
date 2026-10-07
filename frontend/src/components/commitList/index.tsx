@@ -11,7 +11,7 @@ import { fromSecs } from "@/utils/duration";
 import { Link } from "@/components/link";
 import styles from "./styles.module.css";
 
-type CommitListFor = "reqUser" | { owner: string; repo: string };
+type CommitListFor = "reqUser" | { forge: string; owner: string; repo: string };
 
 export const CommitList = (props: { for: CommitListFor }) => {
   const { githubAppName } = useConfig();
@@ -21,7 +21,7 @@ export const CommitList = (props: { for: CommitListFor }) => {
     () =>
       props.for === "reqUser"
         ? getCommits()
-        : getCommitsForRepo(props.for.owner, props.for.repo),
+        : getCommitsForRepo(props.for.forge, props.for.owner, props.for.repo),
     [props.for],
   );
 
