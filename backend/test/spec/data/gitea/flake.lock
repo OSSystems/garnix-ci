@@ -1,0 +1,91 @@
+{
+  "nodes": {
+    "archived": {
+      "flake": false,
+      "locked": {
+        "narHash": "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+        "type": "tarball",
+        "url": "https://git.example.com/api/v1/repos/acme/archived/archive/4d1d4146010abf67c005a0d38d0e9f9a015470a4.tar.gz"
+      },
+      "original": {
+        "type": "tarball",
+        "url": "https://git.example.com/acme/archived/archive/main.tar.gz"
+      }
+    },
+    "elsewhere": {
+      "locked": {
+        "lastModified": 1759860000,
+        "narHash": "sha256-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=",
+        "ref": "refs/heads/main",
+        "rev": "7332b9f448f682c07b692b5f7a14993efc10620b",
+        "revCount": 12,
+        "type": "git",
+        "url": "https://git.other.org/acme/elsewhere"
+      },
+      "original": {
+        "type": "git",
+        "url": "https://git.other.org/acme/elsewhere"
+      }
+    },
+    "nixpkgs": {
+      "locked": {
+        "lastModified": 1759381078,
+        "narHash": "sha256-CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC=",
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "7df7ff7d8e00218376575f0acdcc5d66741351ee",
+        "type": "github"
+      },
+      "original": {
+        "owner": "NixOS",
+        "ref": "nixos-unstable",
+        "repo": "nixpkgs",
+        "type": "github"
+      }
+    },
+    "over-ssh": {
+      "locked": {
+        "lastModified": 1759860000,
+        "narHash": "sha256-DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD=",
+        "ref": "refs/heads/main",
+        "rev": "25e86bd5c37771f1a2e917332b9f4d1d4146010a",
+        "revCount": 3,
+        "type": "git",
+        "url": "ssh://git@git.example.com/acme/over-ssh.git"
+      },
+      "original": {
+        "type": "git",
+        "url": "ssh://git@git.example.com/acme/over-ssh.git"
+      }
+    },
+    "private-lib": {
+      "inputs": {
+        "nixpkgs": ["nixpkgs"]
+      },
+      "locked": {
+        "lastModified": 1759860000,
+        "narHash": "sha256-EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE=",
+        "ref": "refs/heads/main",
+        "rev": "a98284025e86bd5c37771f1a2e917332b9f4d1d4",
+        "revCount": 41,
+        "type": "git",
+        "url": "https://git.example.com/acme/private-lib.git"
+      },
+      "original": {
+        "type": "git",
+        "url": "https://git.example.com/acme/private-lib.git"
+      }
+    },
+    "root": {
+      "inputs": {
+        "archived": "archived",
+        "elsewhere": "elsewhere",
+        "nixpkgs": "nixpkgs",
+        "over-ssh": "over-ssh",
+        "private-lib": "private-lib"
+      }
+    }
+  },
+  "root": "root",
+  "version": 7
+}

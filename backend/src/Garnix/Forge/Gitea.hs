@@ -9,16 +9,21 @@ module Garnix.Forge.Gitea
     giteaCommitStatus,
     giteaStatusState,
     giteaRemoteUrl,
+    giteaNetRcEntry,
+    giteaInputRepo,
+    giteaInputHost,
   )
 where
 
 import Data.Aeson ((.=))
 import Data.Aeson qualified as Aeson
 import Data.Aeson.Lens (key, _Array, _Bool, _Integer, _Integral, _String)
+import Data.Char (isAsciiLower, isAsciiUpper, isDigit)
 import Data.Functor ((<&>))
 import Data.Text qualified as T
 import Garnix.GithubInterface (retryWreq)
 import Garnix.Monad
+import Garnix.NixConfig (NetRcEntry (..))
 import Garnix.Prelude
 import Garnix.Types hiding (statusCode)
 import Network.URI (URI (..), URIAuth (..), escapeURIString, isUnreserved, parseURI, unEscapeString)
@@ -398,3 +403,80 @@ postToTokenEndpoint config method grantType grant = do
             _ghUserCredentialsRefreshToken = body' ^? key "refresh_token" . _String,
             _ghUserCredentialsRefreshTokenExpiresAt = Nothing
           }
+
+-- * Flake inputs
+
+-- | The netrc entry that lets nix (and the git it runs) fetch from an instance
+-- with the given token. Gitea ignores the login when the password is a token.
+giteaNetRcEntry :: ForgeConfig -> GhToken -> Maybe NetRcEntry
+giteaNetRcEntry config token =
+  forgeHost config <&> \host ->
+    NetRcEntry
+      { _netRcEntryMachine = host,
+        _netRcEntryLogin = "x-access-token",
+        _netRcEntryPassword = getGhToken token
+      }
+
+-- | The repository on the instance a flake input's URL is fetched from.
+--
+-- The instance's credentials reach nix as a netrc entry, which names the host
+-- alone: curl (for @tarball@ and @file@ inputs) and git (for @git@ ones) send
+-- them to that host whatever the port, the user or the path in the URL. So
+-- every URL on the host must name, unambiguously, the repository that is
+-- fetched, or it could fetch with the bot's credentials a repository nobody
+-- checked:
+--
+-- * @'Right' 'Nothing'@: the URL is not on the instance's host, or is fetched
+--   over ssh, which never reads netrc.
+-- * @'Right' ('Just' repo)@: the URL is on the instance and points into @repo@
+--   (@/owner/repo@, @/owner/repo.git@, @/owner/repo/archive/…@ and the same
+--   under @/api/v1/repos@, below the web URL's path).
+-- * @'Left' reason@: the URL is on the instance's host but names no single
+--   repository: it is outside the instance's path, has dot segments that
+--   curl and git would resolve, or is not a URL at all.
+giteaInputRepo :: ForgeConfig -> Text -> Either Text (Maybe RepoId)
+giteaInputRepo config url = case parseURI (cs url) of
+  Nothing
+    | any (`T.isInfixOf` T.toLower url) (instanceHost config) -> Left "it is not a URL garnix can read"
+    | otherwise -> Right Nothing
+  Just target
+    | not (giteaInputHost config (maybe "" (cs . uriRegName) (uriAuthority target))) -> Right Nothing
+    | uriScheme target `elem` ["ssh:", "git+ssh:"] -> Right Nothing
+    | uriScheme target `notElem` ["http:", "https:"] -> Left "it is not fetched over http(s)"
+    | otherwise -> do
+        base <- maybe (Left "the forge's web URL is not a URL") Right (parseURI (cs $ config ^. webUrl))
+        baseSegments <- pathSegments base
+        targetSegments <- pathSegments target
+        rest <- maybe (Left "it is outside the forge's web URL") Right (stripPrefix baseSegments targetSegments)
+        case fromMaybe rest (stripPrefix ["api", "v1", "repos"] rest) of
+          owner : repo : _
+            | validName owner && validName (dropGit repo) ->
+                Right $ Just $ RepoId (config ^. slug) (GhRepoOwner $ GhLogin owner) (GhRepoName $ dropGit repo)
+          _ -> Left "it does not name a repository"
+  where
+    -- The decoded segments of an absolute path. Dot segments, empty ones and
+    -- encoded slashes would be resolved differently by curl, git and Gitea.
+    pathSegments uri = case T.splitOn "/" (cs $ uriPath uri) of
+      [""] -> Right []
+      "" : segments -> traverse decodeSegment (dropTrailingEmpty segments)
+      _ -> Left "its path is not absolute"
+    dropTrailingEmpty segments = case reverse segments of
+      "" : rest -> reverse rest
+      _ -> segments
+    decodeSegment segment =
+      let decoded = cs (unEscapeString (cs segment)) :: Text
+       in if decoded `elem` ["", ".", ".."] || T.any (`elem` ['/', '\\']) decoded
+            then Left "its path has empty or dot segments"
+            else Right decoded
+    -- Gitea's owner and repository names.
+    validName name =
+      not (T.null name)
+        && name
+        `notElem` [".", ".."]
+        && T.all (\c -> isAsciiLower c || isAsciiUpper c || isDigit c || c `elem` ['-', '_', '.']) name
+    dropGit repo = fromMaybe repo (T.stripSuffix ".git" repo)
+
+-- | Whether a host name is the instance's host, as netrc would match it
+-- (case-insensitively, with or without a trailing dot, percent-decoded).
+giteaInputHost :: ForgeConfig -> Text -> Bool
+giteaInputHost config host = Just (normaliseHost host) == instanceHost config

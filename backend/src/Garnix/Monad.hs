@@ -103,6 +103,10 @@ data Env = Env
     -- | Every forge instance garnix talks to, keyed by the slug repositories
     -- name it with.
     forges :: Map ForgeSlug ForgeInstance,
+    -- | Whether github.com repositories are public, as GitHub last answered,
+    -- and until when that answer holds. Repositories on other forges may only
+    -- use public @github:@ inputs.
+    githubPublicityCache :: TVar (Map RepoId (UTCTime, Bool)),
     -- | A thread-safe version of `CWD`
     workingDir :: FilePath,
     nixXdgCacheDir :: Maybe FilePath,
@@ -437,6 +441,9 @@ data GithubInterface = GithubInterface
     _githubInterfaceGetRemote :: (HasCallStack) => CommitInfo -> M RemoteUrl,
     _githubInterfaceGetRepoCollaborators :: (HasCallStack) => InstallationAuth -> RepoId -> M GhCollaborators,
     _githubInterfaceGetRepoPublicity :: (HasCallStack) => InstallationAuth -> RepoId -> M RepoPublicity,
+    -- | Whether a repository is private, asked with the given token, or
+    -- anonymously without one.
+    _githubInterfaceGetRepoPrivate :: (HasCallStack) => Maybe GhToken -> RepoId -> M Bool,
     _githubInterfaceGetInstalledOrgs :: (HasCallStack) => GhToken -> M [GhUserOrgMembership],
     _githubInterfaceGetReposInInstallationAccessibleTo :: (HasCallStack) => GH.Id GHA.Installation -> GhToken -> M [Text],
     _githubInterfaceOpenGithubPullRequest :: (HasCallStack) => RepoId -> PullRequest -> M PullRequestResult,

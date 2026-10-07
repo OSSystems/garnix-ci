@@ -11,13 +11,17 @@ where
 
 import Control.Lens qualified as Lens
 import Control.Lens.Regex.Text qualified as Regex
+import Cradle
+import Data.Aeson qualified as Aeson
 import Garnix.Build.Helpers qualified as Internal
-import Garnix.FlakeInputAuthorization (checkAuthorization)
+import Garnix.FlakeInputAuthorization (InputAuthorization (..), checkAuthorization)
 import Garnix.Monad
 import Garnix.Monad.ForkT (safeSystemTempDirectory)
 import Garnix.Monad.Metrics
 import Garnix.Monad.SubProcess.Deprecated qualified as Deprecated
+import Garnix.NixConfig (addNixConfigEnvironment)
 import Garnix.Prelude
+import Garnix.Sandbox (inNixSandboxWithHomeNetrc)
 import Garnix.Types as Types
 import Garnix.YamlConfig (GarnixConfig, getConfig)
 
@@ -59,5 +63,38 @@ remoteWithConfig = Remote $ \commitInfo action -> do
 
 withAuthorization :: FlakeDir -> RepoConfig -> CommitInfo -> M a -> M a
 withAuthorization flakeDir repoConfig commitInfo action = do
-  authConfig <- checkAuthorization flakeDir repoConfig commitInfo
-  Lens.locally #userNixConfig (authConfig <>) action
+  authorization <- checkAuthorization flakeDir repoConfig commitInfo
+  unless (null $ authorizationPrefetch authorization)
+    $ Internal.withNetRcEntries (authorizationNetRc authorization)
+    $ mapM_ prefetchInput (authorizationPrefetch authorization)
+  Lens.locally #userNixConfig (authorizationNixConfig authorization <>) action
+
+-- | Fetches a flake input, as its lock file pins it, into the store, where
+-- evaluation then finds it by its hash without fetching it again.
+prefetchInput :: (HasCallStack) => Aeson.Value -> M ()
+prefetchInput locked = do
+  cacheDir <- getNixXdgCacheDir
+  nixConfig <- view #userNixConfig
+  curDir <- view #workingDir
+  let expression = "(builtins.fetchTree (builtins.fromJSON (builtins.getEnv \"GARNIX_LOCKED_INPUT\"))).outPath" :: Text
+      arguments = ["eval", "--impure", "--raw", "--expr", expression]
+  (exitCode, StdoutTrimmed stdout, StderrRaw stderr) <-
+    (>>= run)
+      $ cmd "nix"
+      & addArgs arguments
+      & modifyEnvVar "GARNIX_LOCKED_INPUT" (const $ Just $ cs $ Aeson.encode locked)
+      & addNixConfigEnvironment nixConfig
+      & setWorkingDir curDir
+      & pure
+      & inNixSandboxWithHomeNetrc [] (Just cacheDir)
+  case exitCode of
+    ExitSuccess -> log Informational $ "prefetched a private flake input into " <> stdout
+    ExitFailure e ->
+      throw
+        $ RunProcessError
+          { command = "nix",
+            arguments = arguments,
+            stdErr = cs stderr,
+            stdOut = stdout,
+            exitCode = e
+          }

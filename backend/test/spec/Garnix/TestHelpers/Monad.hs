@@ -31,6 +31,7 @@ module Garnix.TestHelpers.Monad
 where
 
 import Control.Concurrent.Lifted (MVar, modifyMVar, modifyMVar_, newMVar, readMVar)
+import Control.Concurrent.STM (newTVarIO)
 import Control.Exception.Lifted (throwIO)
 import Control.Exception.Safe qualified as Safe
 import Control.Lens
@@ -263,6 +264,7 @@ withTestEnvironment tempDir action = do
         lookupOptionalSecret "GITHUB_ACCESS_TOKEN" (secretsDir <> "/github_access_token")
           <&> maybe defaultNixConfig (\token -> githubAccessTokenNixConfig (GhToken token) <> defaultNixConfig)
       deployMutex <- newKeyedMutex
+      githubPublicityCache <- newTVarIO mempty
       withDefaultLogger $ \defaultLogger -> do
         ghInterface <- Deprecated.testGithubInterface tempDir buildRef
         let env =
@@ -332,6 +334,7 @@ withTestEnvironment tempDir action = do
                   hostingDomain = "hosting.garnix.test",
                   statsReportUrl = Just "https://garnix.io/api/hosts/stats",
                   deployMutex,
+                  githubPublicityCache,
                   hostingBudget = HostingBudget Nothing Nothing Nothing Nothing,
                   warmPoolTargets = mempty,
                   hostingSshKeys = [],

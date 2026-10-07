@@ -46,6 +46,7 @@ testGithubInterface tmp buildRef = do
           atomicModifyIORef' buildRef (\x -> (IntMap.insertWith (++) (fromIntegral runId) [(runReport ^. name, runReport ^. status, logs)] x, ())),
         _githubInterfaceGetRepoCollaborators = \_ _ -> pure $ GhCollaborators [],
         _githubInterfaceGetRepoPublicity = \_ _ -> return $ RepoIsPublic True,
+        _githubInterfaceGetRepoPrivate = \_ _ -> return False,
         _githubInterfaceGetInstalledOrgs = \_ -> pure [],
         _githubInterfaceGetReposInInstallationAccessibleTo = \_ _ -> pure [],
         _githubInterfaceOpenGithubPullRequest = \_ _ -> pure $ PullRequestResult "",
