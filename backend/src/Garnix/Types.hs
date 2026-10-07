@@ -851,6 +851,12 @@ data RepoId = RepoId
   }
   deriving stock (Eq, Ord, Show, Generic)
 
+-- | A repository as messages name it: @slug:owner/repo@, which for github.com
+-- is the @github:owner/repo@ of a flake reference.
+showRepoId :: RepoId -> Text
+showRepoId (RepoId slug' owner name) =
+  getForgeSlug slug' <> ":" <> getGhLogin (getGhRepoOwner owner) <> "/" <> getGhRepoName name
+
 -- | An account, fully qualified by the forge it lives on: the same login name
 -- on two forges is two different accounts.
 data ForgeLogin = ForgeLogin
