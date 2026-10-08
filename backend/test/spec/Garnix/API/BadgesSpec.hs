@@ -13,7 +13,7 @@ import Garnix.Prelude
 import Garnix.TestHelpers
 import Garnix.TestHelpers.Deprecated qualified as Deprecated
 import Garnix.TestHelpers.GithubInterface qualified as GH
-import Garnix.TestHelpers.Monad (aroundM_, beforeM_, inM, shouldBeM, shouldContainM, suppressLogsWhenPassing)
+import Garnix.TestHelpers.Monad (aroundM_, beforeM_, inM, shouldBeM, shouldContainM, shouldNotContainM, suppressLogsWhenPassing)
 import Garnix.TestHelpers.WithServer
 import Garnix.Types hiding (context)
 import Network.Wreq (responseBody)
@@ -165,11 +165,22 @@ spec = do
         response <- testServer.get "/api/badges/nowhere/owner/repo?branch=branch"
         response `shouldHaveStatusCode` 404
 
-      it "returns 404 under a configured forge other than github, whose builds are not kept apart yet" $ do
+      it "keeps a repository on another forge apart from the github one with the same owner/name" $ do
         pendingBuild
+        void $ testBuild $ \b ->
+          b
+            & forge .~ "git.example"
+            & repoUser .~ repositoryLogin
+            & repoName .~ repositoryName
+            & branch .~ repositoryBranch
+            & package .~ "Build starting"
+            & status ?~ Success
         local (#forges %~ Map.insert "git.example" (testForgeInstance "git.example" GiteaForgeKind)) $ withServer $ \testServer -> do
-          response <- testServer.get "/api/badges/git.example/owner/repo?branch=branch"
-          response `shouldHaveStatusCode` 404
+          onOther <- assert200 $ testServer.get "/api/badges/git.example/owner/repo?branch=branch"
+          (cs (onOther ^. responseBody) :: String) `shouldContainM` "1 build succeeded"
+          onGithub <- assert200 $ testServer.get "/api/badges/github/owner/repo?branch=branch"
+          (cs (onGithub ^. responseBody) :: String) `shouldContainM` "build in progress"
+          (cs (onGithub ^. responseBody) :: String) `shouldNotContainM` "succeeded"
 
 repositoryLogin :: GhRepoOwner
 repositoryLogin = GhRepoOwner (GhLogin "owner")

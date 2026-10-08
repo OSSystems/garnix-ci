@@ -420,12 +420,31 @@ spec = inM $ aroundM_ suppressLogsWhenPassing $ beforeM_ truncateDBM $ describe 
       result <- testServer.get "/api/commits/repo/nowhere/target-user/target-repo"
       result `shouldHaveStatusCode` 404
 
-    it "returns 404 under a configured forge other than github, whose commits are not kept apart yet" $ GH.withFakeGithubInterface $ \st -> do
+    it "keeps a repository on another forge apart from the github one with the same owner/name" $ GH.withFakeGithubInterface $ \st -> do
       GH.mkRepo st "target-user" "target-repo" identity
       void $ mkTestCommits "target-user" "target-repo"
-      local (#forges %~ Map.insert "git.example" (testForgeInstance "git.example" GiteaForgeKind)) $ withServer $ \testServer -> do
-        result <- testServer.get "/api/commits/repo/git.example/target-user/target-repo"
-        result `shouldHaveStatusCode` 404
+      void
+        $ testBuild
+        $ (forge .~ "git.example")
+        . (repoUser .~ "target-user")
+        . (repoName .~ "target-repo")
+        . (gitCommit .~ "cccccc")
+      -- A public repository on git.example, answered by its own forge.
+      let base = testForgeInstance "git.example" GiteaForgeKind
+          gitExample =
+            base
+              { _forgeInstanceForge =
+                  (_forgeInstanceForge base)
+                    { _forgeResolveCredentials = \_ -> pure (Just ApiTokenCredentials),
+                      _forgeGetRepoPublicity = \_ _ -> pure (RepoIsPublic True)
+                    }
+              }
+          commitsOf response = sort (response ^.. responseBody . key "commits" . values . key "git_commit" . _String)
+      local (#forges %~ Map.insert "git.example" gitExample) $ withServer $ \testServer -> do
+        onOther <- assert200 $ testServer.get "/api/commits/repo/git.example/target-user/target-repo"
+        commitsOf onOther `shouldBeM` ["cccccc"]
+        onGithub <- assert200 $ testServer.get "/api/commits/repo/github/target-user/target-repo"
+        commitsOf onGithub `shouldBeM` ["aaaaaa", "bbbbbb"]
 
     it "returns empty list for a repo that has no commits" $ GH.withFakeGithubInterface $ \st -> withServer $ \testServer -> do
       GH.mkRepo st "target-user" "target-repo" identity
