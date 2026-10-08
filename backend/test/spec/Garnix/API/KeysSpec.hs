@@ -8,7 +8,7 @@ import Data.Coerce (Coercible)
 import Data.Map.Strict qualified as Map
 import Data.Text qualified as T
 import Garnix.API.Keys
-import Garnix.Access (githubRepoId, routeRepoId)
+import Garnix.Access (routeRepoId)
 import Garnix.Prelude
 import Garnix.TestHelpers
 import Garnix.TestHelpers.Deprecated qualified as Deprecated
@@ -41,13 +41,19 @@ spec = do
       actionKey <- testServer.get "/api/keys/nowhere/owner/repo/actions/deploy/key.public"
       actionKey `shouldHaveStatusCode` 404
 
-    it "returns 404 for a configured forge other than github, whose keys are not kept apart yet" $ do
+    it "keeps a repository on another forge apart from the github one with the same owner/name" $ do
       let gitea = testForgeInstance "git.example" GiteaForgeKind
       runTestM $ suppressLogsWhenPassing $ local (#forges %~ Map.insert "git.example" gitea) $ withServer $ \testServer -> do
-        repoKey <- testServer.get "/api/keys/git.example/owner/repo/repo-key.public"
-        repoKey `shouldHaveStatusCode` 404
-        actionKey <- testServer.get "/api/keys/git.example/owner/repo/actions/deploy/key.public"
-        actionKey `shouldHaveStatusCode` 404
+        let body path = (^. responseBody) <$> assert200 (testServer.get path)
+        githubRepoKey <- body "/api/keys/github/owner/repo/repo-key.public"
+        otherRepoKey <- body "/api/keys/git.example/owner/repo/repo-key.public"
+        liftIO $ otherRepoKey `shouldNotBe` githubRepoKey
+        -- Asked again, each forge keeps its own key.
+        body "/api/keys/git.example/owner/repo/repo-key.public" `shouldReturnM` otherRepoKey
+        body "/api/keys/github/owner/repo/repo-key.public" `shouldReturnM` githubRepoKey
+        githubActionKey <- body "/api/keys/github/owner/repo/actions/deploy/key.public"
+        otherActionKey <- body "/api/keys/git.example/owner/repo/actions/deploy/key.public"
+        liftIO $ otherActionKey `shouldNotBe` githubActionKey
 
   describe "routeRepoId" $ do
     let configured = Map.fromList [("github", ()), ("git.example", ())]
@@ -56,13 +62,6 @@ spec = do
       routeRepoId configured "github" "owner" "repo" `shouldBe` Just (RepoId githubForge "owner" "repo")
     it "names nothing on a forge that is not configured" $ do
       routeRepoId configured "nowhere" "owner" "repo" `shouldBe` Nothing
-
-  describe "githubRepoId" $ do
-    it "names a github.com repository" $ do
-      githubRepoId "github" "owner" "repo" `shouldBe` Just (RepoId githubForge "owner" "repo")
-    it "names nothing on any other forge, configured or not" $ do
-      githubRepoId "git.example" "owner" "repo" `shouldBe` Nothing
-      githubRepoId "nowhere" "owner" "repo" `shouldBe` Nothing
 
   describe "getPublicKey" $ around_ Deprecated.addTestSecrets $ do
     let runTest test = runTestM $ suppressLogsWhenPassing $ do

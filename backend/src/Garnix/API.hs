@@ -17,7 +17,7 @@ import Garnix.API.Hosts (HostsAPI, hostsAPI)
 import Garnix.API.Keys
 import Garnix.API.Modules
 import Garnix.API.Runs (RunAPI, runAPI)
-import Garnix.Access (githubRepoIdFromRoute)
+import Garnix.Access (repoIdFromRoute)
 import Garnix.DB qualified as DB
 import Garnix.Monad
 import Garnix.Prelude
@@ -107,15 +107,15 @@ wholeAPI =
       authJwt = toServant authJwtAPI,
       keys = \owner name -> Garnix.API.Keys.getRepoPublicKey (RepoId githubForge owner name),
       actionKeys = \owner name -> Garnix.API.Keys.getActionPublicKey (RepoId githubForge owner name),
-      forgeKeys = \slug owner name -> Garnix.API.Keys.getRepoPublicKey =<< githubRepoIdFromRoute slug owner name,
-      forgeActionKeys = \slug owner name action -> githubRepoIdFromRoute slug owner name >>= \repo -> Garnix.API.Keys.getActionPublicKey repo action,
+      forgeKeys = \slug owner name -> Garnix.API.Keys.getRepoPublicKey =<< repoIdFromRoute slug owner name,
+      forgeActionKeys = \slug owner name action -> repoIdFromRoute slug owner name >>= \repo -> Garnix.API.Keys.getActionPublicKey repo action,
       config = getConfig,
       build = toServant . buildAPI,
       commit = toServant . commitAPI,
       run = toServant . runAPI,
       modules = toServant . modulesAPI,
       badges = \owner name -> badgesAPI (RepoId githubForge owner name),
-      forgeBadges = \slug owner name branch' -> githubRepoIdFromRoute slug owner name >>= \repo -> badgesAPI repo branch',
+      forgeBadges = \slug owner name branch' -> repoIdFromRoute slug owner name >>= \repo -> badgesAPI repo branch',
       forges = forgesAPI,
       waitlist = waitlistAPI,
       cache = toServant cacheAPI,
