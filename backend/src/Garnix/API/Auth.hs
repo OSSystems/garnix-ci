@@ -1,6 +1,7 @@
 module Garnix.API.Auth where
 
 import Control.Lens
+import Data.Aeson qualified as Aeson
 import Data.ByteString (ByteString)
 import Data.ByteString.Builder (toLazyByteString)
 import Data.Char (isAlphaNum, isAscii)
@@ -18,7 +19,8 @@ import Garnix.ParseHttpBasicAuth
 import Garnix.Prelude
 import Garnix.Types hiding (login)
 import Network.OAuth2 qualified as OA
-import Servant.API (noHeader)
+import Servant.API (StdMethod (DELETE), UVerb, Union, WithStatus (..), noHeader)
+import Servant.Server (respond)
 import Servant.Auth.Server
   ( Auth,
     AuthResult (Authenticated),
@@ -399,15 +401,34 @@ data ConnectAPI route = ConnectAPI
         :> Get '[JSON] (Headers '[Header "Set-Cookie" SetCookie] LoginLinks),
     -- | Detaches the account's identity on this forge. The body is @{}@, or
     -- @{"confirmDeleteModuleSettings": true}@ to also delete the module
-    -- settings saved through it.
+    -- settings saved through it. A refusal is a 409 saying why
+    -- ('DisconnectRefused').
     _connectAPIDisconnect ::
       route
         :- "identity"
         :> Auth '[JWT, Cookie] AuthJwtPayload
         :> ReqBody '[JSON] DisconnectIdentity
-        :> Delete '[JSON] NoContent
+        :> UVerb 'DELETE '[JSON] DisconnectResponses
   }
   deriving (Generic)
+
+type DisconnectResponses = '[WithStatus 200 NoContent, WithStatus 409 DisconnectRefused]
+
+-- | Why an identity was not disconnected: @reason@ (@last_identity@ or
+-- @has_module_settings@) for the UI to act on, @message@ for the person.
+data DisconnectRefused = DisconnectRefused ForgeSlug DisconnectRefusal
+
+-- | The refusals a disconnect answers with a 409: an identity the account
+-- does not have is a 404 instead.
+data DisconnectRefusal = LastIdentityRefusal | ModuleSettingsRefusal
+
+instance ToJSON DisconnectRefused where
+  toJSON (DisconnectRefused slug refusal) =
+    Aeson.object
+      [ "status" Aeson..= ("error" :: Text),
+        "reason" Aeson..= disconnectRefusalReason refusal,
+        "message" Aeson..= disconnectRefusalMessage slug refusal
+      ]
 
 data DisconnectIdentity = DisconnectIdentity
   { confirmDeleteModuleSettings :: Maybe Bool
@@ -495,25 +516,32 @@ connectCallback slug code signedState cookies session = do
 
 -- | Builds and other history the identity requested stay; its credentials go,
 -- and so do module settings saved through it, once the request confirms it.
-disconnect :: ForgeSlug -> AuthResult AuthJwtPayload -> DisconnectIdentity -> M NoContent
+disconnect :: ForgeSlug -> AuthResult AuthJwtPayload -> DisconnectIdentity -> M (Union DisconnectResponses)
 disconnect slug session body = do
   user <- webSessionUser session
   let moduleSettings
         | confirmDeleteModuleSettings body == Just True = DB.DeleteModuleSettings
         | otherwise = DB.KeepModuleSettings
-  DB.removeIdentity (user ^. id) slug moduleSettings
-    >>= either (throw . removalRefusalError slug) (const $ pure NoContent)
+  DB.removeIdentity (user ^. id) slug moduleSettings >>= \case
+    Right () -> respond $ WithStatus @200 NoContent
+    Left DB.NoSuchIdentity -> throw NotFound
+    Left DB.LastIdentity -> refuse LastIdentityRefusal
+    Left DB.HasModuleSettings -> refuse ModuleSettingsRefusal
+  where
+    refuse = respond . WithStatus @409 . DisconnectRefused slug
 
-removalRefusalError :: ForgeSlug -> DB.RemovalRefusal -> Error
-removalRefusalError slug = \case
-  DB.NoSuchIdentity -> NotFound
-  DB.LastIdentity ->
-    IdentityConflict
-      $ getForgeSlug slug
+disconnectRefusalReason :: DisconnectRefusal -> Text
+disconnectRefusalReason = \case
+  LastIdentityRefusal -> "last_identity"
+  ModuleSettingsRefusal -> "has_module_settings"
+
+disconnectRefusalMessage :: ForgeSlug -> DisconnectRefusal -> Text
+disconnectRefusalMessage slug = \case
+  LastIdentityRefusal ->
+    getForgeSlug slug
       <> " is the only forge your account logs in with. Connect another forge before disconnecting it."
-  DB.HasModuleSettings ->
-    IdentityConflict
-      $ "Disconnecting "
+  ModuleSettingsRefusal ->
+    "Disconnecting "
       <> getForgeSlug slug
       <> " deletes the module settings saved through it. Confirm with confirmDeleteModuleSettings to disconnect anyway."
 
