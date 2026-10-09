@@ -16,6 +16,9 @@ module Garnix.Forge.OutboundGuard
     GuardOptions (..),
     defaultGuardOptions,
     guardedManager,
+    pinnedGitConfig,
+    gitConfigArgs,
+    gitConfigEnv,
   )
 where
 
@@ -46,6 +49,7 @@ import Network.Socket
     hostAddressToTuple,
     socket,
   )
+import Numeric (showHex)
 import System.Timeout qualified
 import Prelude qualified
 
@@ -227,3 +231,46 @@ fromTlsConnection conn =
     (NC.connectionGetChunk conn)
     (NC.connectionPut conn)
     (NC.connectionClose conn `Control.Exception.catch` \(_ :: IOException) -> pure ())
+
+-- * git
+
+-- | The git configuration that makes every connection git opens to the host
+-- and port go to the given addresses, which the guard checked, whatever the
+-- name resolves to by then; TLS is still verified against the host name.
+-- git follows no redirect, which could lead it to a host nothing checked, and
+-- uses no proxy from the environment, which would connect from somewhere
+-- garnix cannot check.
+pinnedGitConfig :: Text -> Int -> [SockAddr] -> Maybe [(Text, Text)]
+pinnedGitConfig host port addresses = do
+  -- Nothing to pin to, or something curl cannot connect to: no pin, which
+  -- the caller refuses.
+  addresses' <- traverse addressText addresses
+  guard (not $ null addresses')
+  pure
+    [ ("http.curloptResolve", host <> ":" <> show port <> ":" <> T.intercalate "," addresses'),
+      ("http.followRedirects", "false"),
+      ("http.proxy", "")
+    ]
+  where
+    addressText :: SockAddr -> Maybe Text
+    addressText = \case
+      SockAddrInet _ addr -> let (a, b, c, d) = hostAddressToTuple addr in Just $ T.intercalate "." (map show [a, b, c, d])
+      SockAddrInet6 _ _ addr _ ->
+        let (a, b, c, d, e, f, g, h) = hostAddress6ToTuple addr
+         in Just $ "[" <> T.intercalate ":" (map (cs . flip showHex "") [a, b, c, d, e, f, g, h]) <> "]"
+      SockAddrUnix _ -> Nothing
+
+-- | git configuration as @git -c@ arguments.
+gitConfigArgs :: [(Text, Text)] -> [Text]
+gitConfigArgs = concatMap (\(name, value) -> ["-c", name <> "=" <> value])
+
+-- | git configuration as the environment variables git reads it from
+-- (@GIT_CONFIG_COUNT@, @GIT_CONFIG_KEY_n@, @GIT_CONFIG_VALUE_n@), for a git
+-- that another program, such as nix, runs.
+gitConfigEnv :: [(Text, Text)] -> [(Text, Text)]
+gitConfigEnv config =
+  ("GIT_CONFIG_COUNT", show (length config))
+    : concat
+      [ [("GIT_CONFIG_KEY_" <> show n, name), ("GIT_CONFIG_VALUE_" <> show n, value)]
+      | (n, (name, value)) <- zip [0 :: Int ..] config
+      ]

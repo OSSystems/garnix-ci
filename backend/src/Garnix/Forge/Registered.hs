@@ -33,7 +33,8 @@ data ForgeSource
     -- the operator chose them.
     Configured
   | -- | Registered by someone through the UI. Untrusted: every connection to
-    -- it is checked, and nothing of it is handed to git or nix.
+    -- it is checked, and git fetches from it pinned to the checked addresses
+    -- ('Garnix.Monad.forgeGitConfig').
     Registered
   deriving stock (Eq, Show)
 
