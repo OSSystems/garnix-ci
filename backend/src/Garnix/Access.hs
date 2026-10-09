@@ -46,7 +46,7 @@ sessionUserOf = \case
 -- ('withLiveIdentities').
 liveAccount :: User -> M (Maybe User)
 liveAccount user = do
-  live <- filterM (fmap isJust . lookupActiveForge . (^. forge)) (user ^. identities)
+  live <- liveIdentities (user ^. identities)
   pure $ withLiveIdentities live user
 
 -- | Runs a handler with 'sessionUserOf'.
