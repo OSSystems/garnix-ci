@@ -77,6 +77,7 @@ library
       Garnix.Forge.Config
       Garnix.Forge.Gitea
       Garnix.Forge.Gitea.Webhook
+      Garnix.Forge.OutboundGuard
       Garnix.GetAttributes
       Garnix.GithubInterface
       Garnix.GithubInterface.Types
@@ -189,6 +190,7 @@ library
     , cookie
     , cradle
     , crypton
+    , crypton-connection
     , data-default-class
     , directory
     , exceptions
@@ -334,6 +336,7 @@ executable convert-hashids
     , cookie
     , cradle
     , crypton
+    , crypton-connection
     , data-default-class
     , directory
     , exceptions
@@ -481,6 +484,7 @@ executable generate-yaml-config-docs
     , cookie
     , cradle
     , crypton
+    , crypton-connection
     , data-default-class
     , directory
     , exceptions
@@ -627,6 +631,7 @@ executable server
     , cookie
     , cradle
     , crypton
+    , crypton-connection
     , data-default-class
     , directory
     , exceptions
@@ -752,6 +757,7 @@ test-suite spec
       Garnix.Forge.ConfigSpec
       Garnix.Forge.Gitea.WebhookSpec
       Garnix.Forge.GiteaSpec
+      Garnix.Forge.OutboundGuardSpec
       Garnix.GetAttributesSpec
       Garnix.GithubInterfaceSpec
       Garnix.GithubUserTokenSpec
@@ -845,6 +851,7 @@ test-suite spec
       Garnix.Forge.Config
       Garnix.Forge.Gitea
       Garnix.Forge.Gitea.Webhook
+      Garnix.Forge.OutboundGuard
       Garnix.GetAttributes
       Garnix.GithubInterface
       Garnix.GithubInterface.Types
@@ -960,6 +967,7 @@ test-suite spec
     , cookie
     , cradle
     , crypton
+    , crypton-connection
     , data-default-class
     , directory
     , exceptions
