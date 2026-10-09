@@ -535,13 +535,13 @@ spec = do
       DB.identityToRemove otherForge [onGithub, onOther] `shouldBe` Right onOther
     it "refuses a forge the account has no identity on" $ do
       DB.identityToRemove otherForge [onGithub] `shouldBe` Left DB.NoSuchIdentity
-    it "removes an identity the account has more than one of" $ do
-      DB.mayRemove DB.KeepModuleSettings 2 False onOther `shouldBe` Right onOther
-    it "never removes the last identity" $ do
-      DB.mayRemove DB.DeleteModuleSettings 1 False onGithub `shouldBe` Left DB.LastIdentity
+    it "removes an identity while another one still logs the account in" $ do
+      DB.mayRemove DB.KeepModuleSettings 1 False onOther `shouldBe` Right onOther
+    it "never removes the last identity that logs the account in" $ do
+      DB.mayRemove DB.DeleteModuleSettings 0 False onGithub `shouldBe` Left DB.LastIdentity
     it "deletes module settings only once confirmed" $ do
-      DB.mayRemove DB.KeepModuleSettings 2 True onGithub `shouldBe` Left DB.HasModuleSettings
-      DB.mayRemove DB.DeleteModuleSettings 2 True onGithub `shouldBe` Right onGithub
+      DB.mayRemove DB.KeepModuleSettings 1 True onGithub `shouldBe` Left DB.HasModuleSettings
+      DB.mayRemove DB.DeleteModuleSettings 1 True onGithub `shouldBe` Right onGithub
 
   describe "users on different forges" $ inM $ beforeM_ truncateDBM $ do
     it "may share an email, and the later account learns it was in use" $ do
