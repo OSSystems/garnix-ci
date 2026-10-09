@@ -4,7 +4,6 @@ import React from "react";
 import { Modal, ModalSection } from "@/components/modal";
 import { Text } from "@/components/text";
 import { Button } from "@/components/button";
-import { GithubIcon } from "@/components/icons/github";
 import { useLoginLinkForCurrentPage } from "@/hooks/useLoginLinkForCurrentPage";
 import styles from "./styles.module.css";
 
@@ -17,7 +16,7 @@ export const LoginPrompt = () => {
         <Text type="h1">Please login to continue</Text>
         <Text className={styles.spacing}>
           You must be authenticated to view this page. Please click the link
-          below to log in with GitHub.
+          below to log in.
         </Text>
         <div className={styles.actions}>
           <Button
@@ -25,7 +24,7 @@ export const LoginPrompt = () => {
             eventName="login-from-auth-required-page"
             target=""
           >
-            <GithubIcon /> Login with GitHub
+            Log in
           </Button>
         </div>
       </ModalSection>

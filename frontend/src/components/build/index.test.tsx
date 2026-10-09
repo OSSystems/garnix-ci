@@ -9,6 +9,10 @@ const gitea: Forge = {
   slug: "git.example",
   kind: "gitea",
   webUrl: "https://git.example.com",
+  source: "configured",
+  name: "git.example.com",
+  status: "active",
+  canManage: false,
 };
 
 const commitOn = (forge: string | undefined, branch = "main") =>

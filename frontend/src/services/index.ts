@@ -75,3 +75,8 @@ const safeParseJson = (text: string): any => {
     return {};
   }
 };
+
+// The backend's message, without the status it prefixes some with: it is
+// written for the person who sees it.
+export const userMessage = (error: APIError): string =>
+  error.message.replace(/^(Bad Request|Forbidden|Unauthorized): /, "");
