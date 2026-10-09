@@ -8,6 +8,7 @@ module Garnix.TestHelpers.WithServer
     put,
     post,
     delete,
+    deleteWithBody,
     postWithHeaders,
     putWithHeaders,
     getWithHeaders,
@@ -39,6 +40,7 @@ data TestServer = TestServer
     put :: String -> Value -> M (Response ByteString),
     post :: String -> Value -> M (Response ByteString),
     delete :: String -> M (Response ByteString),
+    deleteWithBody :: String -> Value -> M (Response ByteString),
     getWithHeaders :: String -> [(HeaderName, Data.ByteString.ByteString)] -> M (Response ByteString),
     postWithHeaders :: String -> [(HeaderName, Data.ByteString.ByteString)] -> Value -> M (Response ByteString),
     putWithHeaders :: String -> [(HeaderName, Data.ByteString.ByteString)] -> Value -> M (Response ByteString),
@@ -58,6 +60,8 @@ mkTestServer session port =
         liftIO $ Network.Wreq.Session.postWith opts session (mkUrl apiPath) body
       delete apiPath = do
         liftIO $ Network.Wreq.Session.deleteWith opts session (mkUrl apiPath)
+      deleteWithBody apiPath body = do
+        liftIO $ Network.Wreq.Session.customPayloadMethodWith "DELETE" opts session (mkUrl apiPath) body
       getWithHeaders apiPath headers = do
         liftIO $ Network.Wreq.Session.getWith (opts & Wreq.headers .~ headers) session $ mkUrl apiPath
       putWithHeaders apiPath headers body = do
@@ -75,6 +79,7 @@ mkTestServer session port =
           put,
           post,
           delete,
+          deleteWithBody,
           getWithHeaders,
           postWithHeaders,
           putWithHeaders,

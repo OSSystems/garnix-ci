@@ -22,25 +22,61 @@ BEGIN
         UNION ALL SELECT 1 FROM denylist WHERE forge <> 'github'
         UNION ALL SELECT 1 FROM modules WHERE forge <> 'github'
         UNION ALL SELECT 1 FROM deploy_comments WHERE forge <> 'github'
-        UNION ALL SELECT 1 FROM users WHERE forge <> 'github'
+        UNION ALL SELECT 1 FROM forge_identities WHERE forge <> 'github'
         UNION ALL SELECT 1 FROM internal_access_tokens WHERE forge <> 'github'
         UNION ALL SELECT 1 FROM module_user_repo WHERE forge <> 'github'
     ) THEN
         RAISE EXCEPTION 'rows from forges other than github exist; reverting would turn them into github rows';
     END IF;
+    IF EXISTS (SELECT 1 FROM users GROUP BY email HAVING count(*) > 1) THEN
+        RAISE EXCEPTION 'accounts share an email; reverting would make emails unique again';
+    END IF;
 END
 $$;
 
+ALTER TABLE users ADD CONSTRAINT users_email_key UNIQUE (email);
+
+-- Back to one github login per account. With only github identities left, an
+-- account holds one identity at most; one that holds none fails the NOT NULL.
+ALTER TABLE users ADD COLUMN github_login character varying;
+UPDATE users SET github_login = forge_identities.login
+FROM forge_identities
+WHERE forge_identities.user_id = users.id;
+ALTER TABLE users ALTER COLUMN github_login SET NOT NULL;
+ALTER TABLE users ADD CONSTRAINT users_github_login_key UNIQUE (github_login);
+
 ALTER TABLE module_user_repo DROP CONSTRAINT module_user_repo_forge_github_login_fkey;
 ALTER TABLE module_user_repo DROP CONSTRAINT module_user_repo_forge_github_login_key;
-ALTER TABLE users DROP CONSTRAINT users_forge_email_key;
-ALTER TABLE users ADD CONSTRAINT users_email_key UNIQUE (email);
-ALTER TABLE users DROP CONSTRAINT users_forge_github_login_key;
-ALTER TABLE users ADD CONSTRAINT users_github_login_key UNIQUE (github_login);
 ALTER TABLE module_user_repo ADD CONSTRAINT module_user_repo_github_login_key UNIQUE (github_login);
 ALTER TABLE module_user_repo
     ADD CONSTRAINT module_user_repo_github_login_fkey
     FOREIGN KEY (github_login) REFERENCES users(github_login);
+
+CREATE TABLE github_user_credentials (
+    user_id integer NOT NULL,
+    access_token bytea NOT NULL,
+    access_token_expires_at timestamp with time zone,
+    refresh_token bytea,
+    refresh_token_expires_at timestamp with time zone,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+ALTER TABLE ONLY github_user_credentials
+    ADD CONSTRAINT github_user_credentials_pkey PRIMARY KEY (user_id);
+
+ALTER TABLE ONLY github_user_credentials
+    ADD CONSTRAINT github_user_credentials_user_id_fkey
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE;
+
+INSERT INTO github_user_credentials
+    (user_id, access_token, access_token_expires_at, refresh_token,
+     refresh_token_expires_at, updated_at)
+SELECT user_id, access_token, access_token_expires_at, refresh_token,
+       refresh_token_expires_at, coalesce(credentials_updated_at, now())
+FROM forge_identities
+WHERE access_token IS NOT NULL;
+
+DROP TABLE forge_identities;
 
 ALTER TABLE internal_access_tokens DROP CONSTRAINT internal_access_tokens_pkey;
 ALTER TABLE internal_access_tokens ADD CONSTRAINT internal_access_tokens_pkey PRIMARY KEY (github_login);
@@ -83,7 +119,6 @@ ALTER TABLE commits ADD CONSTRAINT commits_pkey PRIMARY KEY (repo_user, repo_nam
 
 ALTER TABLE module_user_repo DROP COLUMN forge;
 ALTER TABLE internal_access_tokens DROP COLUMN forge;
-ALTER TABLE users DROP COLUMN forge;
 ALTER TABLE deploy_comments DROP COLUMN forge;
 ALTER TABLE modules DROP COLUMN forge;
 ALTER TABLE denylist DROP COLUMN forge;

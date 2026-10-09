@@ -58,7 +58,7 @@ spec = inM $ beforeM_ truncateDBM $ aroundM_ suppressLogsWhenPassing $ do
       it "reports empty usage when the user has no installations" $ do
         mockGithubInterface (GhToken "user-with-no-builds") [] $ do
           testUser <- mkTestUser (GhToken "user-with-no-builds")
-          usage <- usageOverview $ pure $ WebSession testUser
+          usage <- usageOverview $ pure $ WebSession (testUser ^. id)
           liftIO $ usage `shouldBe` UsageOverview (fromList [("mock-user", OrgUsage emptyDuration emptyDuration AppNotInstalled)])
 
       it "reports empty usage when the user has no builds this month" $ do
@@ -67,7 +67,7 @@ spec = inM $ beforeM_ truncateDBM $ aroundM_ suppressLogsWhenPassing $ do
           testUser <- mkTestUser (GhToken "user-with-one-org")
           _ <- addTestBuild "owner" monthsAgo (fromSeconds @Int 100)
           _ <- addTestBuild "owner" monthsAgo (fromSeconds @Int 100)
-          usage <- usageOverview $ pure $ WebSession testUser
+          usage <- usageOverview $ pure $ WebSession (testUser ^. id)
           liftIO $ usage `shouldBe` UsageOverview (fromList [("mock-user", OrgUsage emptyDuration emptyDuration AppNotInstalled)])
 
       it "reports usage of all build minutes for the user's installation" $ do
@@ -78,7 +78,7 @@ spec = inM $ beforeM_ truncateDBM $ aroundM_ suppressLogsWhenPassing $ do
           _ <- addTestBuild "mock-user" now (fromSeconds @Int 200)
           _ <- addTestBuild "work-org" now (fromSeconds @Int 400)
           _ <- addTestBuild "unrelated-org" now (fromSeconds @Int 100)
-          usage <- usageOverview $ pure $ WebSession testUser
+          usage <- usageOverview $ pure $ WebSession (testUser ^. id)
           liftIO
             $ usage
             `shouldBe` UsageOverview
@@ -96,7 +96,7 @@ spec = inM $ beforeM_ truncateDBM $ aroundM_ suppressLogsWhenPassing $ do
           ["mock-user/own-repo", "opaque-org/some-repo"]
           $ do
             testUser <- mkTestUser (GhToken "user-with-an-opaque-org")
-            usage <- usageOverview $ pure $ WebSession testUser
+            usage <- usageOverview $ pure $ WebSession (testUser ^. id)
             liftIO
               $ usage
               `shouldBe` UsageOverview
@@ -223,7 +223,7 @@ spec = inM $ beforeM_ truncateDBM $ aroundM_ suppressLogsWhenPassing $ do
       it "lists garnix-enabled repos the user has access to" $ suppressLogs $ do
         mockGithubInterface $ do
           testUser <- mkTestUser (GhToken "user-with-no-builds")
-          enabledReposOf (Authenticated $ WebSession testUser)
+          enabledReposOf (Authenticated $ WebSession (testUser ^. id))
             `shouldReturnM` EnabledRepos ["org1/repo1", "org2/repo2"]
 
 mkTestUser :: GhToken -> M User
@@ -232,9 +232,7 @@ mkTestUser token = do
     DB.newUser
       (ForgeLogin githubForge (GhLogin "mock-user"))
       (Email "mock-user@example.com")
-      FreeSubscription
-      True
-  storeCredentialsFor (user ^. id) (nonExpiringCredentials token)
+  storeCredentialsFor (soleForgeLogin user) (nonExpiringCredentials token)
   pure user
 
 nonExpiringCredentials :: GhToken -> GhUserCredentials Text

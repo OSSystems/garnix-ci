@@ -16,6 +16,7 @@ import Control.Lens (IndexedTraversal')
 import Control.Lens.Regex.Text qualified as RE
 import Control.Monad.Base (MonadBase)
 import Data.Aeson (Value, eitherDecode')
+import Data.Aeson.Lens (key, _Bool, _String)
 import Data.Aeson.Types (Parser, parseEither)
 import Data.ByteString (ByteString)
 import Data.ByteString.Lazy qualified as BSL
@@ -480,8 +481,10 @@ data Forge = Forge
     _forgeOpenPullRequest :: (HasCallStack) => RepoId -> PullRequest -> M PullRequestResult,
     _forgeExchangeOauthCode :: (HasCallStack) => Text -> OAuthCode -> M (GhUserCredentials Text),
     _forgeRefreshUserCredentials :: (HasCallStack) => Text -> M (GhUserCredentials Text),
-    -- | The login and primary email of the user an OAuth access token belongs to.
-    _forgeGetCurrentUser :: (HasCallStack) => Text -> M (GhLogin, Email),
+    -- | The login and primary email of the user an OAuth access token belongs
+    -- to, and whether the forge calls them an administrator of itself
+    -- (GitHub's @site_admin@, Gitea's @is_admin@).
+    _forgeGetCurrentUser :: (HasCallStack) => Text -> M (GhLogin, Email, Bool),
     _forgeGetPullRequestsForCommit :: (HasCallStack) => RepoInfo -> CommitHash -> M [GhPullRequestId],
     _forgeCommentOnPullRequest :: (HasCallStack) => RepoInfo -> GhPullRequestId -> Text -> M ()
   }
@@ -572,11 +575,19 @@ getReposInInstallationAccessibleTo installation token = do
 -- * Forge accessors
 
 forgeInstanceFor :: (HasCallStack) => ForgeSlug -> M ForgeInstance
-forgeInstanceFor slug = do
-  configured <- view #forges
-  case Map.lookup slug configured of
+forgeInstanceFor slug =
+  lookupForgeInstance slug >>= \case
     Just instance' -> pure instance'
     Nothing -> throw $ OtherError $ "No forge is configured under the slug " <> getForgeSlug slug
+
+-- | The forge instance garnix knows under a slug, if any: the one place that
+-- says which forges exist.
+lookupForgeInstance :: ForgeSlug -> M (Maybe ForgeInstance)
+lookupForgeInstance slug = Map.lookup slug <$> view #forges
+
+-- | The configuration of the forge instance under a slug, if garnix knows one.
+forgeConfigFor :: ForgeSlug -> M (Maybe ForgeConfig)
+forgeConfigFor slug = fmap _forgeInstanceConfig <$> lookupForgeInstance slug
 
 forgeFor :: (HasCallStack) => ForgeSlug -> M Forge
 forgeFor slug = _forgeInstanceForge <$> forgeInstanceFor slug
@@ -646,7 +657,7 @@ refreshUserCredentials slug token = do
   forge' <- forgeFor slug
   _forgeRefreshUserCredentials forge' token
 
-getCurrentUser :: (HasCallStack) => ForgeSlug -> Text -> M (GhLogin, Email)
+getCurrentUser :: (HasCallStack) => ForgeSlug -> Text -> M (GhLogin, Email, Bool)
 getCurrentUser slug accessToken' = do
   forge' <- forgeFor slug
   _forgeGetCurrentUser forge' accessToken'
@@ -742,17 +753,20 @@ githubForgeApi =
         gh _githubInterfaceCommentOnPullRequest >>= \f -> f repoInfo prId body
     }
   where
+    -- Read as JSON: the library's 'GH.User' has no @site_admin@.
     githubCurrentUser accessToken' = do
       let auth = GH.OAuth $ cs accessToken'
-      eGhUser <- liftIO (GH.github auth GH.userInfoCurrentR) <?> "calling userInfoCurrentR"
+          request = GH.query ["user"] [] :: GH.Request 'GH.RA Value
+      eGhUser <- liftIO (GH.github auth request) <?> "calling GET /user"
       case eGhUser of
         Left e -> throw $ OtherError $ show e
-        Right ghUser -> do
-          e <- githubEmail auth ghUser <?> "calling getEmail"
-          pure (GhLogin . GH.untagName $ GH.userLogin ghUser, e)
-    githubEmail auth ghUser = case GH.userEmail ghUser of
-      Just e -> pure $ Email e
-      Nothing -> do
+        Right body -> do
+          login' <- maybe (throw $ OtherError "getCurrentUser: no login in GitHub's answer") pure $ body ^? key "login" . _String
+          e <- githubEmail auth (body ^? key "email" . _String) <?> "calling getEmail"
+          pure (GhLogin login', e, body ^? key "site_admin" . _Bool == Just True)
+    githubEmail auth = \case
+      Just e | not (T.null e) -> pure $ Email e
+      _ -> do
         emails <-
           liftIO (GH.github auth $ GH.currentUserEmailsR GH.FetchAll)
             <?> "calling currentUserEmailsR"

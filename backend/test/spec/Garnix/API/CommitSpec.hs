@@ -400,10 +400,10 @@ spec = inM $ aroundM_ suppressLogsWhenPassing $ beforeM_ truncateDBM $ describe 
 
     it "returns commits for a private repo where the user is the owner" $ GH.withFakeGithubInterface $ \st -> withServer $ \testServer -> do
       user <- testServer.login
-      let owner = GhRepoOwner $ user ^. githubLogin
+      let owner = GhRepoOwner $ user ^. soleLogin
       GH.mkRepo st owner "target-repo" $ #publicity .~ RepoIsPublic False
       void $ mkTestCommits owner "target-repo"
-      result <- assert200 $ testServer.get $ "/api/commits/repo/" <> cs (getGhLogin $ user ^. githubLogin) <> "/target-repo"
+      result <- assert200 $ testServer.get $ "/api/commits/repo/" <> cs (getGhLogin $ user ^. soleLogin) <> "/target-repo"
       liftIO $ length (result ^?! responseBody . key "commits" . _Array) `shouldBe` 2
 
     it "answers as /api/commits/repo/github/<owner>/<name>" $ GH.withFakeGithubInterface $ \st -> withServer $ \testServer -> do
@@ -470,7 +470,7 @@ spec = inM $ aroundM_ suppressLogsWhenPassing $ beforeM_ truncateDBM $ describe 
 
     it "returns commits for private repos" $ GH.withFakeGithubInterface $ \st -> withServer $ \testServer -> do
       user <- testServer.login
-      GH.mkRepo st "target-user" "target-repo" $ (#publicity .~ RepoIsPublic False) . (#collaborators .~ [user ^. githubLogin])
+      GH.mkRepo st "target-user" "target-repo" $ (#publicity .~ RepoIsPublic False) . (#collaborators .~ [user ^. soleLogin])
       (commitA, commitB) <- mkTestCommits "target-user" "target-repo"
       result <- assert200 $ testServer.get "/api/commits/repo/target-user/target-repo"
       liftIO $ result ^?! responseBody . _Value
@@ -514,5 +514,3 @@ testUser ghLogin email =
   DB.newUser
     (ForgeLogin githubForge ghLogin)
     email
-    FreeSubscription
-    True

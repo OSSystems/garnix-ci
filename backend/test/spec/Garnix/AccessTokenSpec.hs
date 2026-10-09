@@ -75,5 +75,3 @@ testUser name =
     <$> DB.newUser
       (ForgeLogin githubForge (GhLogin name))
       (Email $ name <> "@example.com")
-      FreeSubscription
-      True

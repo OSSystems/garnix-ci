@@ -20,8 +20,6 @@ spec = inM $ beforeM_ truncateDBM $ aroundM_ suppressLogsWhenPassing $ do
         DB.newUser
           (ForgeLogin githubForge (GhLogin "token-user"))
           (Email "token-user@example.com")
-          FreeSubscription
-          True
 
       credentialsExpiringAt :: Text -> Maybe UTCTime -> Text -> GhUserCredentials Text
       credentialsExpiringAt access expiresAt refresh =
@@ -41,26 +39,43 @@ spec = inM $ beforeM_ truncateDBM $ aroundM_ suppressLogsWhenPassing $ do
 
       isExpired :: Either ErrorWithContext a -> Bool
       isExpired = \case
-        Left e -> err e == GithubSessionExpired
+        Left e -> err e == ForgeSessionExpired githubForge
         Right _ -> False
 
-  describe "githubTokenFor" $ do
+  describe "userTokenFor" $ do
+    it "keeps one token per identity of an account" $ do
+      user <- loggedInUser
+      let onGithub = soleForgeLogin user
+          onOther = ForgeLogin (ForgeSlug "git.example") "token-user"
+      DB.addIdentity (user ^. id) (ForgeIdentity (onOther ^. forge) (onOther ^. ghLogin) False)
+      storeCredentialsFor onGithub $ credentialsExpiringAt "ghu_github" Nothing "ghr_github"
+      storeCredentialsFor onOther $ credentialsExpiringAt "gitea_token" Nothing "gitea_refresh"
+      refusingToRenew (userTokenFor onGithub) `shouldReturnM` GhToken "ghu_github"
+      refusingToRenew (userTokenFor onOther) `shouldReturnM` GhToken "gitea_token"
+
+    it "names the forge whose session expired" $ do
+      user <- loggedInUser
+      let onOther = ForgeLogin (ForgeSlug "git.example") "token-user"
+      DB.addIdentity (user ^. id) (ForgeIdentity (onOther ^. forge) (onOther ^. ghLogin) False)
+      result :: Either ErrorWithContext GhToken <- try $ refusingToRenew $ userTokenFor onOther
+      (err <$> either Just (const Nothing) result) `shouldBeM` Just (ForgeSessionExpired (ForgeSlug "git.example"))
+
     it "hands out the stored token while it still has time on it" $ do
       user <- loggedInUser
       now <- liftIO getCurrentTime
-      storeCredentialsFor (user ^. id)
+      storeCredentialsFor (soleForgeLogin user)
         $ credentialsExpiringAt "ghu_good" (Just $ addTime (fromHours @Int 4) now) "ghr_old"
-      refusingToRenew (githubTokenFor user) `shouldReturnM` GhToken "ghu_good"
+      refusingToRenew (userTokenFor (soleForgeLogin user)) `shouldReturnM` GhToken "ghu_good"
 
     it "hands out the stored token when the app does not expire tokens at all" $ do
       user <- loggedInUser
-      storeCredentialsFor (user ^. id) $ credentialsExpiringAt "ghu_forever" Nothing "ghr_old"
-      refusingToRenew (githubTokenFor user) `shouldReturnM` GhToken "ghu_forever"
+      storeCredentialsFor (soleForgeLogin user) $ credentialsExpiringAt "ghu_forever" Nothing "ghr_old"
+      refusingToRenew (userTokenFor (soleForgeLogin user)) `shouldReturnM` GhToken "ghu_forever"
 
     it "renews a token that is about to run out, and keeps the renewed one" $ do
       user <- loggedInUser
       now <- liftIO getCurrentTime
-      storeCredentialsFor (user ^. id)
+      storeCredentialsFor (soleForgeLogin user)
         $ credentialsExpiringAt "ghu_old" (Just $ addUTCTime 60 now) "ghr_old"
       renewedWith <- liftIO $ newIORef []
       token <-
@@ -69,15 +84,15 @@ spec = inM $ beforeM_ truncateDBM $ aroundM_ suppressLogsWhenPassing $ do
               liftIO $ modifyIORef' renewedWith (refresh :)
               pure $ credentialsExpiringAt "ghu_new" (Just $ addTime (fromHours @Int 8) now) "ghr_new"
           )
-          $ githubTokenFor user
+          $ userTokenFor (soleForgeLogin user)
       liftIO $ token `shouldBe` GhToken "ghu_new"
       liftIO (readIORef renewedWith) `shouldReturnM` ["ghr_old"]
-      refusingToRenew (githubTokenFor user) `shouldReturnM` GhToken "ghu_new"
+      refusingToRenew (userTokenFor (soleForgeLogin user)) `shouldReturnM` GhToken "ghu_new"
 
     it "renews only once when two requests find the same token running out" $ do
       user <- loggedInUser
       now <- liftIO getCurrentTime
-      storeCredentialsFor (user ^. id)
+      storeCredentialsFor (soleForgeLogin user)
         $ credentialsExpiringAt "ghu_old" (Just $ addUTCTime 60 now) "ghr_old"
       renewals <- liftIO $ newIORef (0 :: Int)
       tokens <-
@@ -87,47 +102,47 @@ spec = inM $ beforeM_ truncateDBM $ aroundM_ suppressLogsWhenPassing $ do
               threadDelay $ fromSeconds @Double 0.2
               pure $ credentialsExpiringAt "ghu_new" (Just $ addTime (fromHours @Int 8) now) "ghr_new"
           )
-          $ concurrently (githubTokenFor user) (githubTokenFor user)
+          $ concurrently (userTokenFor (soleForgeLogin user)) (userTokenFor (soleForgeLogin user))
       liftIO $ tokens `shouldBe` (GhToken "ghu_new", GhToken "ghu_new")
       liftIO (readIORef renewals) `shouldReturnM` (1 :: Int)
 
     it "ends the session when github will not renew the token" $ do
       user <- loggedInUser
       now <- liftIO getCurrentTime
-      storeCredentialsFor (user ^. id)
+      storeCredentialsFor (soleForgeLogin user)
         $ credentialsExpiringAt "ghu_old" (Just $ addUTCTime 60 now) "ghr_revoked"
-      result <- try $ mockRefresh (\_ -> throw GithubDidntGiveUsAToken) $ githubTokenFor user
+      result <- try $ mockRefresh (\_ -> throw GithubDidntGiveUsAToken) $ userTokenFor (soleForgeLogin user)
       liftIO $ case result of
         Left e -> statusCode (toErrorDetails e) `shouldBe` 401
         Right _ -> expectationFailure "expected the session to have ended"
-      stored <- DB.getGithubUserCredentials (user ^. id)
+      stored <- DB.getIdentityCredentials (soleForgeLogin user)
       liftIO $ stored `shouldSatisfy` isNothing
-      again <- try $ refusingToRenew $ githubTokenFor user
+      again <- try $ refusingToRenew $ userTokenFor (soleForgeLogin user)
       liftIO $ (again :: Either ErrorWithContext GhToken) `shouldSatisfy` isExpired
 
     it "ends the session when the refresh token itself has expired" $ do
       user <- loggedInUser
       now <- liftIO getCurrentTime
-      storeCredentialsFor (user ^. id)
+      storeCredentialsFor (soleForgeLogin user)
         $ (credentialsExpiringAt "ghu_old" (Just $ addUTCTime 60 now) "ghr_old")
           { _ghUserCredentialsRefreshTokenExpiresAt = Just $ addUTCTime (-60) now
           }
-      result <- try $ refusingToRenew $ githubTokenFor user
+      result <- try $ refusingToRenew $ userTokenFor (soleForgeLogin user)
       liftIO $ (result :: Either ErrorWithContext GhToken) `shouldSatisfy` isExpired
 
     it "ends the session when there are no credentials on file" $ do
       user <- loggedInUser
-      result <- try $ refusingToRenew $ githubTokenFor user
+      result <- try $ refusingToRenew $ userTokenFor (soleForgeLogin user)
       liftIO $ (result :: Either ErrorWithContext GhToken) `shouldSatisfy` isExpired
 
-  describe "withGithubUserToken" $ do
+  describe "withUserToken" $ do
     it "renews and retries once when github rejects a token that had not expired" $ do
       user <- loggedInUser
-      storeCredentialsFor (user ^. id) $ credentialsExpiringAt "ghu_revoked" Nothing "ghr_old"
+      storeCredentialsFor (soleForgeLogin user) $ credentialsExpiringAt "ghu_revoked" Nothing "ghr_old"
       attempts <- liftIO $ newIORef []
       token <-
         mockRefresh (\_ -> pure $ credentialsExpiringAt "ghu_new" Nothing "ghr_new")
-          $ withGithubUserToken user
+          $ withUserToken (soleForgeLogin user)
           $ \token -> do
             liftIO $ modifyIORef' attempts (token :)
             when (token == GhToken "ghu_revoked") $ throw GithubUserTokenRejected
@@ -137,10 +152,10 @@ spec = inM $ beforeM_ truncateDBM $ aroundM_ suppressLogsWhenPassing $ do
 
     it "ends the session when the renewed token is rejected as well" $ do
       user <- loggedInUser
-      storeCredentialsFor (user ^. id) $ credentialsExpiringAt "ghu_revoked" Nothing "ghr_old"
+      storeCredentialsFor (soleForgeLogin user) $ credentialsExpiringAt "ghu_revoked" Nothing "ghr_old"
       result <-
         try
           $ mockRefresh (\_ -> throw GithubDidntGiveUsAToken)
-          $ withGithubUserToken user
+          $ withUserToken (soleForgeLogin user)
           $ \_ -> throw GithubUserTokenRejected
       liftIO $ (result :: Either ErrorWithContext ()) `shouldSatisfy` isExpired

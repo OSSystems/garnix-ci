@@ -302,7 +302,7 @@ clientSpec = do
       let routes "POST" "/login/oauth/access_token" _ =
             (status200, object ["access_token" .= ("user-token" :: Text), "token_type" .= ("bearer" :: Text), "expires_in" .= (3600 :: Int), "refresh_token" .= ("refresh-token" :: Text)])
           routes "GET" "/api/v1/user" _ =
-            (status200, object ["login" .= ("alice" :: Text), "email" .= ("alice@example.com" :: Text)])
+            (status200, object ["login" .= ("alice" :: Text), "email" .= ("alice@example.com" :: Text), "is_admin" .= True])
           routes _ _ _ = notFound
 
       it "exchanges a code for the user's tokens at the instance's token endpoint" $ do
@@ -349,7 +349,7 @@ clientSpec = do
       it "asks the instance who a token belongs to" $ do
         (user, received) <- withFakeGitea routes $ \config ->
           withInstance config $ getCurrentUser (config ^. slug) "user-token"
-        user `shouldBeM` ("alice", Email "alice@example.com")
+        user `shouldBeM` ("alice", Email "alice@example.com", True)
         map authorization received `shouldBeM` [Just "token user-token"]
 
 -- | Builds triggered by an instance's webhooks.

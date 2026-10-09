@@ -6,6 +6,7 @@ import Data.Map.Strict qualified as Map
 import Data.Maybe
 import Data.Set qualified as Set
 import Data.Text qualified as T
+import Garnix.Access (githubIdentity, requireGithubIdentity, webSessionUser)
 import Garnix.AccessToken
 import Garnix.AccessToken.Types
 import Garnix.DB qualified as DB
@@ -69,13 +70,14 @@ getOwnersWithVisibleInstallation token = do
       [owner, _] -> Just $ GhRepoOwner $ GhLogin owner
       _ -> Nothing
 
-getViewableOwners :: User -> GhToken -> M (Map.Map GhRepoOwner InstallationStatus)
-getViewableOwners user token = do
+-- | GitHub owners, for the account's github identity @login'@.
+getViewableOwners :: GhLogin -> GhToken -> M (Map.Map GhRepoOwner InstallationStatus)
+getViewableOwners login' token = do
   (memberships, installedOwners) <-
     concurrently
       (getInstalledOrgs token)
       (getOwnersWithVisibleInstallation token)
-  let self = GhRepoOwner (user ^. githubLogin)
+  let self = GhRepoOwner login'
       adminOrgs = organizationName <$> filter (\membership -> role membership == Admin) memberships
       readableOrgs = Set.fromList $ organizationName <$> memberships
       opaqueOrgs = Set.delete self $ installedOwners `Set.difference` readableOrgs
@@ -99,20 +101,24 @@ getUsageForOrg forge' usage org installationStatus = do
         _orgUsageInstallationStatus = installationStatus
       }
 
+-- | The GitHub App's installations are what usage is counted for, so usage
+-- is the account's github identity's.
 usageOverview :: AuthResult AuthJwtPayload -> M UsageOverview
-usageOverview (Authenticated (WebSession user)) = do
-  owners <- withGithubUserToken user $ getViewableOwners user
-  usage <- DB.getCurrentMonthUsages (user ^. forge) (Map.keys owners)
-  UsageOverview <$> Map.traverseWithKey (getUsageForOrg (user ^. forge) usage) owners
-usageOverview _ = throw Unauthorized
+usageOverview auth =
+  githubIdentity <$> webSessionUser auth >>= \case
+    Nothing -> pure $ UsageOverview mempty
+    Just login' -> do
+      owners <- withUserToken login' $ getViewableOwners (login' ^. ghLogin)
+      usage <- DB.getCurrentMonthUsages githubForge (Map.keys owners)
+      UsageOverview <$> Map.traverseWithKey (getUsageForOrg githubForge usage) owners
 
 orgUsage :: AuthResult AuthJwtPayload -> GhRepoOwner -> M OrgUsage
-orgUsage (Authenticated (WebSession user)) org = do
-  owners <- withGithubUserToken user $ getViewableOwners user
+orgUsage auth org = do
+  login' <- requireGithubIdentity =<< webSessionUser auth
+  owners <- withUserToken login' $ getViewableOwners (login' ^. ghLogin)
   installationStatus <- maybe (throw NotFound) pure $ Map.lookup org owners
-  usage <- DB.getCurrentMonthUsages (user ^. forge) [org]
-  getUsageForOrg (user ^. forge) usage org installationStatus
-orgUsage _ _ = throw Unauthorized
+  usage <- DB.getCurrentMonthUsages githubForge [org]
+  getUsageForOrg githubForge usage org installationStatus
 
 data GetTokensResponseBody = GetTokensResponseBody
   { _getTokensResponseBodyTokens :: [AccessTokenMetadata]
@@ -140,7 +146,7 @@ instance ToJSON CreateTokenResponseBody where
   toJSON = ourToJSON
 
 getAccessTokens :: AuthResult AuthJwtPayload -> M GetTokensResponseBody
-getAccessTokens (Authenticated ((^. #user) -> user)) = GetTokensResponseBody <$> DB.getAccessTokensForUser (user ^. id)
+getAccessTokens (Authenticated session) = GetTokensResponseBody <$> DB.getAccessTokensForUser (sessionUserId session)
 getAccessTokens _ = throw Unauthorized
 
 -- For backwards compatability during the first deploy, if `scopes` is not provided, we default to just a cache scope.
@@ -148,29 +154,31 @@ fallbackAccessTokenScopes :: AccessTokenScopes
 fallbackAccessTokenScopes = AccessTokenScopes {api = False, cache = True}
 
 createAccessToken :: AuthResult AuthJwtPayload -> CreateTokenRequestBody -> M CreateTokenResponseBody
-createAccessToken (Authenticated (WebSession user)) (CreateTokenRequestBody name (fromMaybe fallbackAccessTokenScopes -> scopes)) = do
+createAccessToken (Authenticated (WebSession userId)) (CreateTokenRequestBody name (fromMaybe fallbackAccessTokenScopes -> scopes)) = do
   when (scopes == AccessTokenScopes {api = False, cache = False}) $ do
     throw $ BadRequest "no scopes enabled"
-  accessToken <- generateToken (user ^. id) name scopes
+  accessToken <- generateToken userId name scopes
   pure $ CreateTokenResponseBody accessToken
 createAccessToken (Authenticated (ApiSession _)) _ = throw $ ForbiddenWithMessage "This endpoint is not available through the programmatic api."
 createAccessToken _ _ = throw Unauthorized
 
 revokeAccessToken :: AuthResult AuthJwtPayload -> Int64 -> M NoContent
-revokeAccessToken (Authenticated ((^. #user) -> user)) tokenId = do
-  DB.deleteAccessTokenForUser (user ^. id) tokenId
+revokeAccessToken (Authenticated session) tokenId = do
+  DB.deleteAccessTokenForUser (sessionUserId session) tokenId
   pure NoContent
 revokeAccessToken _ _ = throw Unauthorized
 
 enabledReposOf :: AuthResult AuthJwtPayload -> M EnabledRepos
-enabledReposOf (Authenticated (WebSession user)) = withGithubUserToken user $ \ghToken -> do
-  installationIds <- getInstallations ghToken
-  repos <- forConcurrently installationIds $ \id ->
-    getReposInInstallationAccessibleTo id ghToken
-  return
-    $ EnabledRepos
-    $ mconcat repos
-enabledReposOf _ = throw Unauthorized
+enabledReposOf auth =
+  githubIdentity <$> webSessionUser auth >>= \case
+    Nothing -> pure $ EnabledRepos []
+    Just login' -> withUserToken login' $ \ghToken -> do
+      installationIds <- getInstallations ghToken
+      repos <- forConcurrently installationIds $ \id ->
+        getReposInInstallationAccessibleTo id ghToken
+      return
+        $ EnabledRepos
+        $ mconcat repos
 
 data EnabledRepos = EnabledRepos {_enabledReposRepos :: [Text]}
   deriving stock (Eq, Show, Generic)

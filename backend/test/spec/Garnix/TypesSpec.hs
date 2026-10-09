@@ -34,37 +34,15 @@ spec = describe "Types" $ do
       parseForgeLoginText "bob@" `shouldBe` Nothing
 
   describe "AuthJwtPayload" $ do
-    let testUser now =
-          User
-            { _userId = UserId 123,
-              _userForge = githubForge,
-              _userGithubLogin = "some-user",
-              _userEmail = "foo@example.org",
-              _userSubscriptionType = FreeSubscription,
-              _userCreatedAt = now
-            }
-
-    it "serializes a web session" $ do
-      now <- getCurrentTime
-      toJSON (WebSession (testUser now))
-        `shouldBe` [aesonQQ|
-                     {
-                       "id": 123,
-                       "forge": "github",
-                       "github_login": "some-user",
-                       "email": "foo@example.org",
-                       "subscription_type": "free",
-                       "created_at": #{now},
-                       "session_kind": "web"
-                     }
-                   |]
+    it "names only the account" $ do
+      toJSON (WebSession (UserId 123))
+        `shouldBe` [aesonQQ| { "id": 123, "session_kind": "web" } |]
 
     it "roundtrips both session kinds" $ do
-      now <- getCurrentTime
-      forM_ [WebSession (testUser now), ApiSession (testUser now)] $ \payload ->
+      forM_ [WebSession (UserId 123), ApiSession (UserId 123)] $ \payload ->
         eitherDecode' (encode payload) `shouldBe` Right payload
 
-    it "reads sessions minted before users carried a forge as github accounts" $ do
+    it "reads sessions minted when an account was one github login" $ do
       now <- getCurrentTime
       let json =
             [i|
@@ -77,12 +55,23 @@ spec = describe "Types" $ do
                 "session_kind": "web"
               }
             |]
-      eitherDecode' (cs json) `shouldBe` Right (WebSession (testUser now))
+      eitherDecode' (cs json) `shouldBe` Right (WebSession (UserId 123))
 
-    it "keeps the forge of a session" $ do
+    it "reads sessions minted when an account was one login on one forge" $ do
       now <- getCurrentTime
-      let payload = WebSession (testUser now & forge .~ ForgeSlug "git.example")
-      eitherDecode' (encode payload) `shouldBe` Right payload
+      let json =
+            [i|
+              {
+                "id": 123,
+                "forge": "git.example",
+                "github_login": "some-user",
+                "email": "foo@example.org",
+                "subscription_type": "admin",
+                "created_at": #{encode now},
+                "session_kind": "api"
+              }
+            |]
+      eitherDecode' (cs json) `shouldBe` Right (ApiSession (UserId 123))
 
     it "refuses sessions minted before the github token moved to the database" $ do
       now <- getCurrentTime

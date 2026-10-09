@@ -11,6 +11,7 @@ import Garnix.Build qualified as Build
 import Garnix.Build.Checkout qualified as Checkout
 import Garnix.Build.Module qualified as Build.Module
 import Garnix.DB.ModuleValues qualified as ModuleValues
+import Garnix.Access (requireGithubIdentity, withRequiredUser)
 import Garnix.Monad
 import Garnix.Monad.SubProcess qualified as SubProcess
 import Garnix.Prelude
@@ -57,49 +58,43 @@ data ModulesAPI route = ModulesAPI
   deriving (Generic)
 
 modulesAPI :: AuthResult AuthJwtPayload -> ModulesAPI (AsServerT M)
-modulesAPI = \case
-  Authenticated ((^. #user) -> user) ->
-    ModulesAPI
-      { _modulesAPIgetValues = getValues user,
-        _modulesAPIupdateValues = updateValues user,
-        _modulesAPIgetAvailableModules = getAvailableModules,
-        _modulesAPIrunBuild = runBuild user,
-        _modulesAPIcreatePullRequest = createPullRequest user,
-        _modulesAPIgetFlake = getFlake user,
-        _modulesAPIReset = reset user
-      }
-  _ ->
-    ModulesAPI
-      { _modulesAPIgetValues = throw Unauthorized,
-        _modulesAPIupdateValues = const $ throw Unauthorized,
-        _modulesAPIgetAvailableModules = getAvailableModules,
-        _modulesAPIrunBuild = throw Unauthorized,
-        _modulesAPIcreatePullRequest = throw Unauthorized,
-        _modulesAPIgetFlake = throw Unauthorized,
-        _modulesAPIReset = throw Unauthorized
-      }
+modulesAPI auth =
+  ModulesAPI
+    { _modulesAPIgetValues = withGithubIdentity getValues,
+      _modulesAPIupdateValues = \values -> withGithubIdentity $ \login' -> updateValues login' values,
+      _modulesAPIgetAvailableModules = getAvailableModules,
+      _modulesAPIrunBuild = withGithubIdentity runBuild,
+      _modulesAPIcreatePullRequest = withGithubIdentity createPullRequest,
+      _modulesAPIgetFlake = withGithubIdentity getFlake,
+      _modulesAPIReset = withGithubIdentity reset
+    }
+  where
+    -- Modules only exist on github.com, so they belong to the account's
+    -- github identity.
+    withGithubIdentity :: (ForgeLogin -> M a) -> M a
+    withGithubIdentity action = withRequiredUser auth $ requireGithubIdentity >=> action
 
-getValues :: User -> M ModuleValues.GetRepoAndModuleValues
-getValues = maybe (throw NotFound) pure <=< ModuleValues.get . userForgeLogin
+getValues :: ForgeLogin -> M ModuleValues.GetRepoAndModuleValues
+getValues = maybe (throw NotFound) pure <=< ModuleValues.get
 
-updateValues :: User -> ModuleValues.UpdateRepoModuleValues -> M NoContent
-updateValues user values = ModuleValues.update (userForgeLogin user) values $> NoContent
+updateValues :: ForgeLogin -> ModuleValues.UpdateRepoModuleValues -> M NoContent
+updateValues login' values = ModuleValues.update login' values $> NoContent
 
 getAvailableModules :: M (Rec ("modules" .== [ModuleValues.Module]))
 getAvailableModules = (#modules .==) <$> ModuleValues.getAvailableModules
 
-runBuild :: User -> M BuildInfo
-runBuild user = do
-  repoAndModuleValues <- getValues user
-  commitInfo <- Build.buildModule (userForgeLogin user) repoAndModuleValues
+runBuild :: ForgeLogin -> M BuildInfo
+runBuild login' = do
+  repoAndModuleValues <- getValues login'
+  commitInfo <- Build.buildModule login' repoAndModuleValues
   pure $ BuildInfo (commitInfo ^. commit) (commitInfo ^. branch)
 
-createPullRequest :: User -> M PullRequestResult
-createPullRequest user = do
-  ModuleValues.get (userForgeLogin user) >>= \case
+createPullRequest :: ForgeLogin -> M PullRequestResult
+createPullRequest login' = do
+  ModuleValues.get login' >>= \case
     Nothing -> throw NotFound
     Just repoAndModuleValues -> do
-      commitInfo <- Build.Module.getCommitInfo (userForgeLogin user) repoAndModuleValues
+      commitInfo <- Build.Module.getCommitInfo login' repoAndModuleValues
       withSpan commitInfo $ do
         let baseBranch = maybe (Branch "main") identity $ commitInfo ^. branch
         newBranch <- Branch . ("garnix-modules-" <>) <$> randomBase64 8
@@ -128,18 +123,18 @@ createPullRequest user = do
             _pullRequestBaseBranch = baseBranch
           }
 
-getFlake :: User -> M (Headers '[Header "Content-Disposition" Text] ByteString)
-getFlake user = do
-  ModuleValues.get (userForgeLogin user) >>= \case
+getFlake :: ForgeLogin -> M (Headers '[Header "Content-Disposition" Text] ByteString)
+getFlake login' = do
+  ModuleValues.get login' >>= \case
     Nothing -> throw NotFound
     Just repoAndModuleValues -> do
-      commitInfo <- Build.Module.getCommitInfo (userForgeLogin user) repoAndModuleValues
+      commitInfo <- Build.Module.getCommitInfo login' repoAndModuleValues
       let defaultBranch = maybe (Branch "main") identity $ commitInfo ^. branch
       contents <- Build.Module.generateFlakeNix defaultBranch repoAndModuleValues
       pure $ addHeader "attachment; filename=\"flake.nix\"" $ cs contents
 
-reset :: User -> M NoContent
-reset user =
-  ModuleValues.get (userForgeLogin user) >>= \case
+reset :: ForgeLogin -> M NoContent
+reset login' =
+  ModuleValues.get login' >>= \case
     Nothing -> throw NotFound
-    Just _ -> ModuleValues.delete (userForgeLogin user) $> NoContent
+    Just _ -> ModuleValues.delete login' $> NoContent

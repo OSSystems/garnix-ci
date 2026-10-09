@@ -2,7 +2,7 @@ module Garnix.API.Commits where
 
 import Data.Maybe (listToMaybe)
 import Garnix.API.Runs (RunSummary, toRunSummary)
-import Garnix.Access (hasAccessTo, hasAccessToRepo, repoIdFromRoute)
+import Garnix.Access (hasAccessTo, hasAccessToRepo, repoIdFromRoute, withRequiredUser, withSessionUser)
 import Garnix.DB qualified as DB
 import Garnix.Monad
 import Garnix.Prelude
@@ -20,19 +20,12 @@ data CommitAPI route = CommitAPI
   deriving (Generic)
 
 commitAPI :: AuthResult AuthJwtPayload -> CommitAPI (AsServerT M)
-commitAPI (Authenticated ((^. #user) -> user')) =
+commitAPI auth =
   CommitAPI
-    { _commitAPIgetCommitsForRepo = \owner name -> getCommitsForRepo (Just user') (RepoId githubForge owner name),
-      _commitAPIgetCommitsForForgeRepo = \slug owner name -> getCommitsForRepo (Just user') =<< repoIdFromRoute slug owner name,
-      _commitAPIgetCommitsForUser = getCommitsForUser user',
-      _commitAPIgetSingleCommit = getSingleCommit (Just user')
-    }
-commitAPI _ =
-  CommitAPI
-    { _commitAPIgetCommitsForRepo = \owner name -> getCommitsForRepo Nothing (RepoId githubForge owner name),
-      _commitAPIgetCommitsForForgeRepo = \slug owner name -> getCommitsForRepo Nothing =<< repoIdFromRoute slug owner name,
-      _commitAPIgetCommitsForUser = throw Unauthorized,
-      _commitAPIgetSingleCommit = getSingleCommit Nothing
+    { _commitAPIgetCommitsForRepo = \owner name -> withSessionUser auth $ \user' -> getCommitsForRepo user' (RepoId githubForge owner name),
+      _commitAPIgetCommitsForForgeRepo = \slug owner name -> withSessionUser auth $ \user' -> getCommitsForRepo user' =<< repoIdFromRoute slug owner name,
+      _commitAPIgetCommitsForUser = withRequiredUser auth getCommitsForUser,
+      _commitAPIgetSingleCommit = \commit' -> withSessionUser auth $ \user' -> getSingleCommit user' commit'
     }
 
 data ListCommits = ListCommits
@@ -65,6 +58,7 @@ getCommitsForRepo user repo@(RepoId _forge repoOwner repoName) = do
   when (not hasAccess) $ throw NoSuchRepo {_owner = repoOwner, _name = repoName}
   ListCommits <$> DB.getCommitsByOwnerAndRepo repo
 
+-- | Commits any identity of the account requested.
 getCommitsForUser :: User -> M ListCommits
 getCommitsForUser user = do
   commits <- DB.getCommitsForReqUser user

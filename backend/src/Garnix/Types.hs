@@ -21,10 +21,8 @@ import Data.Aeson.Encode.Pretty (encodePretty)
 import Data.Aeson.Encoding qualified as Aeson
 import Data.Aeson.Key qualified as AesonKey
 import Data.Aeson.KeyMap (toMapText)
-import Data.Aeson.KeyMap qualified as KeyMap
 import Data.Aeson.Types qualified as JSON
 import Data.ByteString.Lazy qualified as BSL
-import Data.Generics.Product (HasField' (..))
 import Data.List.Extra (enumerate)
 import Data.Map qualified as Map
 import Data.Map.Strict qualified as StrictMap
@@ -1101,11 +1099,14 @@ data Error
   | ErrorGettingAttributesToBuild {message :: Text}
   | IsDeniedAccess
   | DuplicateBuild
-  | UserAlreadyExists GhLogin
+  | -- | Logging in, connecting or disconnecting a forge identity was refused
+    -- because of who holds what; the message tells the person what to do.
+    IdentityConflict {message :: Text}
   | DbError {statement :: Text, message :: Text}
   | GithubDidntGiveUsAToken
   | GithubUserTokenRejected
-  | GithubSessionExpired
+  | -- | The forge holds no usable credentials of the identity any more.
+    ForgeSessionExpired ForgeSlug
   | RedirectFound {location :: Text}
   | BadRequest {message :: Text}
   | Unauthorized
@@ -1183,13 +1184,10 @@ instance Pretty Error where
         <> " doesn't exist, has not enabled garnix, or you don't have access to it."
     IsDeniedAccess ->
       "This request has been denied. Anomalous activity detected. Please contact contact@garnix.io for more information."
-    UserAlreadyExists user ->
-      "User with github login"
-        <+> pretty (getGhLogin user)
-        <+> "already exists"
+    IdentityConflict {message} -> pretty message
     GithubDidntGiveUsAToken -> "Github didn't give us a user token"
     GithubUserTokenRejected -> "Github rejected the user's access token"
-    GithubSessionExpired -> "Your github session has expired. Please log in again."
+    ForgeSessionExpired slug' -> "Your" <+> pretty (getForgeSlug slug') <+> "session has expired. Please log in again."
     DecodeError {..} ->
       "Error decoding ("
         <> pretty message
@@ -1325,10 +1323,10 @@ toErrorDetails e = case err e of
   e'@NoSuchCommit {} -> errorDetails 404 $ cs $ Aeson.encode e'
   e'@NoSuchUser {} -> errorDetails 404 $ cs $ Aeson.encode e'
   e'@IsDeniedAccess -> errorDetails 403 $ cs $ Aeson.encode e'
-  e'@UserAlreadyExists {} -> errorDetails 409 $ cs $ Aeson.encode e'
+  e'@IdentityConflict {} -> errorDetails 409 $ cs $ Aeson.encode e'
   e'@GithubDidntGiveUsAToken {} -> errorDetails 500 $ cs $ Aeson.encode e'
   GithubUserTokenRejected -> errorDetails 401 "Github rejected the user's access token"
-  GithubSessionExpired -> errorDetails 401 "Your github session has expired. Please log in again."
+  ForgeSessionExpired slug' -> errorDetails 401 $ "Your " <> cs (getForgeSlug slug') <> " session has expired. Please log in again."
   e'@InvalidEmail -> errorDetails 400 $ cs $ Aeson.encode e'
   e'@InvalidAccessToken -> errorDetails 401 $ cs $ Aeson.encode e'
   e'@RunProcessError {} ->
@@ -1440,44 +1438,37 @@ newtype UserId = UserId {getUserId :: Int32}
   deriving stock (Eq, Show, Generic)
   deriving newtype (ToJSON, Ord, FromJSON, PGColumn "integer", PGParameter "integer")
 
-data User = User
-  { _userId :: UserId,
-    _userForge :: ForgeSlug,
-    _userGithubLogin :: GhLogin,
-    _userEmail :: Email,
-    _userSubscriptionType :: SubscriptionType,
-    _userCreatedAt :: UTCTime
+-- | An account's login on one forge instance. An account holds at most one
+-- identity per forge, and an identity belongs to one account.
+data ForgeIdentity = ForgeIdentity
+  { _forgeIdentityForge :: ForgeSlug,
+    _forgeIdentityGhLogin :: GhLogin,
+    -- | What the forge said at the last login (GitHub's @site_admin@, Gitea's
+    -- @is_admin@). On github.com it means GitHub staff, so it grants nothing
+    -- there: see 'Garnix.Access.identityAdministers'.
+    _forgeIdentityIsForgeAdmin :: Bool
   }
   deriving stock (Eq, Show, Generic)
 
-instance ToJSON User where
-  toEncoding = ourToEncoding
-  toJSON = ourToJSON
+-- | One garnix account, whichever forges it logs in through.
+data User = User
+  { _userId :: UserId,
+    _userEmail :: Email,
+    _userCreatedAt :: UTCTime,
+    _userIdentities :: [ForgeIdentity]
+  }
+  deriving stock (Eq, Show, Generic)
 
--- | Sessions minted before users carried their forge have no @forge@ field;
--- they all belong to GitHub accounts.
-instance FromJSON User where
-  parseJSON = withObject "User" $ \obj ->
-    ourParseJSON
-      $ Aeson.Object
-      $ KeyMap.insertWith (\_default given -> given) "forge" (Aeson.toJSON githubForge) obj
-
-data AuthJwtPayload = WebSession User | ApiSession User
+-- | A session names the account only: its identities are read per request, so
+-- connecting or disconnecting a forge applies at once.
+data AuthJwtPayload = WebSession UserId | ApiSession UserId
   deriving stock (Eq, Show, Generic)
   deriving anyclass (ToJWT, FromJWT)
 
-instance {-# OVERLAPS #-} HasField' "user" AuthJwtPayload User where
-  field' :: Lens' AuthJwtPayload User
-  field' =
-    lens
-      ( \case
-          WebSession user -> user
-          ApiSession user -> user
-      )
-      ( \payload user -> case payload of
-          WebSession _user -> WebSession user
-          ApiSession _user -> ApiSession user
-      )
+sessionUserId :: AuthJwtPayload -> UserId
+sessionUserId = \case
+  WebSession userId -> userId
+  ApiSession userId -> userId
 
 sessionKindWeb :: Text
 sessionKindWeb = "web"
@@ -1488,25 +1479,23 @@ sessionKindApi = "api"
 instance ToJSON AuthJwtPayload where
   toJSON payload =
     JSON.Object
-      $ ("id" Aeson..= _userId user)
-      <> ("forge" Aeson..= _userForge user)
-      <> ("github_login" Aeson..= _userGithubLogin user)
-      <> ("email" Aeson..= _userEmail user)
-      <> ("subscription_type" Aeson..= _userSubscriptionType user)
-      <> ("created_at" Aeson..= _userCreatedAt user)
+      $ ("id" Aeson..= userId)
       <> ("session_kind" Aeson..= kind)
     where
-      (user, kind) = case payload of
-        WebSession user -> (user, sessionKindWeb)
-        ApiSession user -> (user, sessionKindApi)
+      (userId, kind) = case payload of
+        WebSession userId' -> (userId', sessionKindWeb)
+        ApiSession userId' -> (userId', sessionKindApi)
 
+-- | Sessions minted before accounts held several identities also carry the
+-- account's @github_login@ (and, later, its @forge@) and email; the @id@ they
+-- carry is still the account's, so the rest is ignored.
 instance FromJSON AuthJwtPayload where
   parseJSON = withObject "AuthJwtPayload" $ \obj -> do
-    user <- parseJSON (Aeson.Object obj)
+    userId <- obj Aeson..: "id"
     kind <- obj Aeson..: "session_kind"
     if
-      | kind == sessionKindWeb -> pure $ WebSession user
-      | kind == sessionKindApi -> pure $ ApiSession user
+      | kind == sessionKindWeb -> pure $ WebSession userId
+      | kind == sessionKindApi -> pure $ ApiSession userId
       | otherwise -> fail $ "unknown session kind: " <> cs kind
 
 data InstallationStatus
@@ -1519,36 +1508,6 @@ instance ToJSON InstallationStatus where
   toEncoding = ourToEncoding
   toJSON = ourToJSON
 
-data CreatingUser a = CreatingUser
-  { _creatingUserExists :: Bool,
-    _creatingUserForge :: ForgeSlug,
-    _creatingUserGithubLogin :: GhLogin,
-    _creatingUserEmail :: Email,
-    _creatingUserGithubToken :: a
-  }
-  deriving stock (Eq, Show, Generic, Functor)
-  deriving anyclass (ToJWT, FromJWT)
-
-instance (ToJSON a) => ToJSON (CreatingUser a) where
-  toEncoding = ourToEncoding
-  toJSON = ourToJSON
-
-instance (FromJSON a) => FromJSON (CreatingUser a) where parseJSON = ourParseJSON
-
-data CreateUser = CreateUser
-  { _createUserEmail :: Email,
-    _createUserSubscriptionType :: SubscriptionType,
-    _createUserAgreeToEmails :: Bool
-  }
-  deriving stock (Eq, Show, Generic)
-  deriving anyclass (ToJWT, FromJWT)
-
-instance ToJSON CreateUser where
-  toEncoding = ourToEncoding
-  toJSON = ourToJSON
-
-instance FromJSON CreateUser where parseJSON = ourParseJSON
-
 data LoginLinks = LoginLinks
   {_loginLinksGithub :: T.Text}
   deriving stock (Eq, Show, Generic)
@@ -1558,17 +1517,6 @@ instance ToJSON LoginLinks where
   toJSON = ourToJSON
 
 instance FromJSON LoginLinks where parseJSON = ourParseJSON
-
-data SignupLinks = SignupLinks
-  { _signupLinksGithub :: T.Text
-  }
-  deriving stock (Eq, Show, Generic)
-
-instance ToJSON SignupLinks where
-  toEncoding = ourToEncoding
-  toJSON = ourToJSON
-
-instance FromJSON SignupLinks where parseJSON = ourParseJSON
 
 data UserOverview = UserOverview
   { _userOverviewRepos :: [UserOverviewRepo]
@@ -1756,9 +1704,8 @@ makeFields ''OpenSearchMessage
 makeFields ''Package
 makeFields ''GhRun
 makeFields ''RunOutput
+makeFields ''ForgeIdentity
 makeFields ''User
-makeFields ''CreatingUser
-makeFields ''CreateUser
 makeFields ''CommitInfo
 makeFields ''RepoInfo
 makeFields ''PackageInfo
@@ -1793,8 +1740,16 @@ commitRepoId c = RepoId (_commitForge c) (_commitRepoOwner c) (_commitRepoName c
 commitSummaryRepoId :: CommitSummary -> RepoId
 commitSummaryRepoId c = RepoId (_commitSummaryForge c) (_commitSummaryRepoOwner c) (_commitSummaryRepoName c)
 
-userForgeLogin :: User -> ForgeLogin
-userForgeLogin u = ForgeLogin (_userForge u) (_userGithubLogin u)
+identityForgeLogin :: ForgeIdentity -> ForgeLogin
+identityForgeLogin i = ForgeLogin (_forgeIdentityForge i) (_forgeIdentityGhLogin i)
+
+-- | The account's identity on one forge, if it has one there.
+identityOn :: ForgeSlug -> User -> Maybe ForgeIdentity
+identityOn slug = find ((== slug) . _forgeIdentityForge) . _userIdentities
+
+-- | The account's login on one forge, if it has an identity there.
+loginOn :: ForgeSlug -> User -> Maybe ForgeLogin
+loginOn slug = fmap identityForgeLogin . identityOn slug
 
 -- | The login an account has on a repository's forge, if it belongs there. A
 -- login, and the admin rights or collaborations that come with it, only mean

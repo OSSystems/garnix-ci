@@ -15,13 +15,13 @@ import Garnix.API.Builds (getBuild')
 import Garnix.API.Commits (GetCommit (..), getSingleCommit)
 import Garnix.API.Keys (getActionPublicKey, getRepoPublicKey)
 import Garnix.API.Runs (toRunSummary)
-import Garnix.Access (canCancelBuild, hasAccessToRepo)
+import Garnix.Access (administeredForges, canCancelBuild, hasAccessToRepo)
 import Garnix.DB qualified as DB
 import Garnix.Duration (fromDays, fromHours, fromMinutes, fromSeconds)
 import Garnix.Monad (Forge (..), ForgeInstance (..), M, githubForgeInstance, throw)
 import Garnix.Nix.Types (DrvPath (..), StoreHash (..), StorePath (..))
 import Garnix.Prelude
-import Garnix.TestHelpers (testBuild, truncateDBM)
+import Garnix.TestHelpers (soleForgeLogin, soleLogin, testBuild, truncateDBM)
 import Garnix.TestHelpers.Monad (beforeM_, inM, shouldBeM, shouldReturnM)
 import Garnix.Types hiding (context, head)
 import System.Environment (getEnv)
@@ -38,12 +38,10 @@ spec = do
         DB.newUser
           (ForgeLogin githubForge (GhLogin "user"))
           (Email "foo@x.com")
-          FreeSubscription
-          True
       let go =
             DB.newBuildDB
               ( CommitInfo
-                  (ForgeLogin githubForge (user ^. githubLogin))
+                  (ForgeLogin githubForge (user ^. soleLogin))
                   (RepoIsPublic True)
                   ( RepoInfo
                       undefined
@@ -83,8 +81,13 @@ spec = do
           (hostname, last_heartbeat)
           VALUES ('test', NOW())
           |]
-        void $ DB.newUser (ForgeLogin githubForge (GhLogin "conflict")) (Email "a@a") FreeSubscription True
-        void $ DB.newUser (ForgeLogin githubForge (GhLogin "conflict")) (Email "a@a") FreeSubscription True
+        -- No such account: the foreign key refuses the identity.
+        void
+          $ DB.pgQuery
+            [pgSQL|
+              INSERT INTO forge_identities (user_id, forge, login)
+                VALUES (-1, 'github', 'conflict')
+            |]
       hb <- DB.getRecentServerHeartbeats
       liftIO $ hb `shouldBe` []
 
@@ -489,9 +492,9 @@ spec = do
     it "refuses while any row belongs to a forge other than github" $ do
       -- Without the refusal, dropping the column would hand this Gitea admin
       -- to whoever owns the github login "mallory".
-      mallory <- DB.newUser (ForgeLogin otherForge "mallory") (Email "mallory@git.example") Admin True
+      mallory <- DB.newUser (ForgeLogin otherForge "mallory") (Email "mallory@git.example")
       script <- readRevert
-      others <- filter (/= "users") <$> forgeTables
+      others <- filter (/= "forge_identities") <$> forgeTables
       -- The script commits on its own. Run its body in a transaction that is
       -- always rolled back, so a weakened guard fails this spec instead of
       -- reverting the test database. Inside it, empty the other tables, which
@@ -512,43 +515,129 @@ spec = do
         Right () -> liftIO $ expectationFailure "the revert ran although a git.example account exists"
       DB.getUser (ForgeLogin otherForge "mallory") `shouldReturnM` mallory
 
-  describe "users on different forges" $ inM $ beforeM_ truncateDBM $ do
-    it "may share an email across forges, but not on one forge" $ do
-      let shared = Email "alice@example.com"
-      onGithub <- DB.newUser (ForgeLogin githubForge "alice") shared FreeSubscription True
-      onOther <- DB.newUser (ForgeLogin otherForge "alice") shared FreeSubscription True
-      (onOther ^. id) `shouldNotBeM` (onGithub ^. id)
-      again <- try $ DB.newUser (ForgeLogin otherForge "alice2") shared FreeSubscription True
-      liftIO $ (again :: Either ErrorWithContext User) `shouldSatisfy` isLeft
+  describe "identityClash" $ do
+    let self = UserId 1
+        other = UserId 2
+    it "names another account holding the identity" $ do
+      DB.identityClash self (Just other) Nothing `shouldBe` DB.OwnedBy other
+      DB.identityClash self (Just other) (Just "carol") `shouldBe` DB.OwnedBy other
+    it "names the login the account holds on the forge" $ do
+      DB.identityClash self Nothing (Just "carol") `shouldBe` DB.AlreadyOnForge "carol"
+      DB.identityClash self (Just self) (Just "carol") `shouldBe` DB.AlreadyOnForge "carol"
+    it "is a race when neither holds any more" $ do
+      DB.identityClash self Nothing Nothing `shouldBe` DB.Raced
+      DB.identityClash self (Just self) Nothing `shouldBe` DB.Raced
 
-    it "only count as admins on their own forge" $ do
-      -- A forge that knows no repository, so access falls through to the
-      -- collaborator list, which is empty.
-      let base = githubForgeInstance "other-webhook-secret" "other-client-id" "other-client-secret" Nothing
-          repoLess = base {_forgeInstanceForge = (_forgeInstanceForge base) {_forgeResolveCredentials = \_ -> pure Nothing}}
-      local (#forges %~ Map.insert otherForge repoLess) $ do
-        githubAdmin <- DB.newUser (ForgeLogin githubForge "root") (Email "root@github.example") Admin True
-        otherAdmin <- DB.newUser (ForgeLogin otherForge "root") (Email "root@other.example") Admin True
-        let repo = RepoId otherForge "acme" "site"
-            private = RepoIsPublic False
-        canCancelBuild (Just githubAdmin) private "someone" repo `shouldReturnM` False
-        hasAccessToRepo (Just githubAdmin) private repo `shouldReturnM` False
-        canCancelBuild (Just otherAdmin) private "someone" repo `shouldReturnM` True
-        hasAccessToRepo (Just otherAdmin) private repo `shouldReturnM` True
+  describe "removing an identity" $ do
+    let onGithub = ForgeIdentity githubForge "alice" False
+        onOther = ForgeIdentity otherForge "carol" False
+    it "finds the account's identity on the forge" $ do
+      DB.identityToRemove otherForge [onGithub, onOther] `shouldBe` Right onOther
+    it "refuses a forge the account has no identity on" $ do
+      DB.identityToRemove otherForge [onGithub] `shouldBe` Left DB.NoSuchIdentity
+    it "removes an identity the account has more than one of" $ do
+      DB.mayRemove DB.KeepModuleSettings 2 False onOther `shouldBe` Right onOther
+    it "never removes the last identity" $ do
+      DB.mayRemove DB.DeleteModuleSettings 1 False onGithub `shouldBe` Left DB.LastIdentity
+    it "deletes module settings only once confirmed" $ do
+      DB.mayRemove DB.KeepModuleSettings 2 True onGithub `shouldBe` Left DB.HasModuleSettings
+      DB.mayRemove DB.DeleteModuleSettings 2 True onGithub `shouldBe` Right onGithub
+
+  describe "users on different forges" $ inM $ beforeM_ truncateDBM $ do
+    it "may share an email, and the later account learns it was in use" $ do
+      Right (onGithub, firstUsed) <- DB.createAccount (ForgeIdentity githubForge "alice" False) (Email "alice@example.com")
+      firstUsed `shouldBeM` DB.EmailAlreadyUsed False
+      Right (onOther, againUsed) <- DB.createAccount (ForgeIdentity otherForge "alice" False) (Email "Alice@Example.com")
+      againUsed `shouldBeM` DB.EmailAlreadyUsed True
+      (onOther ^. id == onGithub ^. id) `shouldBeM` False
+      DB.getUser (ForgeLogin githubForge "alice") `shouldReturnM` onGithub
+      DB.getUser (ForgeLogin otherForge "alice") `shouldReturnM` onOther
+
+    it "refuses an identity of another account, or a second one on a forge, saying which" $ do
+      alice <- DB.newUser (ForgeLogin githubForge "alice") (Email "alice@example.com")
+      bob <- DB.newUser (ForgeLogin otherForge "bob") (Email "bob@example.com")
+      let conflictOf action =
+            try action >>= \case
+              Left ErrorWithContext {err = IdentityConflict {message}} -> pure (Just message)
+              _ -> pure Nothing
+      conflictOf (DB.addIdentity (alice ^. id) (ForgeIdentity otherForge "bob" False))
+        `shouldReturnM` Just "The git.example identity bob already belongs to another garnix account."
+      conflictOf (DB.addIdentity (bob ^. id) (ForgeIdentity otherForge "carol" False))
+        `shouldReturnM` Just "Your account is already connected to git.example as bob. Disconnect it first."
+
+    it "creates no account for an identity another account took meanwhile" $ do
+      alice <- DB.newUser (ForgeLogin otherForge "alice") (Email "alice@example.com")
+      before <- DB.pgQuery [pgSQL| SELECT count(*) FROM users |]
+      result <- DB.createAccount (ForgeIdentity otherForge "alice" False) (Email "alice@example.com")
+      either Just (const Nothing) result `shouldBeM` Just (DB.OwnedBy (alice ^. id))
+      DB.pgQuery [pgSQL| SELECT count(*) FROM users |] `shouldReturnM` (before :: [Maybe Int64])
+
+    describe "administering repositories" $ do
+      -- Forges that know no repository, so access falls through to the
+      -- collaborator list, which is empty. git.example lists "root" as admin;
+      -- github lists nobody.
+      let repoLess slug' admins' =
+            let base = githubForgeInstance "other-webhook-secret" "other-client-id" "other-client-secret" Nothing
+             in base
+                  { _forgeInstanceConfig = (_forgeInstanceConfig base) {_forgeConfigSlug = slug', _forgeConfigAdmins = admins'},
+                    _forgeInstanceForge = (_forgeInstanceForge base) {_forgeResolveCredentials = \_ -> pure Nothing}
+                  }
+          withForges =
+            local
+              $ (#forges %~ Map.insert otherForge (repoLess otherForge ["root"]))
+              . (#forges %~ Map.insert githubForge (repoLess githubForge []))
+          private = RepoIsPublic False
+          otherRepo = RepoId otherForge "acme" "site"
+          githubRepo = RepoId githubForge "acme" "site"
+
+      it "comes with a login listed in the forge's config, on that forge only" $ withForges $ do
+        githubRoot <- DB.newUser (ForgeLogin githubForge "root") (Email "root@github.example")
+        otherRoot <- DB.newUser (ForgeLogin otherForge "root") (Email "root@other.example")
+        canCancelBuild (Just githubRoot) private "someone" otherRepo `shouldReturnM` False
+        hasAccessToRepo (Just githubRoot) private otherRepo `shouldReturnM` False
+        canCancelBuild (Just otherRoot) private "someone" otherRepo `shouldReturnM` True
+        hasAccessToRepo (Just otherRoot) private otherRepo `shouldReturnM` True
+        canCancelBuild (Just otherRoot) private "someone" githubRepo `shouldReturnM` False
+        hasAccessToRepo (Just otherRoot) private githubRepo `shouldReturnM` False
         drv <- ("/nix/store/" <>) . cs <$> randomBase64 8
         build <-
           testBuild
             $ (forge .~ otherForge)
             . (repoIsPublic .~ private)
             . (drvPath ?~ drv)
-        DB.getOriginalBuildForDrvPath (Just githubAdmin) drv `shouldReturnM` Nothing
-        (fmap _originalBuildId <$> DB.getOriginalBuildForDrvPath (Just otherAdmin) drv) `shouldReturnM` Just (build ^. id)
+        let originalBuild user = do
+              adminForges <- administeredForges (Just user)
+              fmap _originalBuildId <$> DB.getOriginalBuildForDrvPath (Just user) adminForges drv
+        originalBuild githubRoot `shouldReturnM` Nothing
+        originalBuild otherRoot `shouldReturnM` Just (build ^. id)
+
+      it "follows the account to a forge it connects" $ withForges $ do
+        user <- DB.newUser (ForgeLogin githubForge "alice") (Email "alice@example.com")
+        hasAccessToRepo (Just user) private otherRepo `shouldReturnM` False
+        DB.addIdentity (user ^. id) (ForgeIdentity otherForge "root" False)
+        Just connected <- DB.getUserById (user ^. id)
+        hasAccessToRepo (Just connected) private otherRepo `shouldReturnM` True
+        hasAccessToRepo (Just connected) private githubRepo `shouldReturnM` False
+
+      it "is nobody's on a forge no longer configured" $ withForges $ do
+        let gone = ForgeSlug "gone.example"
+            goneRepo = RepoId gone "acme" "site"
+        user <- DB.newUser (ForgeLogin gone "root") (Email "root@gone.example")
+        canCancelBuild (Just user) private "someone" goneRepo `shouldReturnM` False
+        hasAccessToRepo (Just user) private goneRepo `shouldReturnM` False
+
+      it "is not granted by what github says about its own staff" $ withForges $ do
+        Right (staff, _) <- DB.createAccount (ForgeIdentity githubForge "staff" True) (Email "staff@github.example")
+        (staff ^.. identities . traverse . isForgeAdmin) `shouldBeM` [True]
+        canCancelBuild (Just staff) private "someone" githubRepo `shouldReturnM` False
+        hasAccessToRepo (Just staff) private githubRepo `shouldReturnM` False
+        administeredForges (Just staff) `shouldReturnM` []
 
     it "are distinct accounts" $ do
-      onGithub <- DB.newUser (ForgeLogin githubForge "alice") (Email "alice@github.example") FreeSubscription True
-      onOther <- DB.newUser (ForgeLogin otherForge "alice") (Email "alice@other.example") FreeSubscription True
+      onGithub <- DB.newUser (ForgeLogin githubForge "alice") (Email "alice@github.example")
+      onOther <- DB.newUser (ForgeLogin otherForge "alice") (Email "alice@other.example")
       (onOther ^. id) `shouldNotBeM` (onGithub ^. id)
-      userForgeLogin onOther `shouldBeM` ForgeLogin otherForge "alice"
+      soleForgeLogin onOther `shouldBeM` ForgeLogin otherForge "alice"
       DB.getUser (ForgeLogin githubForge "alice") `shouldReturnM` onGithub
       DB.getUser (ForgeLogin otherForge "alice") `shouldReturnM` onOther
       DB.getUserId (ForgeLogin otherForge "alice") `shouldReturnM` (onOther ^. id)
@@ -559,7 +648,7 @@ spec = do
       getInternalCacheToken otherToken `shouldNotBeM` getInternalCacheToken githubToken
 
     it "only see their own builds" $ do
-      onOther <- DB.newUser (ForgeLogin otherForge "alice") (Email "alice@other.example") FreeSubscription True
+      onOther <- DB.newUser (ForgeLogin otherForge "alice") (Email "alice@other.example")
       void
         $ DB.newBuildDB
           (commitOn (RepoId githubForge "alice" "site") & reqUser .~ ForgeLogin githubForge "alice")

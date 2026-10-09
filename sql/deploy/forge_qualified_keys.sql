@@ -1,6 +1,7 @@
 -- Deploy garnix:forge_qualified_keys to pg
 -- requires: init
 -- requires: deploy_pr_comments
+-- requires: github_user_credentials
 
 BEGIN;
 
@@ -22,7 +23,6 @@ ALTER TABLE cache_store_hash_tags ADD COLUMN forge text DEFAULT 'github' NOT NUL
 ALTER TABLE denylist ADD COLUMN forge text DEFAULT 'github' NOT NULL;
 ALTER TABLE modules ADD COLUMN forge text DEFAULT 'github' NOT NULL;
 ALTER TABLE deploy_comments ADD COLUMN forge text DEFAULT 'github' NOT NULL;
-ALTER TABLE users ADD COLUMN forge text DEFAULT 'github' NOT NULL;
 ALTER TABLE internal_access_tokens ADD COLUMN forge text DEFAULT 'github' NOT NULL;
 ALTER TABLE module_user_repo ADD COLUMN forge text DEFAULT 'github' NOT NULL;
 
@@ -62,21 +62,59 @@ CREATE UNIQUE INDEX deploy_comments_failure_idx
 DROP INDEX builds_repo_owner_name;
 CREATE INDEX builds_forge_repo_owner_name ON builds USING btree (forge, repo_user, repo_name);
 
--- Accounts: the same login on two forges is two accounts.
+-- Logins: the same login on two forges is two different people, so whatever
+-- garnix keeps per login is keyed by the forge too.
 ALTER TABLE internal_access_tokens DROP CONSTRAINT internal_access_tokens_pkey;
 ALTER TABLE internal_access_tokens ADD CONSTRAINT internal_access_tokens_pkey PRIMARY KEY (forge, github_login);
 
+-- Accounts: one account holds at most one identity on each forge, and an
+-- identity belongs to one account. The OAuth credentials are the identity's,
+-- as each forge issues its own; they are null once a forge refused to renew
+-- them, until the next login. Every existing account is a github login.
+CREATE TABLE forge_identities (
+    user_id integer NOT NULL,
+    forge text NOT NULL,
+    login character varying NOT NULL,
+    -- What the forge said at the last login: on github.com this means GitHub
+    -- staff, so it grants nothing there by itself.
+    is_forge_admin boolean DEFAULT false NOT NULL,
+    access_token bytea,
+    access_token_expires_at timestamp with time zone,
+    refresh_token bytea,
+    refresh_token_expires_at timestamp with time zone,
+    credentials_updated_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT forge_identities_pkey PRIMARY KEY (forge, login),
+    CONSTRAINT forge_identities_user_id_forge_key UNIQUE (user_id, forge),
+    CONSTRAINT forge_identities_user_id_fkey
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+INSERT INTO forge_identities
+    (user_id, forge, login, access_token, access_token_expires_at,
+     refresh_token, refresh_token_expires_at, credentials_updated_at)
+SELECT users.id, 'github', users.github_login,
+       credentials.access_token, credentials.access_token_expires_at,
+       credentials.refresh_token, credentials.refresh_token_expires_at,
+       credentials.updated_at
+FROM users
+LEFT JOIN github_user_credentials AS credentials ON credentials.user_id = users.id;
+
+DROP TABLE github_user_credentials;
+
+-- Module settings belong to an identity (modules only exist on github.com).
 ALTER TABLE module_user_repo DROP CONSTRAINT module_user_repo_github_login_fkey;
 ALTER TABLE module_user_repo DROP CONSTRAINT module_user_repo_github_login_key;
-ALTER TABLE users DROP CONSTRAINT users_github_login_key;
-ALTER TABLE users ADD CONSTRAINT users_forge_github_login_key UNIQUE (forge, github_login);
--- One account per login on each forge, so one per email on each forge too:
--- the same person signs up on two forges with the same address.
-ALTER TABLE users DROP CONSTRAINT users_email_key;
-ALTER TABLE users ADD CONSTRAINT users_forge_email_key UNIQUE (forge, email);
 ALTER TABLE module_user_repo ADD CONSTRAINT module_user_repo_forge_github_login_key UNIQUE (forge, github_login);
 ALTER TABLE module_user_repo
     ADD CONSTRAINT module_user_repo_forge_github_login_fkey
-    FOREIGN KEY (forge, github_login) REFERENCES users(forge, github_login);
+    FOREIGN KEY (forge, github_login) REFERENCES forge_identities(forge, login);
+
+ALTER TABLE users DROP CONSTRAINT users_github_login_key;
+ALTER TABLE users DROP COLUMN github_login;
+
+-- An email is contact data only: identities on two forges may report the same
+-- address for two different accounts, and an address never links accounts.
+ALTER TABLE users DROP CONSTRAINT users_email_key;
 
 COMMIT;

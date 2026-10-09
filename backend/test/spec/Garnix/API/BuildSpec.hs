@@ -23,6 +23,7 @@ import Garnix.TestHelpers
     parseTimestamp,
     repoCollaboratorsLens,
     shouldMatchRegexpLines,
+    soleLogin,
     testBuild,
     truncateDBM,
     withGithubMock,
@@ -76,7 +77,7 @@ spec = inM $ aroundM_ suppressLogsWhenPassing $ beforeM_ truncateDBM $ do
                 testBuild $ \b ->
                   b
                     & drvPath ?~ "/nix/store/target-drv.drv"
-                    & reqUser .~ (user ^. githubLogin)
+                    & reqUser .~ (user ^. soleLogin)
                     & repoIsPublic .~ RepoIsPublic False
                     & alreadyBuilt ?~ False
                     & f
@@ -102,7 +103,7 @@ spec = inM $ aroundM_ suppressLogsWhenPassing $ beforeM_ truncateDBM $ do
 
         it "cancel the build for a given build id" $ withServer $ \testServer -> do
           _user <- testServer.login
-          build <- testBuild $ (gitCommit .~ "aaaaaa") . (startTime .~ parseTimestamp "2010-03-04T01:00:00Z") . (status .~ Nothing) . (reqUser .~ (_user ^. githubLogin))
+          build <- testBuild $ (gitCommit .~ "aaaaaa") . (startTime .~ parseTimestamp "2010-03-04T01:00:00Z") . (status .~ Nothing) . (reqUser .~ (_user ^. soleLogin))
           result <- testServer.putWithHeaders ("/api/build/" <> cs (getHashId $ getBuildId $ build ^. id)) [] (toJSON cancelBuild)
           result `shouldHaveStatusCode` 200
 
@@ -158,7 +159,7 @@ spec = inM $ aroundM_ suppressLogsWhenPassing $ beforeM_ truncateDBM $ do
             =<< buildFlake
               openSearchReporter
               ( commitInfo
-                  & reqUser .~ ForgeLogin githubForge (user ^. githubLogin)
+                  & reqUser .~ ForgeLogin githubForge (user ^. soleLogin)
                   & commit .~ commit'
               )
           build' <- fromSingleton . filter (\x -> x ^. packageType == TypePackage) <$> DB.getBuilds user
@@ -176,7 +177,7 @@ spec = inM $ aroundM_ suppressLogsWhenPassing $ beforeM_ truncateDBM $ do
             =<< buildFlake
               openSearchReporter
               ( commitInfo
-                  & reqUser .~ ForgeLogin githubForge (user ^. githubLogin)
+                  & reqUser .~ ForgeLogin githubForge (user ^. soleLogin)
                   & commit .~ commit'
                   & repoPublicity .~ RepoIsPublic False
               )
@@ -196,7 +197,7 @@ spec = inM $ aroundM_ suppressLogsWhenPassing $ beforeM_ truncateDBM $ do
             =<< buildFlake
               openSearchReporter
               ( commitInfo
-                  & reqUser .~ ForgeLogin githubForge (buildUser ^. githubLogin)
+                  & reqUser .~ ForgeLogin githubForge (buildUser ^. soleLogin)
                   & commit .~ commit'
                   & repoPublicity .~ RepoIsPublic False
               )
@@ -227,7 +228,7 @@ spec = inM $ aroundM_ suppressLogsWhenPassing $ beforeM_ truncateDBM $ do
             =<< buildFlake
               openSearchReporter
               ( commitInfo
-                  & reqUser .~ ForgeLogin githubForge (user ^. githubLogin)
+                  & reqUser .~ ForgeLogin githubForge (user ^. soleLogin)
                   & commit .~ commit'
               )
           build' <- fromSingleton . filter (\x -> x ^. packageType == TypePackage) <$> DB.getBuilds user
@@ -269,7 +270,7 @@ spec = inM $ aroundM_ suppressLogsWhenPassing $ beforeM_ truncateDBM $ do
             =<< buildFlake
               openSearchReporter
               ( commitInfo
-                  & reqUser .~ ForgeLogin githubForge (user ^. githubLogin)
+                  & reqUser .~ ForgeLogin githubForge (user ^. soleLogin)
                   & commit .~ commit'
               )
           build' <- fromSingleton . filter (\x -> x ^. packageType == TypePackage) <$> DB.getBuilds user
@@ -318,7 +319,7 @@ spec = inM $ aroundM_ suppressLogsWhenPassing $ beforeM_ truncateDBM $ do
             =<< buildFlake
               openSearchReporter
               ( commitInfo
-                  & reqUser .~ ForgeLogin githubForge (user ^. githubLogin)
+                  & reqUser .~ ForgeLogin githubForge (user ^. soleLogin)
                   & commit .~ commit'
               )
           build' <- fromSingleton . filter (\x -> x ^. packageType == TypePackage) <$> DB.getBuilds user
@@ -347,7 +348,7 @@ spec = inM $ aroundM_ suppressLogsWhenPassing $ beforeM_ truncateDBM $ do
             =<< buildFlake
               openSearchReporter
               ( commitInfo
-                  & reqUser .~ ForgeLogin githubForge (user ^. githubLogin)
+                  & reqUser .~ ForgeLogin githubForge (user ^. soleLogin)
                   & commit .~ commit'
               )
           build' <- fromSingleton . filter (\x -> x ^. packageType == TypePackage) <$> DB.getBuilds user
@@ -384,4 +385,4 @@ spec = inM $ aroundM_ suppressLogsWhenPassing $ beforeM_ truncateDBM $ do
 
 testUser :: GhLogin -> Email -> M User
 testUser ghLogin email =
-  DB.newUser (ForgeLogin githubForge ghLogin) email FreeSubscription True
+  DB.newUser (ForgeLogin githubForge ghLogin) email
