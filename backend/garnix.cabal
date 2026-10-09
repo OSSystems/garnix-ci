@@ -41,6 +41,7 @@ library
       Garnix.API.Commits
       Garnix.API.ConfigSchema
       Garnix.API.Dev
+      Garnix.API.Forges
       Garnix.API.ForgeWebhooks
       Garnix.API.GhWebhooks
       Garnix.API.Health
@@ -118,6 +119,7 @@ library
       Garnix.ParseHttpBasicAuth
       Garnix.Password
       Garnix.Prelude
+      Garnix.RateLimit
       Garnix.Reporters.GithubReporter
       Garnix.Reporters.OpenSearchReporter
       Garnix.Reporters.Utils
@@ -735,6 +737,7 @@ test-suite spec
       Garnix.API.CommitSpec
       Garnix.API.ConfigSchemaSpec
       Garnix.API.DevSpec
+      Garnix.API.ForgesSpec
       Garnix.API.GhWebhooksSpec
       Garnix.API.HealthSpec
       Garnix.API.HostsSpec
@@ -779,6 +782,7 @@ test-suite spec
       Garnix.Nix.StorePathSpec
       Garnix.PreludeSpec
       Garnix.ProcessLogsSpec
+      Garnix.RateLimitSpec
       Garnix.Reporters.GithubReporterSpec
       Garnix.Reporters.OpenSearchReporterSpec
       Garnix.Reporters.UtilsSpec
@@ -819,6 +823,7 @@ test-suite spec
       Garnix.API.Commits
       Garnix.API.ConfigSchema
       Garnix.API.Dev
+      Garnix.API.Forges
       Garnix.API.ForgeWebhooks
       Garnix.API.GhWebhooks
       Garnix.API.Health
@@ -896,6 +901,7 @@ test-suite spec
       Garnix.ParseHttpBasicAuth
       Garnix.Password
       Garnix.Prelude
+      Garnix.RateLimit
       Garnix.Reporters.GithubReporter
       Garnix.Reporters.OpenSearchReporter
       Garnix.Reporters.Utils

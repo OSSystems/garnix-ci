@@ -11,6 +11,7 @@ import Garnix.AccessToken
 import Garnix.AccessToken.Types
 import Garnix.DB qualified as DB
 import Garnix.Duration
+import Garnix.Forge.Registry (activatingRegistration, loginThrough)
 import Garnix.GithubUserToken
 import Garnix.Monad
 import Garnix.ParseHttpBasicAuth
@@ -313,18 +314,24 @@ loginCallback slug code state cookies session = do
       nonce <- parsedOAuthNonce state
       spendingOAuthNonce nonce $ do
         checkOAuthNonce cookies nonce
+        -- A registered forge still pending logs in only the browser that
+        -- registered it, before it creates any account.
+        completes <- loginThrough slug cookies
         (identity, email', credentials) <- callbackHelper slug code
-        (user, emailAlreadyUsed) <- loginOrCreateAccount identity email'
-        storeCredentialsFor (identityForgeLogin identity) credentials
-          <?> "storing the forge credentials"
-        cookieSettings' <- sessionCookieSettings
-        jwtSettings' <- view #jwtSettings
-        mApplyCookies <-
-          liftIO (acceptLogin cookieSettings' jwtSettings' (WebSession (user ^. id)))
-            <?> "calling acceptLogin"
-        case mApplyCookies of
-          Nothing -> throw Unauthorized
-          Just applyCookies -> applyCookies <$> loginResult user emailAlreadyUsed
+        -- Encrypting runs age, outside the transaction of an activation.
+        encrypted <- traverse encryptSecret credentials <?> "encrypting the forge credentials"
+        activatingRegistration slug completes $ do
+          (user, emailAlreadyUsed) <- loginOrCreateAccount identity email'
+          DB.setIdentityCredentials (identityForgeLogin identity) encrypted
+            <?> "storing the forge credentials"
+          cookieSettings' <- sessionCookieSettings
+          jwtSettings' <- view #jwtSettings
+          mApplyCookies <-
+            liftIO (acceptLogin cookieSettings' jwtSettings' (WebSession (user ^. id)))
+              <?> "calling acceptLogin"
+          case mApplyCookies of
+            Nothing -> throw Unauthorized
+            Just applyCookies -> (user ^. id,) . applyCookies <$> loginResult user emailAlreadyUsed
 
 loginResult :: User -> DB.EmailAlreadyUsed -> M LoginResult
 loginResult user emailAlreadyUsed = do
@@ -470,15 +477,19 @@ connectCallback slug code signedState cookies session = do
     user <- webSessionUserOr (ForbiddenWithMessage "Log in to connect a forge to your account.") session
     either throw pure $ validateConnect state (user ^. id) slug
     checkOAuthNonce cookies (connectNonce state)
+    completes <- loginThrough slug cookies
     (identity, _, credentials) <- callbackHelper slug code
+    encrypted <- traverse encryptSecret credentials <?> "encrypting the forge credentials"
     let login' = identityForgeLogin identity
         refuse = throw . IdentityConflict . DB.identityClashMessage login'
-    owner <- DB.lookupIdentityOwner login'
-    case connectAction (user ^. id) owner of
-      Refresh -> DB.setIdentityIsForgeAdmin login' (identity ^. isForgeAdmin)
-      Attach -> DB.tryAddIdentity (user ^. id) identity >>= either refuse pure
-      Refuse clash -> refuse clash
-    storeCredentialsFor login' credentials <?> "storing the forge credentials"
+    activatingRegistration slug completes $ do
+      owner <- DB.lookupIdentityOwner login'
+      case connectAction (user ^. id) owner of
+        Refresh -> DB.setIdentityIsForgeAdmin login' (identity ^. isForgeAdmin)
+        Attach -> DB.tryAddIdentity (user ^. id) identity >>= either refuse pure
+        Refuse clash -> refuse clash
+      DB.setIdentityCredentials login' encrypted <?> "storing the forge credentials"
+      pure (user ^. id, ())
     connected <- DB.getUserById (user ^. id) >>= maybe (throw Unauthorized) pure
     noHeader . noHeader <$> loginResult connected (DB.EmailAlreadyUsed False)
 

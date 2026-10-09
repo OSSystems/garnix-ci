@@ -1114,6 +1114,9 @@ data Error
   | Forbidden
   | ForbiddenWithMessage {message :: Text}
   | NotFound
+  | NotFoundWithMessage {message :: Text}
+  | ConflictWithMessage {message :: Text}
+  | TooManyRequests
   | OtherError Text
   | DecodeConfigError {message :: Text}
   | SshTimeout {command :: Text}
@@ -1207,6 +1210,9 @@ instance Pretty Error where
     Forbidden -> "You are not authorized for this resource"
     ForbiddenWithMessage {message} -> "Forbidden: " <> pretty message
     NotFound -> "Resource not found"
+    NotFoundWithMessage {message} -> pretty message
+    ConflictWithMessage {message} -> pretty message
+    TooManyRequests -> "Too many requests, try again later"
     DbError {} -> "Something went wrong"
     ErrorGettingBuildPlan {..} -> "Couldn't get build plan. Error was: " <> pretty message
     ErrorGettingAttributesToBuild {..} -> "Couldn't get attributes to build. Error was: " <> pretty message
@@ -1315,6 +1321,9 @@ toErrorDetails e = case err e of
   Forbidden -> fromStatusCode 403
   ForbiddenWithMessage {message} -> errorDetails 403 $ "Forbidden: " <> message
   NotFound -> fromStatusCode 404
+  NotFoundWithMessage {message} -> errorDetails 404 message
+  ConflictWithMessage {message} -> errorDetails 409 message
+  TooManyRequests -> fromStatusCode 429
   e'@DecodeConfigError {} -> errorDetails 400 $ cs $ Aeson.encode e'
   e'@DuplicateBuild -> errorDetails 409 $ cs $ Aeson.encode e'
   e'@NoSuchBuild {} -> errorDetails 404 $ cs $ Aeson.encode e'
