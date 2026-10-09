@@ -1,0 +1,38 @@
+.container {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  padding: 16px;
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.callback {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  word-break: break-all;
+}
+
+.field {
+  width: 100%;
+}
+
+.field p {
+  white-space: nowrap;
+  min-width: 112px;
+}
+
+.hint {
+  color: var(--color-stone-600);
+  font-size: 14px;
+}
+
+.error {
+  color: var(--color-error);
+}
