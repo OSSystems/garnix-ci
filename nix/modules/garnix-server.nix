@@ -740,6 +740,23 @@ in
       '';
     };
 
+    allowForgeRegistration = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = ''
+        Let anyone register a Gitea/Forgejo instance from the garnix UI
+        (POST /api/auth/start and POST /api/forges) and log in through it,
+        besides the instances in `forges`. Registered instances must be
+        served over https at the root of their host and resolve only to
+        public addresses; they are used to log in only, and are never handed
+        to git or nix. Their OAuth client secrets are stored in the database,
+        encrypted with the instance's age key.
+
+        When off, only `forges` and github.com are answered, and registered
+        instances already in the database are ignored.
+      '';
+    };
+
     devDefaults = lib.mkOption {
       type = lib.types.attrsOf lib.types.anything;
       default = {
@@ -947,6 +964,7 @@ in
               )
             }"
         ++ lib.optional (cfg.forges != { }) "GARNIX_FORGES_FILE=${forgesFile}"
+        ++ lib.optional cfg.allowForgeRegistration "GARNIX_FORGE_REGISTRATION=true"
         ++ lib.optional (cfg.provisionerSocket != null) "GARNIX_PROVISIONER_SOCKET=${cfg.provisionerSocket}"
         ++ lib.optional (cfg.hosting.domain != null) "GARNIX_HOSTING_DOMAIN=${cfg.hosting.domain}"
         ++ lib.optional (
