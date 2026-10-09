@@ -7,6 +7,7 @@ module Garnix.Access
     hasAccessTo,
     hasAccessToRepo,
     identityAdministers,
+    liveAccount,
     repoIdFromRoute,
     routeRepoId,
     githubIdentity,
@@ -24,6 +25,7 @@ import Data.Map.Strict (Map)
 import Data.Maybe (listToMaybe)
 import Data.Map.Strict qualified as Map
 import Garnix.DB qualified as DB
+import Garnix.Forge.Registered (ForgeSource (..), withLiveIdentities)
 import Garnix.Monad
 import Garnix.Prelude
 import Garnix.Types as Types
@@ -32,12 +34,20 @@ import Servant.Auth.Server (AuthResult (Authenticated))
 data Access = Read | Cancel
 
 -- | The account of an authenticated request, with its identities as they are
--- now; 'Nothing' for anybody else, including a session of an account that no
--- longer exists.
+-- now ('liveAccount'); 'Nothing' for anybody else, including a session of an
+-- account that no longer exists or has no identity left on a forge garnix is
+-- active on.
 sessionUserOf :: AuthResult AuthJwtPayload -> M (Maybe User)
 sessionUserOf = \case
-  Authenticated session -> DB.getUserById (sessionUserId session)
+  Authenticated session -> maybe (pure Nothing) liveAccount =<< DB.getUserById (sessionUserId session)
   _ -> pure Nothing
+
+-- | The account with only its identities on forges garnix is active on
+-- ('withLiveIdentities').
+liveAccount :: User -> M (Maybe User)
+liveAccount user = do
+  live <- filterM (fmap isJust . lookupActiveForge . (^. forge)) (user ^. identities)
+  pure $ withLiveIdentities live user
 
 -- | Runs a handler with 'sessionUserOf'.
 withSessionUser :: AuthResult AuthJwtPayload -> (Maybe User -> M a) -> M a
@@ -135,24 +145,31 @@ isRequester user' reqUser repo = loginOnRepoForge user' repo == Just reqUser
 -- | Whether an identity administers every repository of a forge. A forge from
 -- the configuration lists its admins by login; what the forge itself says
 -- ('_forgeIdentityIsForgeAdmin') counts for nothing there, as on github.com it
--- means GitHub staff.
-identityAdministers :: ForgeConfig -> ForgeIdentity -> Bool
-identityAdministers config identity =
-  identity ^. forge == config ^. slug && identity ^. ghLogin `elem` config ^. admins
+-- means GitHub staff. A forge registered through the UI has no such list:
+-- there the forge's own administrators are garnix's.
+identityAdministers :: ForgeSource -> ForgeConfig -> ForgeIdentity -> Bool
+identityAdministers source config identity =
+  identity ^. forge == config ^. slug && case source of
+    Configured -> identity ^. ghLogin `elem` config ^. admins
+    Registered -> identity ^. isForgeAdmin
 
 -- | Admins of one forge instance are not admins of another one's
--- repositories, and a forge no longer configured has no admins.
+-- repositories, and a forge garnix is not active on has no admins.
 isAdminOf :: Maybe User -> RepoId -> M Bool
 isAdminOf user' repo = (repo ^. forge `elem`) <$> administeredForges user'
 
--- | The forges whose every repository the account administers.
+-- | The forges whose every repository the account administers. A registered
+-- forge only while it is active.
 administeredForges :: Maybe User -> M [ForgeSlug]
 administeredForges user' =
   fmap catMaybes
     $ forM (user' ^. _Just . identities)
     $ \identity -> do
-      config <- forgeConfigFor (identity ^. forge)
-      pure $ identity ^. forge <$ guard (any (`identityAdministers` identity) config)
+      found <- lookupActiveForge (identity ^. forge)
+      pure
+        $ identity
+        ^. forge
+        <$ guard (any (\(source, instance') -> identityAdministers source (_forgeInstanceConfig instance') identity) found)
 
 loginOnRepoForge :: Maybe User -> RepoId -> Maybe GhLogin
 loginOnRepoForge user' repo = (^. ghLogin) <$> (loginOn (repo ^. forge) =<< user')
@@ -165,11 +182,12 @@ hasAccessToRepo user' repoIsPublic repo
         True -> pure True
         False -> isCollaboratorOn user' repo
 
--- | Collaborators are listed by login on the repository's forge. A forge no
--- longer configured lists nobody.
+-- | Collaborators are listed by login on the repository's forge. A forge
+-- garnix is not active on lists nobody: one no longer configured, or a
+-- registration that is pending or disabled.
 isCollaboratorOn :: Maybe User -> RepoId -> M Bool
 isCollaboratorOn user' repo = do
-  configured <- isJust <$> forgeConfigFor (repo ^. forge)
+  configured <- isJust <$> lookupActiveForge (repo ^. forge)
   case loginOnRepoForge user' repo of
     Just login' | configured -> isListedCollaborator login' repo
     _ -> pure False

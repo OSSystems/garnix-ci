@@ -6,7 +6,7 @@ import Data.Map.Strict qualified as Map
 import Data.Maybe
 import Data.Set qualified as Set
 import Data.Text qualified as T
-import Garnix.Access (githubIdentity, requireGithubIdentity, webSessionUser)
+import Garnix.Access (githubIdentity, requireGithubIdentity, webSessionUser, withRequiredUser)
 import Garnix.AccessToken
 import Garnix.AccessToken.Types
 import Garnix.DB qualified as DB
@@ -146,27 +146,24 @@ instance ToJSON CreateTokenResponseBody where
   toJSON = ourToJSON
 
 getAccessTokens :: AuthResult AuthJwtPayload -> M GetTokensResponseBody
-getAccessTokens (Authenticated session) = GetTokensResponseBody <$> DB.getAccessTokensForUser (sessionUserId session)
-getAccessTokens _ = throw Unauthorized
+getAccessTokens auth = withRequiredUser auth $ \user -> GetTokensResponseBody <$> DB.getAccessTokensForUser (user ^. id)
 
 -- For backwards compatability during the first deploy, if `scopes` is not provided, we default to just a cache scope.
 fallbackAccessTokenScopes :: AccessTokenScopes
 fallbackAccessTokenScopes = AccessTokenScopes {api = False, cache = True}
 
 createAccessToken :: AuthResult AuthJwtPayload -> CreateTokenRequestBody -> M CreateTokenResponseBody
-createAccessToken (Authenticated (WebSession userId)) (CreateTokenRequestBody name (fromMaybe fallbackAccessTokenScopes -> scopes)) = do
+createAccessToken auth (CreateTokenRequestBody name (fromMaybe fallbackAccessTokenScopes -> scopes)) = do
+  user <- webSessionUser auth
   when (scopes == AccessTokenScopes {api = False, cache = False}) $ do
     throw $ BadRequest "no scopes enabled"
-  accessToken <- generateToken userId name scopes
+  accessToken <- generateToken (user ^. id) name scopes
   pure $ CreateTokenResponseBody accessToken
-createAccessToken (Authenticated (ApiSession _)) _ = throw $ ForbiddenWithMessage "This endpoint is not available through the programmatic api."
-createAccessToken _ _ = throw Unauthorized
 
 revokeAccessToken :: AuthResult AuthJwtPayload -> Int64 -> M NoContent
-revokeAccessToken (Authenticated session) tokenId = do
-  DB.deleteAccessTokenForUser (sessionUserId session) tokenId
+revokeAccessToken auth tokenId = withRequiredUser auth $ \user -> do
+  DB.deleteAccessTokenForUser (user ^. id) tokenId
   pure NoContent
-revokeAccessToken _ _ = throw Unauthorized
 
 enabledReposOf :: AuthResult AuthJwtPayload -> M EnabledRepos
 enabledReposOf auth =

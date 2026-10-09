@@ -196,7 +196,8 @@ truncateDBMNoInsert = do
           servers,
           server_pool,
           server_stats,
-          runs
+          runs,
+          forges
       |]
 
 truncateDBM :: M ()

@@ -37,6 +37,7 @@ import Garnix.Build.Types (EvaluationResult)
 import Garnix.BuildLogs.Types (LogLine)
 import Garnix.DB.FeatureFlags.Types (FeatureFlagConfig)
 import Garnix.Duration
+import Garnix.Forge.Registered (ForgeSource (..), ForgeStatus (..))
 import Garnix.GithubInterface.Types
 import Garnix.Hosting.Types
 import Garnix.Log
@@ -104,6 +105,9 @@ data Env = Env
     -- | Every forge instance garnix talks to, keyed by the slug repositories
     -- name it with.
     forges :: Map ForgeSlug ForgeInstance,
+    -- | Forges people register through the UI, when the operator allows it
+    -- (@GARNIX_FORGE_REGISTRATION@). 'Nothing' keeps garnix to 'forges'.
+    forgeRegistration :: Maybe ForgeRegistration,
     -- | Whether github.com repositories are public, as GitHub last answered,
     -- and until when that answer holds. Repositories on other forges may only
     -- use public @github:@ inputs.
@@ -495,6 +499,27 @@ data ForgeInstance = ForgeInstance
     _forgeInstanceForge :: Forge
   }
 
+-- | A registered forge, as its registration finds it.
+data RegisteredForge = RegisteredForge
+  { _registeredForgeStatus :: ForgeStatus,
+    _registeredForgeInstance :: ForgeInstance
+  }
+
+-- | Forges registered through the UI, read from the database.
+data ForgeRegistration = ForgeRegistration
+  { -- | A registered forge that is pending or active. Disabled ones,
+    -- pending ones past 'Garnix.Forge.Registered.pendingForgeTtl', and ones
+    -- a configured forge shadows are not found.
+    _forgeRegistrationLookup :: ForgeSlug -> M (Maybe RegisteredForge),
+    -- | The active ones no configured forge shadows.
+    _forgeRegistrationListActive :: M [ForgeInstance],
+    -- | Opens every connection garnix makes to a registered forge, refusing
+    -- non-public addresses ("Garnix.Forge.OutboundGuard").
+    _forgeRegistrationManager :: Manager,
+    -- | Whether plain http forge URLs are accepted. Only tests set it.
+    _forgeRegistrationAllowHttp :: Bool
+  }
+
 -- * Provisioner
 
 -- | The seam between hosting and whatever actually creates servers.
@@ -580,10 +605,53 @@ forgeInstanceFor slug =
     Just instance' -> pure instance'
     Nothing -> throw $ OtherError $ "No forge is configured under the slug " <> getForgeSlug slug
 
+-- | A configured forge, or else a registered one that is pending or active.
+-- On the same slug the configured one wins.
+lookupForge :: ForgeSlug -> M (Maybe (ForgeSource, ForgeInstance))
+lookupForge slug = fmap (\(source, _, instance') -> (source, instance')) <$> lookupForgeWithStatus slug
+
+-- | 'lookupForge', without pending registrations: the forges people can log
+-- in through and that may deliver webhooks.
+lookupActiveForge :: ForgeSlug -> M (Maybe (ForgeSource, ForgeInstance))
+lookupActiveForge slug = activeOnly <$> lookupForgeWithStatus slug
+  where
+    activeOnly = \case
+      Just (source, ForgeActive, instance') -> Just (source, instance')
+      _ -> Nothing
+
+-- | Configured forges count as active.
+lookupForgeWithStatus :: ForgeSlug -> M (Maybe (ForgeSource, ForgeStatus, ForgeInstance))
+lookupForgeWithStatus slug = do
+  configured <- view #forges
+  case Map.lookup slug configured of
+    Just instance' -> pure $ Just (Configured, ForgeActive, instance')
+    Nothing ->
+      fmap (\registered -> (Registered, _registeredForgeStatus registered, _registeredForgeInstance registered))
+        <$> lookupRegisteredForge slug
+
+-- | The registered forge under a slug, pending or active, if registration is
+-- on and no configured forge takes the slug ('lookupForgeWithStatus').
+lookupRegisteredForge :: ForgeSlug -> M (Maybe RegisteredForge)
+lookupRegisteredForge slug = do
+  configured <- Map.member slug <$> view #forges
+  registration <- view #forgeRegistration
+  case registration of
+    Just registration' | not configured -> _forgeRegistrationLookup registration' slug
+    _ -> pure Nothing
+
+-- | Every configured forge, and every active registered one no configured
+-- forge shadows (the registration lists none of those).
+listActiveForges :: M [(ForgeSource, ForgeInstance)]
+listActiveForges = do
+  configured <- view #forges
+  registered <- maybe (pure []) _forgeRegistrationListActive =<< view #forgeRegistration
+  pure $ map (Configured,) (Map.elems configured) <> map (Registered,) registered
+
 -- | The forge instance garnix knows under a slug, if any: the one place that
--- says which forges exist.
+-- says which forges exist. A registered forge counts while it is pending or
+-- active ('lookupForge').
 lookupForgeInstance :: ForgeSlug -> M (Maybe ForgeInstance)
-lookupForgeInstance slug = Map.lookup slug <$> view #forges
+lookupForgeInstance slug = fmap snd <$> lookupForge slug
 
 -- | The configuration of the forge instance under a slug, if garnix knows one.
 forgeConfigFor :: ForgeSlug -> M (Maybe ForgeConfig)
