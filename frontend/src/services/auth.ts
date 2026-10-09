@@ -2,17 +2,24 @@ import { URLSearchParams } from "url";
 import { z } from "zod";
 import { User } from "@/store/userContext";
 import { sanitizeRedirectPath } from "@/utils";
+import { defaultForgeSlug } from "./forges";
 import { Ok, fetchFromAPI } from ".";
 import { APIResult } from "./index";
 
 const loginTargetPageLocalstorageKey = "login-target-page";
 
+// What `whoami` answers: the session's account, or null.
+const whoamiSchema = z.nullable(
+  z.object({
+    username: z.string(),
+    email: z.string(),
+    // The account's identities on the forges garnix is active on.
+    identities: z.array(z.object({ forge: z.string(), login: z.string() })),
+  }),
+);
+
 export const getCurrentUser = async (): Promise<APIResult<User | null>> => {
-  const response = await fetchFromAPI(
-    z.nullable(z.object({ username: z.string(), email: z.string() })),
-    "GET",
-    "whoami",
-  );
+  const response = await fetchFromAPI(whoamiSchema, "GET", "whoami");
   if (!response.ok) return response;
   if (response.data == null) return Ok(null);
   return Ok({
@@ -21,10 +28,10 @@ export const getCurrentUser = async (): Promise<APIResult<User | null>> => {
   });
 };
 
-const setLoginTargetPage = (path: string | null): void => {
-  if (path != null) {
-    window.localStorage.setItem(loginTargetPageLocalstorageKey, path);
-  }
+// Every flow that leaves for a forge sets where it comes back to, so that
+// an abandoned one never sends a later login there.
+export const setLoginTargetPage = (path: string): void => {
+  window.localStorage.setItem(loginTargetPageLocalstorageKey, path);
 };
 
 export const getLoginTargetPage = (): string => {
@@ -33,30 +40,107 @@ export const getLoginTargetPage = (): string => {
   return sanitizeRedirectPath(path ?? "/");
 };
 
+// github.com keeps the routes its OAuth app has always called back to; every
+// other forge is under its slug.
+const loginRoute = (forge: string): string =>
+  forge === defaultForgeSlug
+    ? "login"
+    : `auth/${encodeURIComponent(forge)}/login`;
+
+// The link is under `github` whichever forge it points to.
+const loginLinkSchema = z.object({ github: z.string() });
+
 export const getLoginLink = async (
   page: string | null,
+  forge: string = defaultForgeSlug,
 ): Promise<APIResult<string>> => {
-  setLoginTargetPage(page);
+  setLoginTargetPage(page ?? "/");
   const response = await fetchFromAPI(
-    z.object({ github: z.string() }),
+    loginLinkSchema,
     "GET",
-    "login",
+    loginRoute(forge),
   );
   if (!response.ok) return response;
   return Ok(response.data.github);
 };
 
+export type LoginResult = {
+  user: User;
+  // Another account has the email of the account this login just created.
+  emailAlreadyUsed: boolean;
+};
+
+// Finishes a login, or a connect: the forge calls back to the same route.
 export const finishLogin = async (
   query: URLSearchParams,
-): Promise<APIResult<User>> => {
+  forge: string = defaultForgeSlug,
+): Promise<APIResult<LoginResult>> => {
   const response = await fetchFromAPI(
-    z.object({ username: z.string() }),
+    z.object({
+      username: z.string(),
+      emailAlreadyUsed: z.boolean(),
+    }),
     "GET",
-    "login/cb",
+    `${loginRoute(forge)}/cb`,
     { query },
   );
   if (!response.ok) return response;
-  return Ok({ name: response.data.username });
+  return Ok({
+    user: { name: response.data.username },
+    emailAlreadyUsed: response.data.emailAlreadyUsed,
+  });
+};
+
+export type Identity = { forge: string; login: string };
+
+// The account's identities on the forges garnix is active on.
+export const getIdentities = async (): Promise<APIResult<Array<Identity>>> => {
+  const response = await fetchFromAPI(whoamiSchema, "GET", "whoami");
+  if (!response.ok) return response;
+  return Ok(response.data?.identities ?? []);
+};
+
+// The link that attaches the account's identity on the forge, coming back to
+// the account page.
+export const getConnectLink = async (
+  forge: string,
+): Promise<APIResult<string>> => {
+  const response = await fetchFromAPI(
+    loginLinkSchema,
+    "GET",
+    `auth/${encodeURIComponent(forge)}/connect`,
+  );
+  if (!response.ok) return response;
+  setLoginTargetPage("/account");
+  return Ok(response.data.github);
+};
+
+export type Disconnected = "disconnected" | "holds-module-settings";
+
+// Without `deleteModuleSettings`, an identity that module settings were saved
+// through is not disconnected: the backend asks to confirm their deletion.
+export const disconnectIdentity = async (
+  forge: string,
+  deleteModuleSettings: boolean,
+): Promise<APIResult<Disconnected>> => {
+  const response = await fetchFromAPI(
+    z.unknown(),
+    "DELETE",
+    `auth/${encodeURIComponent(forge)}/identity`,
+    {
+      body: JSON.stringify(
+        deleteModuleSettings ? { confirmDeleteModuleSettings: true } : {},
+      ),
+    },
+  );
+  if (response.ok) return Ok("disconnected");
+  if (
+    !deleteModuleSettings &&
+    response.error.status === 409 &&
+    response.error.refusal === "has_module_settings"
+  )
+    return Ok("holds-module-settings");
+  return response;
 };
 
 export const logout = async (): Promise<APIResult<void>> => {

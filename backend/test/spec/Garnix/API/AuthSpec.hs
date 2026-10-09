@@ -320,6 +320,8 @@ serverSpec = inM $ beforeM_ truncateDBM $ aroundM_ suppressLogs $ do
         connectWith = callbackWith
         messageOf :: Response LazyByteString -> Maybe Text
         messageOf res = res ^? responseBody . key "message" . _String
+        reasonOf :: Response LazyByteString -> Maybe Text
+        reasonOf res = res ^? responseBody . key "reason" . _String
         sessionCookieFor :: User -> M Data.ByteString.ByteString
         sessionCookieFor user = do
           jwtSettings' <- view #jwtSettings
@@ -524,9 +526,12 @@ serverSpec = inM $ beforeM_ truncateDBM $ aroundM_ suppressLogs $ do
       res <- server.deleteWithBody "/api/auth/github/identity" disconnectBody
       res `shouldHaveStatusCode` 409
       messageOf res `shouldBeM` Just "github is the only forge your account logs in with. Connect another forge before disconnecting it."
+      reasonOf res `shouldBeM` Just "last_identity"
       _ <- assert200 . connectWith server otherForge "carol" =<< connectState server otherForge
       build <- testBuild $ (forge .~ otherForge) . (reqUser .~ "carol")
-      _ <- assert200 $ server.deleteWithBody "/api/auth/git.example/identity" disconnectBody
+      disconnected <- assert200 $ server.deleteWithBody "/api/auth/git.example/identity" disconnectBody
+      -- No body, as before the refusals carried a reason.
+      (disconnected ^. responseBody) `shouldBeM` ""
       ((^. identities) <$> DB.getUser (ForgeLogin githubForge "alice")) `shouldReturnM` [ForgeIdentity githubForge "alice" False]
       try (userTokenFor (ForgeLogin otherForge "carol")) >>= liftIO . (`shouldSatisfy` isLeft @ErrorWithContext @GhToken)
       -- History stays.
@@ -546,6 +551,8 @@ serverSpec = inM $ beforeM_ truncateDBM $ aroundM_ suppressLogs $ do
       res <- server.deleteWithBody "/api/auth/github/identity" disconnectBody
       res `shouldHaveStatusCode` 409
       messageOf res `shouldBeM` Just "Disconnecting github deletes the module settings saved through it. Confirm with confirmDeleteModuleSettings to disconnect anyway."
+      -- The UI asks to confirm on the reason, not on the message.
+      reasonOf res `shouldBeM` Just "has_module_settings"
       DB.identityHasModuleSettings (ForgeLogin githubForge "alice") `shouldReturnM` True
       _ <- assert200 $ server.deleteWithBody "/api/auth/github/identity" (Aeson.object ["confirmDeleteModuleSettings" Aeson..= True])
       DB.identityHasModuleSettings (ForgeLogin githubForge "alice") `shouldReturnM` False

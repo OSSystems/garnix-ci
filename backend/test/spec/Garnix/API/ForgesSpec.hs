@@ -4,14 +4,14 @@ module Garnix.API.ForgesSpec (spec) where
 
 import Control.Lens ((^?!))
 import Data.Aeson (Value, encode, object, (.=))
-import Data.Aeson.Lens (key, values, _String)
+import Data.Aeson.Lens (key, values, _Bool, _String)
 import Data.ByteString.Base64 qualified as Base64
 import Data.ByteString.Lazy qualified as BSL
 import Data.IORef (IORef, newIORef, readIORef, writeIORef)
 import Data.Map.Strict qualified as Map
 import Data.Text qualified as T
 import Database.PostgreSQL.Typed (pgSQL)
-import Garnix.API.Forges (clientAddress)
+import Garnix.API.Forges (ForgeSummary (..), clientAddress, forgesAPI)
 import Garnix.Access (administeredForges, hasAccessToRepo, liveAccount)
 import Garnix.AccessToken (generateToken)
 import Garnix.AccessToken.Types (AccessToken (..), AccessTokenScopes (..))
@@ -32,6 +32,7 @@ import Network.Socket (SockAddr (..), tupleToHostAddress, tupleToHostAddress6)
 import Network.Wai qualified as Wai
 import Network.Wai.Handler.Warp (testWithApplication)
 import Network.Wreq (Response, responseBody, responseStatus, statusCode)
+import Servant.Auth.Server (AuthResult (Authenticated))
 import Test.Hspec
 
 -- | The OAuth client secret every registration in these specs uses: no
@@ -711,6 +712,48 @@ spec = inM $ beforeM_ truncateDBM $ aroundM_ suppressLogsWhenPassing $ do
         anonymous' <- server.delete "/api/forges/nowhere.example"
         status anonymous' `shouldBeM` 401
       statusOf slug `shouldReturnM` Just ForgeActive
+
+    it "tells in the forges list who may manage each forge, and lists a disabled one only to them" $ withHttpRegistration $ withFakeGitea $ \port -> withServer $ \server -> do
+      let listed client = do
+            forges <- assert200 $ client.get "/api/forges"
+            pure [(entry ^?! key "slug" . _String, entry ^? key "status" . _String, entry ^? key "can_manage" . _Bool) | entry <- forges ^.. responseBody . values]
+      activeForge server port
+      void $ alsoOnGithub "alice"
+      listed server `shouldReturnM` [("github", Just "active", Just False), ("localhost", Just "active", Just True)]
+      withServer $ \asRoot -> withServer $ \asBob -> withServer $ \anonymous -> do
+        _ <- assert200 $ logInThroughForge asRoot "root"
+        _ <- assert200 $ logInThroughForge asBob "bob"
+        mapM_ alsoOnGithub ["root", "bob"]
+        listed asRoot `shouldReturnM` [("github", Just "active", Just False), ("localhost", Just "active", Just True)]
+        listed asBob `shouldReturnM` [("github", Just "active", Just False), ("localhost", Just "active", Just False)]
+        listed anonymous `shouldReturnM` [("github", Just "active", Just False), ("localhost", Just "active", Just False)]
+        _ <- assert200 $ server.delete "/api/forges/localhost"
+        listed server `shouldReturnM` [("github", Just "active", Just False), ("localhost", Just "disabled", Just True)]
+        listed asRoot `shouldReturnM` [("github", Just "active", Just False), ("localhost", Just "disabled", Just True)]
+        listed asBob `shouldReturnM` [("github", Just "active", Just False)]
+        listed anonymous `shouldReturnM` [("github", Just "active", Just False)]
+        -- Registration turned off hides it from everyone, as it does the
+        -- routes that manage it.
+        alice <- accountOf "alice" >>= maybe (error "no account") pure
+        local (#forgeRegistration .~ Nothing)
+          $ (map _forgeSummarySlug <$> forgesAPI (Authenticated (WebSession alice)))
+          `shouldReturnM` [githubForge]
+
+    it "keeps the account an identity on an active forge when another one is disconnected" $ withHttpRegistration $ withFakeGitea $ \port -> withServer $ \server -> do
+      activeForge server port
+      alice <- alsoOnGithub "alice"
+      let disconnectGithub = server.deleteWithBody "/api/auth/github/identity" (object [])
+          forgesOf = fmap (map (^. forge) . (^. identities)) <$> DB.getUserById alice
+      _ <- assert200 $ server.delete "/api/forges/localhost"
+      -- Its identity on the disabled forge logs nobody in: without GitHub
+      -- the account would have no way in until the forge comes back.
+      refused <- disconnectGithub
+      status refused `shouldBeM` 409
+      (refused ^? responseBody . key "reason" . _String) `shouldBeM` Just "last_identity"
+      forgesOf `shouldReturnM` Just [slug, githubForge]
+      _ <- assert200 $ server.put "/api/forges/localhost/secret" (object ["clientSecret" .= clientSecret])
+      _ <- assert200 disconnectGithub
+      forgesOf `shouldReturnM` Just [slug]
 
     it "never answers the client secret" $ withHttpRegistration $ withFakeGitea $ \port -> withServer $ \server -> do
       responses <-

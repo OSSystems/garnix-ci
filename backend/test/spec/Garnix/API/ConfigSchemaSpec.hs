@@ -20,7 +20,7 @@ spec = do
   describe "/api/forges" $ inM $ aroundM_ suppressLogsWhenPassing $ do
     it "lists github.com" $ withServer $ \testServer -> do
       response <- assertJSON $ assert200 $ testServer.get "/api/forges"
-      response ^. responseBody `shouldBeM` [aesonQQ| [{slug: "github", kind: "github", web_url: "https://github.com", source: "configured", name: "github.com"}] |]
+      response ^. responseBody `shouldBeM` [aesonQQ| [{slug: "github", kind: "github", web_url: "https://github.com", source: "configured", name: "github.com", status: "active", can_manage: false}] |]
 
     it "lists every configured instance, without its secrets" $ do
       local (#forges %~ Map.insert "git.example" (testForgeInstance "git.example" GiteaForgeKind)) $ withServer $ \testServer -> do
@@ -28,8 +28,8 @@ spec = do
         response
           ^. responseBody
           `shouldBeM` [aesonQQ|
-            [ {slug: "git.example", kind: "gitea", web_url: "https://git.example", source: "configured", name: "git.example"},
-              {slug: "github", kind: "github", web_url: "https://github.com", source: "configured", name: "github.com"}
+            [ {slug: "git.example", kind: "gitea", web_url: "https://git.example", source: "configured", name: "git.example", status: "active", can_manage: false},
+              {slug: "github", kind: "github", web_url: "https://github.com", source: "configured", name: "github.com", status: "active", can_manage: false}
             ]
           |]
 
