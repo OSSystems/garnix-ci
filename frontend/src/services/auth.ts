@@ -66,8 +66,10 @@ export const getSignupLink = async (): Promise<APIResult<string>> => {
   return Ok(response.data.github);
 };
 
+// The query is the forge's callback: its code and the state the backend
+// checks against this browser's cookie.
 export const getSignupData = async (
-  code: string,
+  query: URLSearchParams,
 ): Promise<
   APIResult<
     User & {
@@ -82,7 +84,8 @@ export const getSignupData = async (
       github_login: z.string(),
     }),
     "GET",
-    `signup/fill?code=${code}`,
+    "signup/fill",
+    { query },
   );
   if (!response.ok) return response;
   return Ok({

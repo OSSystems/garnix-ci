@@ -1129,6 +1129,9 @@ data Error
   | InvalidBuildUpdate {buildUpdateBody :: BuildUpdate}
   | FailedToParseDrvFile {drvFile :: FilePath, message :: Text}
   | CachedError {inner :: ErrorWithContext}
+  | -- | An error whose response also sets these cookies (rendered
+    -- @Set-Cookie@ values), as a handler that spends a cookie whatever happens.
+    WithSetCookies {setCookies :: [Text], inner :: ErrorWithContext}
   | GarnixAppUnauthorized GhRepoOwner GhRepoName
   | GithubRequestTimeout
   | FailedToParseCreateReportResult Aeson.Value
@@ -1247,6 +1250,7 @@ instance Pretty Error where
     InvalidBuildUpdate {buildUpdateBody} -> "Invalid build update:" <+> pretty (decodeUtf8 $ BSL.toStrict (encodePretty buildUpdateBody))
     FailedToParseDrvFile {drvFile, message} -> "Failed to parse " <+> pretty drvFile <+> ": " <+> pretty message
     CachedError inner -> "(cached error)" <+> pretty (err inner)
+    WithSetCookies {inner} -> pretty (err inner)
     GarnixAppUnauthorized owner repo -> Pretty.squotes (pretty owner) <+> "uninstalled or did not give enough permissions to the garnix app for" <+> Pretty.squotes (pretty repo)
     GithubRequestTimeout -> "Request timeout when talking with Github."
     FailedToParseCreateReportResult value -> "Failed to parse create report response: " <> Pretty.squotes (pretty $ show value)
@@ -1382,6 +1386,9 @@ toErrorDetails e = case err e of
       <> getGhRepoName _name
       <> " doesn't exist, has not enabled garnix, or you don't have access to it."
   FailedToParseDrvFile {drvFile, message} -> errorDetails 500 $ "Failed to parse drv file " <> cs drvFile <> ": " <> message
+  WithSetCookies {setCookies, inner} ->
+    let details = toErrorDetails inner
+     in details {headers = headers details <> [("Set-Cookie", cs cookie) | cookie <- setCookies]}
   CachedError inner ->
     let details = toErrorDetails inner
      in details

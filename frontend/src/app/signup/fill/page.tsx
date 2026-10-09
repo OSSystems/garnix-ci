@@ -19,9 +19,9 @@ const Inner = () => {
   const [redirectUrl, setRedirectUrl] = useState<string | null>(null);
   useEffect(() => {
     void (async () => {
-      const code = params.get("code");
-      if (!code) return setError("No signup code given from github.");
-      const response = await getSignupData(code);
+      if (!params.get("code"))
+        return setError("No signup code given from github.");
+      const response = await getSignupData(params);
       if (!response.ok) setError(response.error.message);
       else if (response.data) {
         setUser({ name: response.data.name, email: response.data.email });
