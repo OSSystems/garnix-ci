@@ -12,7 +12,7 @@ import Data.ByteString.Base64 qualified as Base64
 import Data.Map qualified as Map
 import Data.String.Interpolate (i)
 import Data.Text qualified as T
-import Garnix.API.Auth (OAuthFlow (..), forgeOAuth2, oauthCallbackPath, subscriptionFor)
+import Garnix.API.Auth (OAuthFlow (..), OAuthNonce (..), forgeOAuth2, oauthCallbackPath, parseOAuthNonce, subscriptionFor)
 import Garnix.AccessToken.Types
 import Garnix.Build (buildFlake)
 import Garnix.DB qualified as DB
@@ -33,7 +33,7 @@ import Network.Wreq
 import Servant.Auth.Server (validationKeys)
 import Servant.Auth.Server.Internal.JWT (makeJWT)
 import Test.Hspec
-import Web.Cookie (parseSetCookie, setCookieName, setCookieValue)
+import Web.Cookie (SetCookie, parseSetCookie, setCookieName, setCookieValue)
 
 spec :: Spec
 spec = oauthSpec >> serverSpec
@@ -273,6 +273,23 @@ serverSpec = inM $ beforeM_ truncateDBM $ aroundM_ suppressLogs $ do
             }
         withOtherForge :: M a -> M a
         withOtherForge = local (#forges %~ Map.insert otherForge fakeForge)
+        stateOf :: Text -> Text
+        stateOf link = case T.breakOn "&state=" link of
+          (_, rest) | not (T.null rest) -> T.drop (T.length "&state=") rest
+          _ -> error $ "no state in " <> cs link
+        -- The state a link to the forge carries, as a browser starts a flow:
+        -- fetching the link sets the state's cookie.
+        stateFrom :: TestServer -> String -> M Text
+        stateFrom server path = do
+          res <- assert200 $ server.get path
+          pure $ stateOf $ res ^?! responseBody . key "github" . _String
+        callback :: TestServer -> String -> Text -> Text -> M (Response LazyByteString)
+        callback server path code state = server.get (path <> "?code=" <> cs code <> "&state=" <> cs state)
+        -- A callback in the browser that started the flow.
+        through :: TestServer -> String -> String -> M (Response LazyByteString)
+        through server start path = callback server path "other-forge-code" =<< stateFrom server start
+        setCookiesOf :: Response LazyByteString -> [SetCookie]
+        setCookiesOf res = parseSetCookie <$> res ^.. responseHeaders . traverse . filtered ((== "Set-Cookie") . fst) . _2
         finishSignupBody =
           Aeson.object
             [ "email" Aeson..= ("alice@git.example" :: Text),
@@ -285,10 +302,61 @@ serverSpec = inM $ beforeM_ truncateDBM $ aroundM_ suppressLogs $ do
       let link = res ^?! responseBody . key "github" . _String
       ("https://git.example/login/oauth/authorize?" `T.isPrefixOf` link) `shouldBeM` True
       ("client_id=other-client-id" `T.isInfixOf` link) `shouldBeM` True
+      -- The state is a nonce this browser keeps a cookie for.
+      (setCookieValue <$> find ((== "garnix-oauth-state-" <> cs (stateOf link)) . setCookieName) (setCookiesOf res)) `shouldBeM` Just "1"
+
+    it "refuses a login callback this browser did not start" $ withOtherForge $ do
+      user <- DB.newUser (ForgeLogin otherForge "alice") (Email "alice@git.example") FreeSubscription True
+      state <- withServer $ \server -> stateFrom server "/api/auth/git.example/login"
+      withServer $ \server -> do
+        forM_ [state, "foo", ""] $ \state' -> do
+          res <- callback server "/api/auth/git.example/login/cb" "other-forge-code" state'
+          res `shouldHaveStatusCode` 403
+        whoami <- assert200 $ server.get "/api/whoami"
+        (whoami ^. responseBody) `shouldBeM` "null"
+      DB.getUser (ForgeLogin otherForge "alice") `shouldReturnM` user
+
+    it "refuses a signup callback this browser did not start" $ withOtherForge $ do
+      state <- withServer $ \server -> stateFrom server "/api/auth/git.example/signup"
+      withServer $ \server -> do
+        res <- callback server "/api/auth/git.example/signup/fill" "other-forge-code" state
+        res `shouldHaveStatusCode` 403
+
+    it "spends the state of a login once it is used" $ withOtherForge $ withServer $ \server -> do
+      void $ DB.newUser (ForgeLogin otherForge "alice") (Email "alice@git.example") FreeSubscription True
+      state <- stateFrom server "/api/auth/git.example/login"
+      _ <- assert200 $ callback server "/api/auth/git.example/login/cb" "other-forge-code" state
+      _ <- assert200 $ server.delete "/api/auth/git.example/login"
+      res <- callback server "/api/auth/git.example/login/cb" "other-forge-code" state
+      res `shouldHaveStatusCode` 403
+
+    it "spends the state of a refused callback too" $ withOtherForge $ withServer $ \server -> do
+      void $ DB.newUser (ForgeLogin otherForge "alice") (Email "alice@git.example") FreeSubscription True
+      state <- stateFrom server "/api/auth/git.example/login"
+      refused <- callback server "/api/auth/git.example/login/cb" "wrong-code" state
+      (refused ^. responseStatus . Network.Wreq.statusCode) `shouldSatisfyM` (>= 400)
+      (setCookieValue <$> find ((== "garnix-oauth-state-" <> cs state) . setCookieName) (setCookiesOf refused)) `shouldBeM` Just ""
+      res <- callback server "/api/auth/git.example/login/cb" "other-forge-code" state
+      res `shouldHaveStatusCode` 403
+
+    it "names no cookie after a state that is no nonce of ours" $ withOtherForge $ withServer $ \server -> do
+      forM_ ["/api/auth/git.example/login/cb", "/api/auth/git.example/signup/fill"] $ \path ->
+        forM_ ["a;%20Domain=garnix.example;%20Path=/api", "a=b", "a%0d%0aSet-Cookie:%20JWT-Cookie=x"] $ \state -> do
+          res <- callback server path "other-forge-code" state
+          res `shouldHaveStatusCode` 403
+          setCookiesOf res `shouldBeM` []
+
+    it "lets several logins be in flight in one browser" $ withOtherForge $ withServer $ \server -> do
+      void $ DB.newUser (ForgeLogin otherForge "alice") (Email "alice@git.example") FreeSubscription True
+      first <- stateFrom server "/api/auth/git.example/login"
+      second <- stateFrom server "/api/auth/git.example/login"
+      _ <- assert200 $ callback server "/api/auth/git.example/login/cb" "other-forge-code" first
+      _ <- assert200 $ callback server "/api/auth/git.example/login/cb" "other-forge-code" second
+      pure ()
 
     it "signs up an account on that forge, apart from the same login on github" $ withOtherForge $ withServer $ \server -> do
       githubAlice <- DB.newUser (ForgeLogin githubForge "alice") (Email "alice@github.example") FreeSubscription True
-      fill <- assert200 $ server.get "/api/auth/git.example/signup/fill?code=other-forge-code"
+      fill <- assert200 $ through server "/api/auth/git.example/signup" "/api/auth/git.example/signup/fill"
       (fill ^? responseBody . key "exists" . _Bool) `shouldBeM` Just False
       (fill ^? responseBody . key "forge" . _String) `shouldBeM` Just "git.example"
       _ <- assert200 $ server.post "/api/auth/git.example/signup" finishSignupBody
@@ -303,7 +371,7 @@ serverSpec = inM $ beforeM_ truncateDBM $ aroundM_ suppressLogs $ do
 
     it "signs up with the email an account on github already uses" $ withOtherForge $ withServer $ \server -> do
       githubAlice <- DB.newUser (ForgeLogin githubForge "alice") (Email "alice@git.example") FreeSubscription True
-      _ <- assert200 $ server.get "/api/auth/git.example/signup/fill?code=other-forge-code"
+      _ <- assert200 $ through server "/api/auth/git.example/signup" "/api/auth/git.example/signup/fill"
       _ <- assert200 $ server.post "/api/auth/git.example/signup" finishSignupBody
       user <- DB.getUser (ForgeLogin otherForge "alice")
       (user ^. email) `shouldBeM` Email "alice@git.example"
@@ -311,7 +379,7 @@ serverSpec = inM $ beforeM_ truncateDBM $ aroundM_ suppressLogs $ do
 
     it "logs an existing account of that forge in" $ withOtherForge $ withServer $ \server -> do
       user <- DB.newUser (ForgeLogin otherForge "alice") (Email "alice@git.example") FreeSubscription True
-      _ <- assert200 $ server.get "/api/auth/git.example/login/cb?code=other-forge-code"
+      _ <- assert200 $ through server "/api/auth/git.example/login" "/api/auth/git.example/login/cb"
       githubTokenFor user `shouldReturnM` GhToken "other-forge-token"
       whoami <- assert200 $ server.get "/api/whoami"
       (whoami ^? responseBody . key "username" . _String) `shouldBeM` Just "alice"
@@ -319,7 +387,7 @@ serverSpec = inM $ beforeM_ truncateDBM $ aroundM_ suppressLogs $ do
 
     it "does not log the same login on github in" $ withOtherForge $ withServer $ \server -> do
       void $ DB.newUser (ForgeLogin githubForge "alice") (Email "alice@github.example") FreeSubscription True
-      res <- server.get "/api/auth/git.example/login/cb?code=other-forge-code"
+      res <- through server "/api/auth/git.example/login" "/api/auth/git.example/login/cb"
       (res ^. responseStatus . Network.Wreq.statusCode) `shouldBeM` 404
       (res ^? responseBody . key "message" . _String) `shouldBeM` Just "No user with github login alice could be found"
 
@@ -331,6 +399,14 @@ serverSpec = inM $ beforeM_ truncateDBM $ aroundM_ suppressLogs $ do
 oauthSpec :: Spec
 oauthSpec = do
   let gitExample = ForgeSlug "git.example"
+
+  describe "parseOAuthNonce" $ do
+    let nonce = T.replicate 32 "a"
+    it "accepts a nonce as garnix makes them" $ do
+      getOAuthNonce <$> parseOAuthNonce (Just nonce) `shouldBe` Just nonce
+    it "refuses anything else, which could name or set another cookie" $ do
+      forM_ [Nothing, Just "", Just (T.take 31 nonce), Just (nonce <> "a"), Just (T.take 31 nonce <> ";"), Just (T.take 31 nonce <> "="), Just (T.take 30 nonce <> "\r\n"), Just (T.take 31 nonce <> "é")] $ \state ->
+        (state, getOAuthNonce <$> parseOAuthNonce state) `shouldBe` (state, Nothing)
 
   describe "oauthCallbackPath" $ do
     it "keeps the callbacks GitHub's OAuth app is registered with" $ do
