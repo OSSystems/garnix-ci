@@ -13,6 +13,8 @@ export type APIError = {
   reason: "not-ok" | "server-error" | "schema-invalid";
   message: string;
   status: number | "parse-error";
+  // The machine-readable reason a refusal carries, when it carries one.
+  refusal?: string;
 };
 
 export type APIResult<T> = Result<T, APIError>;
@@ -40,7 +42,8 @@ export const fetchFromAPI = async <Input, Output>(
     ...(options || {}),
     method,
   };
-  if ((method === "POST" || method === "PUT") && finalOptions?.body)
+  // A DELETE may carry a body too (disconnecting a forge identity does).
+  if (method !== "GET" && finalOptions?.body)
     finalOptions.headers = {
       ...finalOptions.headers,
       "Content-Type": "application/json",
@@ -55,6 +58,7 @@ export const fetchFromAPI = async <Input, Output>(
       reason: "not-ok",
       message: body.message || rawBody || response.statusText || "error",
       status: response.status,
+      ...(typeof body.reason === "string" ? { refusal: body.reason } : {}),
     });
   }
   const verifiedResponse = schema.safeParse(body);

@@ -17,6 +17,9 @@ type Props = {
   style?: keyof typeof styleClassNames;
   eventName?: string;
   loading?: boolean;
+  disabled?: boolean;
+  // Says why when it is disabled.
+  title?: string;
 } & PropsWithChildren &
   (
     | {
@@ -52,6 +55,7 @@ export const Button = ({
   children,
   target,
   loading,
+  disabled,
   ...rest
 }: Props) => {
   if (href) {
@@ -62,7 +66,7 @@ export const Button = ({
         className={`${styles.container} ${Berlin.className} ${styleClassNames[style]}`}
         target={target}
         variant="wrapper"
-        disabled={loading}
+        disabled={loading || disabled}
         {...rest}
       >
         {children}
@@ -76,7 +80,7 @@ export const Button = ({
         eventName && trackClick(eventName);
         onClick && void onClick();
       }}
-      disabled={loading}
+      disabled={loading || disabled}
       className={`${styles.container} ${Berlin.className} ${styleClassNames[style]}`}
       data-submit-action={submitAction}
       {...rest}

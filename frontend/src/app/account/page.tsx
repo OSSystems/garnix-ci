@@ -4,6 +4,7 @@ import { AppPage } from "@/utils/appPage";
 import styles from "./styles.module.css";
 import { UsageComponent } from "./usage";
 import { AccessTokensComponent } from "./access_tokens";
+import { ForgesComponent } from "./forges";
 
 const Page = () => {
   return (
@@ -17,6 +18,7 @@ const Page = () => {
       <div className={styles.section}>
         <AccessTokensComponent />
       </div>
+      <ForgesComponent />
     </div>
   );
 };
