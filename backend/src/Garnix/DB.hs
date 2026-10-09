@@ -192,11 +192,12 @@ data RemovalRefusal = NoSuchIdentity | LastIdentity | HasModuleSettings
 identityToRemove :: ForgeSlug -> [ForgeIdentity] -> Either RemovalRefusal ForgeIdentity
 identityToRemove forge' = maybe (Left NoSuchIdentity) Right . find ((== forge') . (^. forge))
 
--- | Whether that identity may go, from how many identities the account has
--- and whether module settings were saved through it.
+-- | Whether that identity may go, from how many of the account's other
+-- identities are on an active forge, and so still log it in, and whether
+-- module settings were saved through it.
 mayRemove :: ModuleSettings -> Int -> Bool -> ForgeIdentity -> Either RemovalRefusal ForgeIdentity
-mayRemove moduleSettings identityCount hasModuleSettings identity
-  | identityCount <= 1 = Left LastIdentity
+mayRemove moduleSettings otherLiveIdentities hasModuleSettings identity
+  | otherLiveIdentities < 1 = Left LastIdentity
   | hasModuleSettings && moduleSettings == KeepModuleSettings = Left HasModuleSettings
   | otherwise = Right identity
 
@@ -210,7 +211,8 @@ removeIdentity userId forge' moduleSettings = withinTransaction $ do
   identities <- getIdentities userId
   plan <- forM (identityToRemove forge' identities) $ \identity -> do
     hasModuleSettings <- identityHasModuleSettings (identityForgeLogin identity)
-    pure $ mayRemove moduleSettings (length identities) hasModuleSettings identity
+    otherLive <- liveIdentities (filter (/= identity) identities)
+    pure $ mayRemove moduleSettings (length otherLive) hasModuleSettings identity
   forM (join plan) $ \identity -> do
     void
       $ pgExec

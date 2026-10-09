@@ -627,6 +627,12 @@ lookupActiveForge slug = activeOnly <$> lookupForgeWithStatus slug
       Just (source, ForgeActive, instance') -> Just (source, instance')
       _ -> Nothing
 
+-- | The identities on a forge garnix is active on ('lookupActiveForge'): the
+-- ones that still log an account in. Sessions ('Garnix.Access.liveAccount')
+-- and the disconnect guard ('Garnix.DB.removeIdentity') both go by it.
+liveIdentities :: [ForgeIdentity] -> M [ForgeIdentity]
+liveIdentities = filterM (fmap isJust . lookupActiveForge . (^. forge))
+
 -- | Configured forges count as active.
 lookupForgeWithStatus :: ForgeSlug -> M (Maybe (ForgeSource, ForgeStatus, ForgeInstance))
 lookupForgeWithStatus slug = do

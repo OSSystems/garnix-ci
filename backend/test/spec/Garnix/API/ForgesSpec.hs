@@ -712,6 +712,22 @@ spec = inM $ beforeM_ truncateDBM $ aroundM_ suppressLogsWhenPassing $ do
         status anonymous' `shouldBeM` 401
       statusOf slug `shouldReturnM` Just ForgeActive
 
+    it "keeps the account an identity on an active forge when another one is disconnected" $ withHttpRegistration $ withFakeGitea $ \port -> withServer $ \server -> do
+      activeForge server port
+      alice <- alsoOnGithub "alice"
+      let disconnectGithub = server.deleteWithBody "/api/auth/github/identity" (object [])
+          forgesOf = fmap (map (^. forge) . (^. identities)) <$> DB.getUserById alice
+      _ <- assert200 $ server.delete "/api/forges/localhost"
+      -- Its identity on the disabled forge logs nobody in: without GitHub
+      -- the account would have no way in until the forge comes back.
+      refused <- disconnectGithub
+      status refused `shouldBeM` 409
+      (refused ^? responseBody . key "reason" . _String) `shouldBeM` Just "last_identity"
+      forgesOf `shouldReturnM` Just [slug, githubForge]
+      _ <- assert200 $ server.put "/api/forges/localhost/secret" (object ["clientSecret" .= clientSecret])
+      _ <- assert200 disconnectGithub
+      forgesOf `shouldReturnM` Just [slug]
+
     it "never answers the client secret" $ withHttpRegistration $ withFakeGitea $ \port -> withServer $ \server -> do
       responses <-
         sequence
