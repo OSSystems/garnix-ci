@@ -382,7 +382,6 @@ spec = inM $ beforeM_ truncateDBM $ aroundM_ suppressLogsWhenPassing $ do
             pendingApiUrl = "https://registered.example/api/v1",
             pendingOAuthClientId = "registered-client",
             pendingOAuthClientSecret = secret,
-            pendingWebhookSecret = secret,
             pendingTokenHash = hashRegistrationToken "token"
           }
         Nothing
@@ -513,7 +512,7 @@ spec = inM $ beforeM_ truncateDBM $ aroundM_ suppressLogsWhenPassing $ do
       statusOf slug `shouldReturnM` Just ForgeDisabled
       login' <- server.get "/api/auth/localhost/login"
       status login' `shouldBeM` 404
-      hook <- server.postWithHeaders "/api/forges/localhost/webhook" [("X-Gitea-Event", "push")] (object [])
+      hook <- server.postWithHeaders "/api/forges/localhost/installations/1/webhook" [("X-Gitea-Event", "push")] (object [])
       status hook `shouldBeM` 404
       -- The account stays, but it was its only identity: its sessions end,
       -- and its api tokens log nobody in.

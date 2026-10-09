@@ -500,7 +500,7 @@ withEnv testFeatures buildLogsDir buildLogsReportingPort action = do
               forges =
                 Map.singleton
                   githubForge
-                  (githubForgeInstance ghK ghClientId ghClientSecret adminGhLogin),
+                  (githubForgeInstance ghClientId ghClientSecret adminGhLogin),
               forgeRegistration,
               cookieSettings =
                 defaultCookieSettings

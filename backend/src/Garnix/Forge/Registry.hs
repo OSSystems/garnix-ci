@@ -127,14 +127,12 @@ cachedInstance cache manager' row = do
 registeredForgeConfig :: DB.RegisteredForgeRow -> M ForgeConfig
 registeredForgeConfig row = do
   clientSecret <- decryptSecret (DB.rowOAuthClientSecret row)
-  webhookSecret' <- decryptSecret (DB.rowWebhookSecret row)
   pure
     ForgeConfig
       { _forgeConfigSlug = DB.rowSlug row,
         _forgeConfigKind = GiteaForgeKind,
         _forgeConfigWebUrl = DB.rowWebUrl row,
         _forgeConfigApiUrl = DB.rowApiUrl row,
-        _forgeConfigWebhookSecret = T.encodeUtf8 webhookSecret',
         _forgeConfigOAuthClientId = DB.rowOAuthClientId row,
         _forgeConfigOAuthClientSecret = clientSecret,
         _forgeConfigApiToken = Nothing,

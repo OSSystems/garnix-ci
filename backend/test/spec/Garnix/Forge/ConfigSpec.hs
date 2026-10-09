@@ -12,8 +12,7 @@ import Test.Hspec
 secrets :: Map.Map FilePath StrictByteString
 secrets =
   Map.fromList
-    [ ("/run/secrets/webhook_secret", "webhook-secret\n"),
-      ("/run/secrets/oauth_client_secret", "client-secret\n"),
+    [ ("/run/secrets/oauth_client_secret", "client-secret\n"),
       ("/run/secrets/api_token", "bot-token\n"),
       ("/run/secrets/empty", "\n")
     ]
@@ -35,7 +34,6 @@ forgesFile slug' overrides =
         [ ("kind", "\"gitea\""),
           ("webUrl", "\"https://git.example.com/\""),
           ("apiUrl", "\"https://git.example.com/api/v1\""),
-          ("webhookSecretFile", "\"/run/secrets/webhook_secret\""),
           ("oauthClientId", "\"client-id\""),
           ("oauthClientSecretFile", "\"/run/secrets/oauth_client_secret\""),
           ("apiTokenFile", "\"/run/secrets/api_token\""),
@@ -61,7 +59,6 @@ spec = do
       config ^. kind `shouldBe` GiteaForgeKind
       config ^. webUrl `shouldBe` "https://git.example.com"
       config ^. apiUrl `shouldBe` "https://git.example.com/api/v1"
-      config ^. webhookSecret `shouldBe` "webhook-secret"
       config ^. oAuthClientId `shouldBe` "client-id"
       config ^. oAuthClientSecret `shouldBe` "client-secret"
       config ^. apiToken `shouldBe` Just (GhToken "bot-token")
@@ -76,6 +73,10 @@ spec = do
           <> innerOf (forgesFile "b" [("webUrl", "\"https://git.other.example.com\"")])
           <> "}"
       sort (map (view slug) configs) `shouldBe` [ForgeSlug "a", ForgeSlug "b"]
+
+    it "has no bot token unless given: garnix then calls the instance with whoever installed it" $ do
+      [config] <- parseForgesFile readSecret (forgesFile "git.example" [("apiTokenFile", "null")])
+      config ^. apiToken `shouldBe` Nothing
 
     it "has no admins unless given" $ do
       [config] <- parseForgesFile readSecret (forgesFile "git.example" [("admins", "null")])
@@ -121,7 +122,7 @@ spec = do
       failsWith "apiTokenFile: cannot read /run/secrets/missing" $ parseForgesFile readSecret (forgesFile "git.example" [("apiTokenFile", "\"/run/secrets/missing\"")])
 
     it "rejects an empty secret" $ do
-      failsWith "webhookSecretFile: /run/secrets/empty is empty" $ parseForgesFile readSecret (forgesFile "git.example" [("webhookSecretFile", "\"/run/secrets/empty\"")])
+      failsWith "apiTokenFile: /run/secrets/empty is empty" $ parseForgesFile readSecret (forgesFile "git.example" [("apiTokenFile", "\"/run/secrets/empty\"")])
 
     it "rejects a web URL that is not http(s)" $ do
       failsWith "webUrl is not an http(s) URL" $ parseForgesFile readSecret (forgesFile "git.example" [("webUrl", "\"ssh://git.example.com\"")])

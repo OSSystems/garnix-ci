@@ -287,7 +287,6 @@ registerForgeAPI peer forwardedFor cookies request = do
   forM_ refusal $ throw . ConflictWithMessage
   probeGitea (_forgeRegistrationManager registration) apiUrl'
   encryptedSecret <- encryptSecret clientSecret
-  webhookSecret' <- encryptSecret =<< randomBase64 32
   token <- randomBase64 32
   stored <-
     DB.upsertPendingForge
@@ -297,7 +296,6 @@ registerForgeAPI peer forwardedFor cookies request = do
           pendingApiUrl = apiUrl',
           pendingOAuthClientId = clientId,
           pendingOAuthClientSecret = encryptedSecret,
-          pendingWebhookSecret = webhookSecret',
           pendingTokenHash = hashRegistrationToken token
         }
       presentedHash

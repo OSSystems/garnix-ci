@@ -9,9 +9,9 @@ BEGIN
         WHERE table_schema = 'public'
           AND table_name = 'forges'
           AND column_name IN ('slug', 'kind', 'web_url', 'api_url', 'oauth_client_id',
-                              'oauth_client_secret', 'webhook_secret', 'status',
+                              'oauth_client_secret', 'status',
                               'registered_by', 'registration_token_hash', 'disabled_at', 'created_at', 'updated_at')
-    ) = 13, 'the forges table is missing or lacks columns';
+    ) = 12, 'the forges table is missing or lacks columns';
 
     ASSERT EXISTS (
         SELECT 1 FROM information_schema.table_constraints

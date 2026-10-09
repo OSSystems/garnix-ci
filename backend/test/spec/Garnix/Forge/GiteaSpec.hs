@@ -1,12 +1,12 @@
 module Garnix.Forge.GiteaSpec (spec) where
 
-import Control.Concurrent (modifyMVar, modifyMVar_, newMVar, readMVar)
+import Control.Concurrent (MVar, modifyMVar, modifyMVar_, newMVar, readMVar)
 import Cradle
-import Crypto.Hash (Digest, SHA256)
+import Crypto.Hash (SHA256)
 import Crypto.MAC.HMAC (HMAC, hmac, hmacGetDigest)
 import Data.Aeson (Value (..), decode, encode, object, (.=))
 import Data.Aeson.Key (fromText)
-import Data.Aeson.Lens (key, _Object, _String)
+import Data.Aeson.Lens (key, values, _Integer, _Object, _String)
 import Data.ByteString.Base64 qualified as Base64
 import Data.ByteString.Lazy qualified as BSL
 import Data.Char (isAlphaNum)
@@ -16,8 +16,12 @@ import Data.Map.Strict qualified as Map
 import Data.Text qualified as T
 import Data.Text.Encoding qualified as T
 import Data.Text.IO qualified as T
+import Database.PostgreSQL.Typed (pgSQL)
 import Garnix.Build.Checkout (withAuthorization)
 import Garnix.Build.Helpers (withInternalCacheToken, withPrivateNixXdgCache)
+import Garnix.DB qualified as DB
+import Garnix.DB.Installations qualified as Installations
+import Garnix.Forge.Installation
 import Garnix.FlakeInputAuthorization (GithubVisibility (..), InputAuthorization (..), checkAuthorization, _githubVisibility)
 import Garnix.Forge.Gitea
 import Garnix.Hosting.Deploy (deployerGithubKeys)
@@ -25,6 +29,7 @@ import Garnix.Monad
 import Garnix.NixConfig (NetRcEntry (..), addNixConfigEnvironment, getNetRcFileSetting, nixConfDefaults)
 import Garnix.Prelude
 import Garnix.Sandbox (inNixSandbox)
+import Garnix.TestHelpers (truncateDBM)
 import Garnix.TestHelpers.Monad
 import Garnix.TestHelpers.WithServer qualified as WithServer
 import Garnix.Types hiding (body)
@@ -77,10 +82,18 @@ withFakeGiteaRaw routes action = do
                 }
         modifyMVar_ received $ \rs -> pure $ rs <> [this]
         (status', headers, answer) <- routes this
-        respond $ Wai.responseLBS status' headers answer
+        if lookup dropConnection headers == Just "1"
+          then -- Closes the connection without answering.
+            respond $ Wai.responseRaw (\_ _ -> pure ()) (Wai.responseLBS status' [] "")
+          else respond $ Wai.responseLBS status' headers answer
   result <- liftBaseOp (testWithApplication (pure app)) $ \port ->
     action (giteaConfig $ "http://localhost:" <> show port)
   (result,) <$> liftIO (readMVar received)
+
+-- | A header that makes 'withFakeGiteaRaw' close the connection instead of
+-- answering.
+dropConnection :: HTTP.HeaderName
+dropConnection = "X-Fake-Drop-Connection"
 
 giteaConfig :: Text -> ForgeConfig
 giteaConfig webUrl' =
@@ -89,7 +102,6 @@ giteaConfig webUrl' =
       _forgeConfigKind = GiteaForgeKind,
       _forgeConfigWebUrl = webUrl',
       _forgeConfigApiUrl = webUrl' <> "/api/v1",
-      _forgeConfigWebhookSecret = "webhook-secret",
       _forgeConfigOAuthClientId = "client-id",
       _forgeConfigOAuthClientSecret = "client-secret",
       _forgeConfigApiToken = Just (GhToken "bot-token"),
@@ -132,6 +144,7 @@ spec = do
   clientSpec
   webhookSpec
   privateInputsSpec
+  installationsSpec
 
 -- | The API client.
 clientSpec :: Spec
@@ -152,24 +165,6 @@ clientSpec = do
           ]
 
   inM $ aroundM_ suppressLogsWhenPassing $ do
-    describe "resolveRepo" $ do
-      it "hands out the bot token when the bot can push to the repository" $ do
-        (resolved, received) <- withFakeGitea (\_ _ _ -> (status200, repoAnswer True)) $ \config ->
-          withInstance config $ resolveRepo appRepo
-        fmap (view ghToken) resolved `shouldBeM` Just (GhToken "bot-token")
-        map (\r -> (method r, path r, authorization r)) received
-          `shouldBeM` [("GET", "/api/v1/repos/acme/app", Just "token bot-token")]
-
-      it "treats a repository the bot can only read as not installed" $ do
-        (resolved, _) <- withFakeGitea (\_ _ _ -> (status200, repoAnswer False)) $ \config ->
-          withInstance config $ resolveRepo appRepo
-        isNothing resolved `shouldBeM` True
-
-      it "treats a repository the bot cannot see as not installed" $ do
-        (resolved, _) <- withFakeGitea (\_ _ _ -> notFound) $ \config ->
-          withInstance config $ resolveRepo appRepo
-        isNothing resolved `shouldBeM` True
-
     describe "lists" $ do
       let collaborators = [object ["login" .= ("user" <> show n :: Text)] | n <- [1 .. 30 :: Int]]
           -- Gitea with MAX_RESPONSE_ITEMS = 20, below the 50 garnix asks for.
@@ -221,9 +216,9 @@ clientSpec = do
                 $ if failing
                   then (HTTP.status502, [], "")
                   else (status200, [("Content-Type", "application/json")], encode (repoAnswer True))
-        (resolved, received) <- withFakeGiteaRaw flaky $ \config ->
-          withInstance config $ resolveRepo appRepo
-        fmap (view ghToken) resolved `shouldBeM` Just (GhToken "bot-token")
+        (publicity, received) <- withFakeGiteaRaw flaky $ \config ->
+          withInstance config $ getRepoPublicity ApiTokenCredentials appRepo
+        publicity `shouldBeM` RepoIsPublic False
         length received `shouldBeM` 2
 
     describe "build reports" $ do
@@ -369,53 +364,6 @@ webhookSpec = inM $ aroundM_ suppressLogsWhenPassing $ do
     it "authorize no deployer GitHub keys, as the GitHub account of the same login is somebody else" $ do
       deployerGithubKeys (ForgeLogin githubForge "alice") `shouldBeM` Just "alice"
       deployerGithubKeys (ForgeLogin (ForgeSlug "git.example") "alice") `shouldBeM` Nothing
-
-  describe "the webhook route" $ do
-    let post' config headers payload =
-          withInstance config $ WithServer.withServer $ \server ->
-            WithServer.postWithHeaders server ("/api/forges/" <> cs (getForgeSlug $ config ^. slug) <> "/webhook") headers payload
-        signed payload = cs (show (hmacHex "webhook-secret" (encode payload)))
-        pushPayload :: Value
-        pushPayload =
-          object
-            [ "ref" .= ("refs/heads/main" :: Text),
-              "after" .= ("2eba238e33607c1fa49253182e9fff42baafa1eb" :: Text),
-              "repository" .= object ["name" .= ("app" :: Text), "private" .= True, "full_name" .= ("acme/app" :: Text), "owner" .= object ["login" .= ("acme" :: Text)]],
-              "sender" .= object ["login" .= ("alice" :: Text)]
-            ]
-
-    it "accepts a correctly signed delivery" $ do
-      -- The bot cannot push to the repository, so the push is not built;
-      -- the delivery is still accepted.
-      (response, received) <- withFakeGitea (\_ _ _ -> (status200, repoAnswer False)) $ \config ->
-        post' config [("X-Gitea-Event", "push"), ("X-Gitea-Signature", signed pushPayload)] pushPayload
-      response `WithServer.shouldHaveStatusCode` 200
-      map path received `shouldBeM` ["/api/v1/repos/acme/app"]
-
-    it "accepts Forgejo's headers" $ do
-      (response, _) <- withFakeGitea (\_ _ _ -> (status200, repoAnswer False)) $ \config ->
-        post' config [("X-Forgejo-Event", "push"), ("X-Forgejo-Signature", signed pushPayload)] pushPayload
-      response `WithServer.shouldHaveStatusCode` 200
-
-    it "rejects a delivery with a wrong signature" $ do
-      (response, received) <- withFakeGitea (\_ _ _ -> (status200, repoAnswer True)) $ \config ->
-        post' config [("X-Gitea-Event", "push"), ("X-Gitea-Signature", cs (T.replicate 64 "0"))] pushPayload
-      response `WithServer.shouldHaveStatusCode` 401
-      length received `shouldBeM` 0
-
-    it "rejects a delivery without a signature" $ do
-      (response, received) <- withFakeGitea (\_ _ _ -> (status200, repoAnswer True)) $ \config ->
-        post' config [("X-Gitea-Event", "push")] pushPayload
-      response `WithServer.shouldHaveStatusCode` 401
-      length received `shouldBeM` 0
-
-    it "answers 404 for an unknown forge" $ do
-      response <- WithServer.withServer $ \server ->
-        WithServer.postWithHeaders server "/api/forges/nowhere/webhook" [("X-Gitea-Event", "push")] pushPayload
-      response `WithServer.shouldHaveStatusCode` 404
-  where
-    hmacHex :: StrictByteString -> LazyByteString -> Digest SHA256
-    hmacHex secret payload = hmacGetDigest (hmac secret (BSL.toStrict payload) :: HMAC SHA256)
 
 -- | Private flake inputs on an instance.
 privateInputsSpec :: Spec
@@ -818,3 +766,537 @@ commitInfoOn repo' fork =
       _commitInfoPrFromFork = fork,
       _commitInfoCommit = "2eba238e33607c1fa49253182e9fff42baafa1eb"
     }
+
+-- | What goes wrong on the instance of 'installationsSpec'.
+data Trouble
+  = -- | It no longer accepts the login's token, and refuses to renew it.
+    Revoked Text
+  | -- | Its token endpoint is down: it renews no token, and refuses none.
+    TokenEndpointDown
+  | -- | The login left the organisation @acme@.
+    LeftAcme Text
+  | -- | Creating a webhook breaks the connection.
+    HookCreationBreaks
+  deriving stock (Eq)
+
+-- | The instance of 'installationsSpec': @alice@ owns the organisation
+-- @acme@ (with the repositories @app@ and @lib@) and three of their own
+-- (@one@, @two@, @three@), @bob@ is only a member of @acme@, and @root@
+-- administers the instance and owns @acme@ too. Each logs in with the code @<login>-code@, and calls
+-- the instance with the token @<login>-token@, renewed with
+-- @<login>-refresh@, unless something goes wrong (the first 'MVar').
+-- Webhooks get ids counting from 100 (the second).
+installationRoutes :: MVar [Trouble] -> MVar Integer -> Received -> IO (HTTP.Status, HTTP.ResponseHeaders, LazyByteString)
+installationRoutes troubles hookIds r = do
+  troubles' <- readMVar troubles
+  let revoked' = [who | Revoked who <- troubles']
+      inAcme who = who `elem` ["alice", "bob", "root"] && LeftAcme who `notElem` troubles'
+      json status' value = pure (status', [("Content-Type", "application/json")], encode value)
+      caller = authorization r >>= T.stripPrefix "token " >>= T.stripSuffix "-token"
+      live = caller >>= \who -> who <$ guard (who `notElem` revoked')
+      form = HTTP.parseSimpleQuery (BSL.toStrict (body r))
+      tokens who = object ["access_token" .= (who <> "-token"), "refresh_token" .= (who <> "-refresh"), "expires_in" .= (3600 :: Int), "token_type" .= ("bearer" :: Text)]
+      firstPage items = if lookup "page" (query r) `elem` [Nothing, Just "1"] then items else []
+      -- A page of a list, as asked, with the length of the whole list.
+      paged items =
+        let page = fromMaybe 1 $ lookup "page" (query r) >>= readMaybe . cs
+            limit = fromMaybe 50 $ lookup "limit" (query r) >>= readMaybe . cs
+         in pure (status200, [("Content-Type", "application/json"), ("X-Total-Count", cs (show (length items) :: Text))], encode $ take limit $ drop ((page - 1) * limit) items)
+      repoOf :: Text -> Text -> Value
+      repoOf owner name' = object ["name" .= name', "full_name" .= (owner <> "/" <> name'), "private" .= True, "owner" .= object ["login" .= owner], "permissions" .= object ["push" .= True]]
+      repo = repoOf "acme"
+  case (method r, T.splitOn "/" (T.drop 1 (path r))) of
+    ("POST", ["login", "oauth", "access_token"])
+      | TokenEndpointDown `elem` troubles' -> json HTTP.status502 (object [])
+      | otherwise ->
+      case (lookup "grant_type" form, T.decodeUtf8 <$> lookup "code" form, T.decodeUtf8 <$> lookup "refresh_token" form) of
+        (Just "authorization_code", Just code, _) | Just who <- T.stripSuffix "-code" code -> json status200 (tokens who)
+        (Just "refresh_token", _, Just refresh) | Just who <- T.stripSuffix "-refresh" refresh, who `notElem` revoked' -> json status200 (tokens who)
+        _ -> json HTTP.status400 (object ["error" .= ("invalid_grant" :: Text)])
+    (_, "api" : "v1" : rest) -> case live of
+      Nothing -> json HTTP.status401 (object ["message" .= ("token is required" :: Text)])
+      Just who -> case (method r, rest) of
+        ("GET", ["user"]) -> json status200 $ object ["login" .= who, "email" .= (who <> "@example.com"), "is_admin" .= (who == "root")]
+        ("GET", ["user", "orgs"]) -> json status200 $ toJSON (firstPage [object ["name" .= ("acme" :: Text)] | inAcme who])
+        -- Gitea compares names case-insensitively.
+        ("GET", ["users", user, "orgs", org, "permissions"]) | T.toLower org == "acme" -> json status200 $ object ["is_owner" .= (user `elem` ["alice", "root"] && user == who && inAcme who)]
+        ("POST", hooks)
+          | lastMay hooks == Just "hooks" && HookCreationBreaks `elem` troubles' -> pure (status201, [(dropConnection, "1")], "")
+          | lastMay hooks == Just "hooks" -> do
+              hookId <- modifyMVar hookIds $ \n -> pure (n + 1, n)
+              json status201 $ object ["id" .= hookId]
+        ("DELETE", _) -> pure (HTTP.status204, [], "")
+        ("GET", ["repos", owner, name'])
+          | T.toLower owner == "acme" && T.toLower name' == "gone" -> json status404 (object [])
+          -- The bot token sees every repository.
+          | T.toLower owner == "acme" && LeftAcme who `notElem` troubles' -> json status200 $ repo (T.toLower name')
+          | T.toLower owner == "acme" -> json status404 (object [])
+        ("GET", ["orgs", "acme", "repos"]) | LeftAcme who `notElem` troubles' -> paged [repo "app", repo "lib"]
+        ("GET", ["users", owner, "repos"]) | owner == "alice" -> paged [repoOf "alice" "one", repoOf "alice" "two", repoOf "alice" "three"]
+        -- What the user owns, and what they reach through @acme@ too.
+        ("GET", ["user", "repos"]) | who == "alice" -> json status200 $ toJSON (firstPage [repo "app", repo "lib", repoOf "alice" "one", repoOf "alice" "two", repoOf "alice" "three"])
+        _ -> pure (status404, [], "{}")
+    _ -> pure (status404, [], "{}")
+  where
+    lastMay = \case
+      [] -> Nothing
+      xs -> Just (last xs)
+
+-- | Installing garnix on the instance, and building through installations.
+installationsSpec :: Spec
+installationsSpec = inM $ beforeM_ truncateDBM $ aroundM_ suppressLogsWhenPassing $ do
+  let -- The instance, with no bot token unless a spec gives it one, and a
+      -- server talking to it; the action gets what the instance received so
+      -- far, and the 'MVar' of what goes wrong on it.
+      withGitea :: (ForgeConfig -> ForgeConfig) -> (WithServer.TestServer -> M [Received] -> MVar [Trouble] -> M a) -> M a
+      withGitea configure action = do
+        revoked <- liftIO $ newMVar []
+        hookIds <- liftIO $ newMVar 100
+        seen <- liftIO $ newMVar []
+        let routes r = modifyMVar_ seen (pure . (<> [r])) >> installationRoutes revoked hookIds r
+        fmap fst $ withFakeGiteaRaw routes $ \config -> do
+          let config' = configure (config & apiToken .~ Nothing)
+          withInstance config' $ WithServer.withServer $ \server -> action server (liftIO $ readMVar seen) revoked
+      -- Logs @who@ in through the instance, as a browser does.
+      logIn :: WithServer.TestServer -> Text -> M ()
+      logIn server who = do
+        started <- WithServer.get server "/api/auth/git.example/login"
+        let state = T.drop (T.length "&state=") $ snd $ T.breakOn "&state=" $ fromMaybe "" $ started ^? Wreq.responseBody . key "github" . _String
+        response <- WithServer.get server $ "/api/auth/git.example/login/cb?code=" <> cs who <> "-code&state=" <> cs state
+        response `WithServer.shouldHaveStatusCode` 200
+      install :: WithServer.TestServer -> Text -> Text -> M (Wreq.Response LazyByteString)
+      install server kind' target = WithServer.post server "/api/forges/git.example/installations" (object ["kind" .= kind', "target" .= target])
+      installed :: WithServer.TestServer -> Text -> Text -> M Integer
+      installed server kind' target = do
+        response <- install server kind' target
+        response `WithServer.shouldHaveStatusCode` 200
+        maybe (error "no installation id") pure $ response ^? Wreq.responseBody . key "id" . _Integer
+      installationPath :: Integer -> String
+      installationPath installation = "/api/forges/git.example/installations/" <> cs (show installation)
+      -- The hook creations the instance received, as (path, token, config).
+      hooksCreated :: [Received] -> [(Text, Maybe Text, Value)]
+      hooksCreated received =
+        [ (path r, authorization r, fromMaybe Null $ decode @Value (body r) >>= (^? key "config"))
+        | r <- received,
+          method r == "POST",
+          "/hooks" `T.isSuffixOf` path r
+        ]
+      secretOf :: Value -> StrictByteString
+      secretOf hookConfig = T.encodeUtf8 $ fromMaybe "" $ hookConfig ^? key "secret" . _String
+      pushOf :: Text -> Value
+      pushOf name' =
+        object
+          [ "ref" .= ("refs/heads/main" :: Text),
+            "after" .= ("2eba238e33607c1fa49253182e9fff42baafa1eb" :: Text),
+            "repository" .= object ["name" .= name', "private" .= True, "full_name" .= ("acme/" <> name'), "owner" .= object ["login" .= ("acme" :: Text)]],
+            "sender" .= object ["login" .= ("alice" :: Text)]
+          ]
+      deliver :: WithServer.TestServer -> Integer -> StrictByteString -> Value -> M (Wreq.Response LazyByteString)
+      deliver server installation secret payload =
+        WithServer.postWithHeaders
+          server
+          (installationPath installation <> "/webhook")
+          [("X-Gitea-Event", "push"), ("X-Gitea-Signature", cs (show (hmacGetDigest (hmac secret (BSL.toStrict $ encode payload) :: HMAC SHA256))))]
+          payload
+      -- A repository garnix may not build: a delivery that reaches the
+      -- build is refused there (403), before anything runs, while one that
+      -- garnix ignores is answered 200.
+      denylist :: Text -> M ()
+      denylist name' = void $ DB.pgExec [pgSQL| INSERT INTO denylist (forge, repo_user, repo_name) VALUES ('git.example', 'acme', ${name'}) |]
+      resolvedWith :: [Received] -> [Maybe Text]
+      resolvedWith received = [authorization r | r <- received, method r == "GET", path r == "/api/v1/repos/acme/app"]
+      statusOf' :: Integer -> M (Maybe ForgeInstallationStatus)
+      statusOf' installation = fmap forgeInstallationStatus <$> Installations.getForgeInstallation (ForgeInstallationId $ fromInteger installation)
+
+  describe "installing garnix" $ do
+    it "installs on the caller's account with a user webhook, signed with a secret of its own" $ withGitea identity $ \server received _ -> do
+      logIn server "alice"
+      installation <- installed server "user" "alice"
+      [(hookPath, token, hookConfig)] <- hooksCreated <$> received
+      hookPath `shouldBeM` "/api/v1/user/hooks"
+      token `shouldBeM` Just "token alice-token"
+      (hookConfig ^? key "url" . _String) `shouldBeM` Just ("https://garnix.io/api/forges/git.example/installations/" <> show installation <> "/webhook")
+      (hookConfig ^? key "content_type" . _String) `shouldBeM` Just "json"
+      (T.length <$> hookConfig ^? key "secret" . _String) `shouldSatisfyM` maybe False (>= 32)
+      listed <- WithServer.get server "/api/forges/git.example/installations"
+      (listed ^.. Wreq.responseBody . values . key "status" . _String) `shouldBeM` ["active"]
+      (listed ^.. Wreq.responseBody . values . key "installer" . _String) `shouldBeM` ["alice"]
+
+    it "installs on an organisation for its owner, and refuses a member who does not own it" $ withGitea identity $ \server received _ -> do
+      logIn server "bob"
+      refused <- install server "org" "acme"
+      refused `WithServer.shouldHaveStatusCode` 403
+      (hooksCreated <$> received) `shouldReturnM` []
+      logIn server "alice"
+      _ <- installed server "org" "acme"
+      (map (\(p, t, _) -> (p, t)) . hooksCreated <$> received) `shouldReturnM` [("/api/v1/orgs/acme/hooks", Just "token alice-token")]
+
+    it "installs on the whole instance only for a site administrator, with a system webhook" $ withGitea identity $ \server received _ -> do
+      logIn server "alice"
+      refused <- install server "instance" ""
+      refused `WithServer.shouldHaveStatusCode` 403
+      logIn server "root"
+      _ <- installed server "instance" ""
+      [(hookPath, _, hookConfig)] <- hooksCreated <$> received
+      hookPath `shouldBeM` "/api/v1/admin/hooks"
+      (hookConfig ^? key "is_system_webhook" . _String) `shouldBeM` Just "true"
+
+    it "gives every installation a secret of its own, and refuses a second one on the same target" $ withGitea identity $ \server received _ -> do
+      logIn server "root"
+      _ <- installed server "org" "acme"
+      _ <- installed server "instance" ""
+      again <- install server "org" "ACME"
+      again `WithServer.shouldHaveStatusCode` 409
+      [(_, _, first'), (_, _, second')] <- hooksCreated <$> received
+      (secretOf first' /= secretOf second') `shouldBeM` True
+
+    it "lists what the caller may install on" $ withGitea identity $ \server _ _ -> do
+      let targetsOf response = zip (response ^.. Wreq.responseBody . values . key "kind" . _String) (response ^.. Wreq.responseBody . values . key "target" . _String)
+      logIn server "bob"
+      (targetsOf <$> WithServer.get server "/api/forges/git.example/installable") `shouldReturnM` [("user", "bob")]
+      logIn server "root"
+      (targetsOf <$> WithServer.get server "/api/forges/git.example/installable") `shouldReturnM` [("user", "root"), ("org", "acme"), ("instance", "")]
+
+    it "enables nothing until the caller enables each repository, and a repository in one installation only" $ withGitea identity $ \server _ _ -> do
+      logIn server "root"
+      org <- installed server "org" "acme"
+      instance' <- installed server "instance" ""
+      repos <- WithServer.get server (installationPath org <> "/repos")
+      (repos ^.. Wreq.responseBody . key "repos" . values . key "name" . _String) `shouldBeM` ["app", "lib"]
+      (repos ^.. Wreq.responseBody . key "repos" . values . key "enabledIn") `shouldBeM` [Null, Null]
+      enabled <- WithServer.put server (installationPath org <> "/repos/acme/app") Null
+      enabled `WithServer.shouldHaveStatusCode` 200
+      twice <- WithServer.put server (installationPath instance' <> "/repos/acme/app") Null
+      twice `WithServer.shouldHaveStatusCode` 409
+      (("installation " <> show org) `T.isInfixOf` cs (twice ^. Wreq.responseBody)) `shouldBeM` True
+      repos' <- WithServer.get server (installationPath org <> "/repos")
+      (repos' ^.. Wreq.responseBody . key "repos" . values . key "enabledIn") `shouldBeM` [toJSON org, Null]
+
+    it "uninstalls: deletes the webhook and the installation, and keeps the builds" $ withGitea identity $ \server received _ -> do
+      logIn server "alice"
+      installation <- installed server "org" "acme"
+      _ <- WithServer.put server (installationPath installation <> "/repos/acme/app") Null
+      -- Pushes outlive the database resets between specs: a commit of its
+      -- own.
+      commit' <- CommitHash <$> randomBase64 20
+      DB.registerPush appRepo commit' "main" `shouldReturnM` DB.NewPush
+      bob <- WithServer.withServer $ \other -> logIn other "bob" >> WithServer.delete other (installationPath installation)
+      bob `WithServer.shouldHaveStatusCode` 403
+      uninstalled <- WithServer.delete server (installationPath installation)
+      uninstalled `WithServer.shouldHaveStatusCode` 200
+      deletes <- map path . filter ((== "DELETE") . method) <$> received
+      deletes `shouldBeM` ["/api/v1/orgs/acme/hooks/100"]
+      statusOf' installation `shouldReturnM` Nothing
+      Installations.enabledInstallation appRepo >>= (`shouldBeM` True) . isNothing
+      DB.registerPush appRepo commit' "main" `shouldReturnM` DB.AlreadyPushed
+
+    it "lists a repository enabled under another case as enabled" $ withGitea identity $ \server _ _ -> do
+      logIn server "alice"
+      org <- installed server "org" "acme"
+      enabled <- WithServer.put server (installationPath org <> "/repos/ACME/App") Null
+      enabled `WithServer.shouldHaveStatusCode` 200
+      repos <- WithServer.get server (installationPath org <> "/repos")
+      (repos ^.. Wreq.responseBody . key "repos" . values . key "enabledIn") `shouldBeM` [toJSON org, Null]
+
+    it "leaves no installation behind when creating its webhook breaks the connection" $ withGitea identity $ \server _ troubles -> do
+      logIn server "alice"
+      liftIO $ modifyMVar_ troubles (pure . (HookCreationBreaks :))
+      broken <- install server "org" "acme"
+      (broken ^. Wreq.responseStatus . Wreq.statusCode >= 500) `shouldBeM` True
+      Installations.listForgeInstallations (ForgeSlug "git.example") >>= (`shouldBeM` 0) . length
+      liftIO $ modifyMVar_ troubles (const $ pure [])
+      void $ installed server "org" "acme"
+
+    it "answers which installation holds a repository, or enables it, even when that changes meanwhile" $ withGitea identity $ \server _ _ -> do
+      logIn server "root"
+      org <- ForgeInstallationId . fromInteger <$> installed server "org" "acme"
+      instance' <- ForgeInstallationId . fromInteger <$> installed server "instance" ""
+      Installations.enableRepo org appRepo `shouldReturnM` Right ()
+      -- The organisation's installation disables it right after the
+      -- instance's tried to enable it: a trigger stands in for that
+      -- concurrent request.
+      void
+        $ DB.pgExec
+          [pgSQL|
+            CREATE FUNCTION spec_disable_in_org() RETURNS trigger AS $$
+            BEGIN
+              DELETE FROM forge_installation_repos
+              WHERE installation_id IN (SELECT id FROM forge_installations WHERE target_kind = 'org');
+              RETURN NULL;
+            END;
+            $$ LANGUAGE plpgsql
+          |]
+      void $ DB.pgExec [pgSQL| CREATE TRIGGER spec_disable_in_org AFTER INSERT ON forge_installation_repos FOR EACH STATEMENT EXECUTE FUNCTION spec_disable_in_org() |]
+      result <- tryEither $ Installations.enableRepo instance' appRepo
+      void $ DB.pgExec [pgSQL| DROP TRIGGER spec_disable_in_org ON forge_installation_repos |]
+      void $ DB.pgExec [pgSQL| DROP FUNCTION spec_disable_in_org() |]
+      holder <- fmap forgeInstallationId <$> Installations.enabledInstallation appRepo
+      -- Either it was still the organisation's, and says so, or it is now
+      -- the instance's: never enabled nowhere while answering it is.
+      case result of
+        Right (Left other) -> other `shouldBeM` org
+        Right (Right ()) -> holder `shouldBeM` Just instance'
+        Left e -> liftIO $ expectationFailure $ cs (show e :: Text)
+
+    it "keeps a repository in an installation that needs a reinstall, and says so to one enabling it elsewhere" $ withGitea identity $ \server _ _ -> do
+      logIn server "alice"
+      org <- installed server "org" "acme"
+      _ <- WithServer.put server (installationPath org <> "/repos/acme/app") Null
+      -- alice is gone: the organisation's installation needs a reinstall.
+      void $ DB.pgExec [pgSQL| DELETE FROM users WHERE id IN (SELECT user_id FROM forge_identities WHERE forge = 'git.example' AND login = 'alice') |]
+      WithServer.withServer $ \other -> do
+        logIn other "root"
+        instance' <- installed other "instance" ""
+        refused <- WithServer.put other (installationPath instance' <> "/repos/acme/app") Null
+        refused `WithServer.shouldHaveStatusCode` 409
+        (("is already enabled in the installation " <> show org <> " (on the organisation acme), which needs a reinstall") `T.isInfixOf` cs (refused ^. Wreq.responseBody))
+          `shouldBeM` True
+        holder <- fmap forgeInstallationId <$> Installations.enabledInstallation appRepo
+        holder `shouldBeM` Just (ForgeInstallationId $ fromInteger org)
+
+    it "lists one page of the repositories at a time, as asked" $ withGitea identity $ \server received _ -> do
+      logIn server "root"
+      org <- installed server "org" "acme"
+      seen <- length <$> received
+      page2 <- WithServer.get server (installationPath org <> "/repos?page=2&limit=10")
+      page2 `WithServer.shouldHaveStatusCode` 200
+      (page2 ^.. Wreq.responseBody . key "repos" . values . key "name" . _String) `shouldBeM` []
+      (page2 ^? Wreq.responseBody . key "total" . _Integer) `shouldBeM` Just 2
+      listed <- (\rs -> [sort (query r) | r <- drop seen rs, path r == "/api/v1/orgs/acme/repos"]) <$> received
+      listed `shouldBeM` [[("limit", "10"), ("page", "2")]]
+
+    it "lists one page of a user's own repositories, and how many they own" $ withGitea identity $ \server received _ -> do
+      logIn server "alice"
+      user <- installed server "user" "alice"
+      page2 <- WithServer.get server (installationPath user <> "/repos?page=2&limit=2")
+      page2 `WithServer.shouldHaveStatusCode` 200
+      (page2 ^.. Wreq.responseBody . key "repos" . values . key "name" . _String) `shouldBeM` ["three"]
+      (page2 ^? Wreq.responseBody . key "total" . _Integer) `shouldBeM` Just 3
+      (filter (== "/api/v1/user/repos") . map path <$> received) `shouldReturnM` []
+
+    it "reinstalls only the installation as it was read" $ withGitea identity $ \server _ _ -> do
+      logIn server "alice"
+      installation <- ForgeInstallationId . fromInteger <$> installed server "org" "acme"
+      read' <- Installations.getForgeInstallation installation >>= maybe (error "not installed") pure
+      Installations.reinstallForgeInstallation read' "root" 200 (EncryptedText "") `shouldReturnM` True
+      -- A second reinstall over the same read lost to the first.
+      Installations.reinstallForgeInstallation read' "bob" 300 (EncryptedText "") `shouldReturnM` False
+      (fmap forgeInstallationInstaller <$> Installations.getForgeInstallation installation) `shouldReturnM` Just (Just "root")
+
+    it "deletes the webhook a reinstall created when the reinstall then fails" $ withGitea identity $ \server received _ -> do
+      logIn server "alice"
+      installation <- installed server "org" "acme"
+      void
+        $ DB.pgExec
+          [pgSQL|
+            CREATE FUNCTION spec_fail_update() RETURNS trigger AS $$
+            BEGIN
+              RAISE EXCEPTION 'spec: the update fails';
+            END;
+            $$ LANGUAGE plpgsql
+          |]
+      void $ DB.pgExec [pgSQL| CREATE TRIGGER spec_fail_update BEFORE UPDATE ON forge_installations FOR EACH ROW EXECUTE FUNCTION spec_fail_update() |]
+      failed <- WithServer.post server (installationPath installation <> "/reinstall") Null
+      void $ DB.pgExec [pgSQL| DROP TRIGGER spec_fail_update ON forge_installations |]
+      void $ DB.pgExec [pgSQL| DROP FUNCTION spec_fail_update() |]
+      (failed ^. Wreq.responseStatus . Wreq.statusCode >= 500) `shouldBeM` True
+      deletes <- map path . filter ((== "DELETE") . method) <$> received
+      deletes `shouldBeM` ["/api/v1/orgs/acme/hooks/101"]
+
+    it "deletes the webhook a reinstall created when another reinstall won meanwhile" $ withGitea identity $ \server received _ -> do
+      logIn server "alice"
+      installation <- installed server "org" "acme"
+      -- The update finds no row as it was read: another reinstall changed it.
+      void
+        $ DB.pgExec
+          [pgSQL|
+            CREATE FUNCTION spec_skip_update() RETURNS trigger AS $$
+            BEGIN
+              RETURN NULL;
+            END;
+            $$ LANGUAGE plpgsql
+          |]
+      void $ DB.pgExec [pgSQL| CREATE TRIGGER spec_skip_update BEFORE UPDATE ON forge_installations FOR EACH ROW EXECUTE FUNCTION spec_skip_update() |]
+      lost <- WithServer.post server (installationPath installation <> "/reinstall") Null
+      void $ DB.pgExec [pgSQL| DROP TRIGGER spec_skip_update ON forge_installations |]
+      void $ DB.pgExec [pgSQL| DROP FUNCTION spec_skip_update() |]
+      lost `WithServer.shouldHaveStatusCode` 409
+      deletes <- map path . filter ((== "DELETE") . method) <$> received
+      deletes `shouldBeM` ["/api/v1/orgs/acme/hooks/101"]
+      (fmap forgeInstallationHookId <$> Installations.getForgeInstallation (ForgeInstallationId $ fromInteger installation)) `shouldReturnM` Just (Just 100)
+
+    it "keeps a repository's forge that of its installation" $ withGitea identity $ \server _ _ -> do
+      logIn server "alice"
+      installation <- ForgeInstallationId . fromInteger <$> installed server "org" "acme"
+      refused <- tryEither $ DB.pgExec [pgSQL| INSERT INTO forge_installation_repos (installation_id, forge, repo_owner, repo_name) VALUES (${installation}, 'elsewhere', 'acme', 'app') |]
+      isLeft refused `shouldBeM` True
+
+  describe "deliveries" $ do
+    it "builds a signed delivery for an enabled repository, with the installer's token" $ withGitea identity $ \server received _ -> do
+      logIn server "alice"
+      installation <- installed server "org" "acme"
+      _ <- WithServer.put server (installationPath installation <> "/repos/acme/app") Null
+      [(_, _, hookConfig)] <- hooksCreated <$> received
+      denylist "app"
+      seen <- length <$> received
+      delivered <- deliver server installation (secretOf hookConfig) (pushOf "app")
+      delivered `WithServer.shouldHaveStatusCode` 403
+      (resolvedWith . drop seen <$> received) `shouldReturnM` [Just "token alice-token"]
+
+    it "ignores a delivery for a repository that is not enabled" $ withGitea identity $ \server received _ -> do
+      logIn server "alice"
+      installation <- installed server "org" "acme"
+      [(_, _, hookConfig)] <- hooksCreated <$> received
+      denylist "app"
+      delivered <- deliver server installation (secretOf hookConfig) (pushOf "app")
+      delivered `WithServer.shouldHaveStatusCode` 200
+      (resolvedWith <$> received) `shouldReturnM` []
+
+    it "ignores a delivery through an installation the repository is not enabled in" $ withGitea identity $ \server received _ -> do
+      logIn server "root"
+      org <- installed server "org" "acme"
+      instance' <- installed server "instance" ""
+      _ <- WithServer.put server (installationPath org <> "/repos/acme/app") Null
+      [_, (_, _, instanceHook)] <- hooksCreated <$> received
+      denylist "app"
+      seen <- length <$> received
+      delivered <- deliver server instance' (secretOf instanceHook) (pushOf "app")
+      delivered `WithServer.shouldHaveStatusCode` 200
+      (resolvedWith . drop seen <$> received) `shouldReturnM` []
+
+    it "refuses a delivery with a wrong signature, or signed with another installation's secret" $ withGitea identity $ \server received _ -> do
+      logIn server "root"
+      org <- installed server "org" "acme"
+      _ <- installed server "instance" ""
+      _ <- WithServer.put server (installationPath org <> "/repos/acme/app") Null
+      [_, (_, _, instanceHook)] <- hooksCreated <$> received
+      seen <- length <$> received
+      wrong <- deliver server org "not-the-secret" (pushOf "app")
+      wrong `WithServer.shouldHaveStatusCode` 401
+      other <- deliver server org (secretOf instanceHook) (pushOf "app")
+      other `WithServer.shouldHaveStatusCode` 401
+      unsigned <- WithServer.postWithHeaders server (installationPath org <> "/webhook") [("X-Gitea-Event", "push")] (pushOf "app")
+      unsigned `WithServer.shouldHaveStatusCode` 401
+      unknown <- deliver server 999 "secret" (pushOf "app")
+      unknown `WithServer.shouldHaveStatusCode` 404
+      (resolvedWith . drop seen <$> received) `shouldReturnM` []
+
+    it "accepts Forgejo's headers" $ withGitea identity $ \server received _ -> do
+      logIn server "alice"
+      installation <- installed server "org" "acme"
+      [(_, _, hookConfig)] <- hooksCreated <$> received
+      let payload = pushOf "app"
+      delivered <-
+        WithServer.postWithHeaders
+          server
+          (installationPath installation <> "/webhook")
+          [("X-Forgejo-Event", "push"), ("X-Forgejo-Signature", cs (show (hmacGetDigest (hmac (secretOf hookConfig) (BSL.toStrict $ encode payload) :: HMAC SHA256))))]
+          payload
+      delivered `WithServer.shouldHaveStatusCode` 200
+
+  describe "the installer's token" $ do
+    it "stops building once the instance no longer accepts it, until someone reinstalls" $ withGitea identity $ \server received revoked -> do
+      logIn server "alice"
+      installation <- installed server "org" "acme"
+      _ <- WithServer.put server (installationPath installation <> "/repos/acme/app") Null
+      [(_, _, hookConfig)] <- hooksCreated <$> received
+      denylist "app"
+      liftIO $ modifyMVar_ revoked (pure . (Revoked "alice" :))
+      seen <- length <$> received
+      delivered <- deliver server installation (secretOf hookConfig) (pushOf "app")
+      delivered `WithServer.shouldHaveStatusCode` 200
+      status' <- statusOf' installation
+      status' `shouldSatisfyM` \case
+        Just (NeedsReinstall reason) -> "alice" `T.isInfixOf` reason
+        _ -> False
+      -- It asked once, with the revoked token, and renewing it failed.
+      (resolvedWith . drop seen <$> received) `shouldReturnM` [Just "token alice-token"]
+      listed <- WithServer.withServer $ \other -> logIn other "root" >> WithServer.get other "/api/forges/git.example/installations"
+      (listed ^.. Wreq.responseBody . values . key "status" . _String) `shouldBeM` ["needs_reinstall"]
+      -- Stopped: the next delivery does not even ask the instance.
+      before' <- length . resolvedWith <$> received
+      again <- deliver server installation (secretOf hookConfig) (pushOf "app")
+      again `WithServer.shouldHaveStatusCode` 200
+      (length . resolvedWith <$> received) `shouldReturnM` before'
+      -- Another owner of the organisation reinstalls it, and becomes its
+      -- installer, with a new webhook and secret.
+      WithServer.withServer $ \other -> do
+        logIn other "root"
+        reinstalled <- WithServer.post other (installationPath installation <> "/reinstall") Null
+        reinstalled `WithServer.shouldHaveStatusCode` 200
+        (reinstalled ^? Wreq.responseBody . key "status" . _String) `shouldBeM` Just "active"
+        (reinstalled ^? Wreq.responseBody . key "installer" . _String) `shouldBeM` Just "root"
+      hooks <- hooksCreated <$> received
+      [(_, token, newHook)] <- pure (drop 1 hooks)
+      token `shouldBeM` Just "token root-token"
+      deletes <- map path . filter ((== "DELETE") . method) <$> received
+      deletes `shouldBeM` ["/api/v1/orgs/acme/hooks/100"]
+      stale <- deliver server installation (secretOf hookConfig) (pushOf "app")
+      stale `WithServer.shouldHaveStatusCode` 401
+      rebuilt <- deliver server installation (secretOf newHook) (pushOf "app")
+      rebuilt `WithServer.shouldHaveStatusCode` 403
+      (lastMay' . resolvedWith <$> received) `shouldReturnM` Just (Just "token root-token")
+
+    it "keeps building through an outage of the token endpoint, which refuses nothing" $ withGitea identity $ \server _ troubles -> do
+      logIn server "alice"
+      installation <- installed server "org" "acme"
+      _ <- WithServer.put server (installationPath installation <> "/repos/acme/app") Null
+      -- The token ran out, and the endpoint that renews it is down.
+      liftIO $ modifyMVar_ troubles (pure . ([Revoked "alice", TokenEndpointDown] <>))
+      failed <- tryEither $ resolveRepo appRepo
+      isLeft failed `shouldBeM` True
+      statusOf' installation `shouldReturnM` Just InstallationActive
+      liftIO $ modifyMVar_ troubles (const $ pure [])
+      resolved <- resolveRepo appRepo
+      fmap (view ghToken) resolved `shouldBeM` Just (GhToken "alice-token")
+
+    it "stops building once the installer may no longer install there, as after leaving the organisation" $ withGitea identity $ \server _ troubles -> do
+      logIn server "alice"
+      installation <- installed server "org" "acme"
+      _ <- WithServer.put server (installationPath installation <> "/repos/acme/app") Null
+      -- A repository an owner cannot see is gone, not the installation.
+      _ <- Installations.enableRepo (ForgeInstallationId $ fromInteger installation) (RepoId (ForgeSlug "git.example") "acme" "gone")
+      resolveRepo (RepoId (ForgeSlug "git.example") "acme" "gone") >>= (`shouldBeM` True) . isNothing
+      statusOf' installation `shouldReturnM` Just InstallationActive
+      liftIO $ modifyMVar_ troubles (pure . (LeftAcme "alice" :))
+      resolveRepo appRepo >>= (`shouldBeM` True) . isNothing
+      status' <- statusOf' installation
+      status' `shouldSatisfyM` \case
+        Just (NeedsReinstall reason) -> "alice" `T.isInfixOf` reason
+        _ -> False
+      listed <- WithServer.withServer $ \other -> logIn other "root" >> WithServer.get other "/api/forges/git.example/installations"
+      (listed ^.. Wreq.responseBody . values . key "status" . _String) `shouldBeM` ["needs_reinstall"]
+
+    it "leaves a reinstalled installation alone when the token of whoever installed it before fails late" $ withGitea identity $ \server _ _ -> do
+      logIn server "alice"
+      installation <- installed server "org" "acme"
+      WithServer.withServer $ \other -> do
+        logIn other "root"
+        reinstalled <- WithServer.post other (installationPath installation <> "/reinstall") Null
+        reinstalled `WithServer.shouldHaveStatusCode` 200
+      -- A build that still held alice's token fails only now.
+      Installations.markNeedsReinstall (ForgeInstallationId $ fromInteger installation) "alice" "the instance no longer accepts the token of alice"
+      statusOf' installation `shouldReturnM` Just InstallationActive
+
+    it "stops building once the installer's identity is gone" $ withGitea identity $ \server _ _ -> do
+      logIn server "alice"
+      installation <- installed server "org" "acme"
+      void $ DB.pgExec [pgSQL| DELETE FROM users WHERE id IN (SELECT user_id FROM forge_identities WHERE forge = 'git.example' AND login = 'alice') |]
+      status' <- statusOf' installation
+      status' `shouldSatisfyM` \case
+        Just (NeedsReinstall _) -> True
+        _ -> False
+      resolved <- resolveRepo appRepo
+      isNothing resolved `shouldBeM` True
+
+    it "gives way to the instance's bot token when it has one" $ withGitea (apiToken ?~ GhToken "bot-token") $ \server received _ -> do
+      logIn server "alice"
+      installation <- installed server "org" "acme"
+      _ <- WithServer.put server (installationPath installation <> "/repos/acme/app") Null
+      resolved <- resolveRepo appRepo
+      fmap (view ghToken) resolved `shouldBeM` Just (GhToken "bot-token")
+      (lastMay' . resolvedWith <$> received) `shouldReturnM` Just (Just "token bot-token")
+  where
+    lastMay' = \case
+      [] -> Nothing
+      xs -> Just (last xs)

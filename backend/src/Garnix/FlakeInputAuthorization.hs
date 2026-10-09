@@ -31,7 +31,7 @@ import Data.Either (lefts, rights)
 import Data.Functor ((<&>))
 import Data.Map.Strict qualified as Map
 import Data.Text qualified as T
-import Garnix.Forge.Gitea (giteaInputHost, giteaInputRepo, giteaNetRcEntry)
+import Garnix.Forge.Gitea (giteaInputHost, giteaInputRepo, giteaNetRcEntry, giteaToken)
 import Garnix.Monad
 import Garnix.NixConfig
 import Garnix.Prelude
@@ -148,8 +148,9 @@ checkAuthorization flakeDir repoConfig commitInfo = do
           $ map (\(GithubFlakeInput owner repo) -> RepoId githubForge owner repo) githubInputs
           <> giteaInputs
       -- Outside GitHub, where the installation token only reaches the
-      -- installation's repositories, the bot token reaches everything the bot
-      -- sees, so a private input must also belong to the repository's owner.
+      -- installation's repositories, the repository's token (its installer's,
+      -- or the bot's) reaches everything its user sees, so a private input
+      -- must also belong to the repository's owner.
       unreachable input = input ^. forge /= githubForge && not (sameOwner input)
       -- Gitea compares logins case-insensitively. GitHub repositories keep
       -- the exact comparison they always had.
@@ -188,8 +189,13 @@ checkAuthorization flakeDir repoConfig commitInfo = do
   privateInputs <- filterM (fmap (not . isRepoPublic) . getRepoPublicity (repoInfo' ^. credentials)) forgeInputs
   selfRepoPublicity <- getRepoPublicity (repoInfo' ^. credentials) self
   selfConfig <- _forgeInstanceConfig <$> forgeInstanceFor (self ^. forge)
+  -- A Gitea installation's token may be older than it lasts.
+  inputToken <-
+    if null privateInputs || selfConfig ^. kind /= GiteaForgeKind
+      then pure $ repoInfo' ^. ghToken
+      else giteaToken selfConfig (repoInfo' ^. credentials)
   let credentialsForPrivateInputs =
-        let (nixConfig', netRc) = _privateInputCredentials selfConfig (repoInfo' ^. ghToken)
+        let (nixConfig', netRc) = _privateInputCredentials selfConfig inputToken
          in InputAuthorization
               { authorizationNixConfig = nixConfig',
                 authorizationNetRc = netRc,
@@ -200,8 +206,8 @@ checkAuthorization flakeDir repoConfig commitInfo = do
                       repo `elem` privateInputs
                     ]
               }
-  -- The prefetch holds the bot token, and a private input's .gitmodules or
-  -- .lfsconfig can name any repository the bot sees.
+  -- The prefetch holds the repository's token, and a private input's
+  -- .gitmodules or .lfsconfig can name any repository that token sees.
   forM_ (authorizationPrefetch credentialsForPrivateInputs) $ \locked ->
     forM_ [("submodules", "its submodules"), ("lfs", "its Git LFS files")] $ \(field, what) ->
       when (locked ^? key field . _Bool == Just True)

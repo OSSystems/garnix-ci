@@ -763,12 +763,11 @@ githubInstallationAuth :: (HasCallStack) => ForgeCredentials -> M InstallationAu
 githubInstallationAuth = \case
   GithubInstallationCredentials iAuth -> pure iAuth
   ApiTokenCredentials -> throw $ OtherError "The GitHub forge was handed credentials for another forge"
+  ForgeInstallationCredentials _ -> throw $ OtherError "The GitHub forge was handed credentials for another forge"
 
 -- | The github.com instance, configured from the GitHub App settings garnix
 -- has always read. Its slug is 'githubForge'.
 githubForgeInstance ::
-  -- | Webhook secret
-  StrictByteString ->
   -- | OAuth client id
   Text ->
   -- | OAuth client secret
@@ -776,7 +775,7 @@ githubForgeInstance ::
   -- | Admin login
   Maybe GhLogin ->
   ForgeInstance
-githubForgeInstance webhookSecret clientId clientSecret admin =
+githubForgeInstance clientId clientSecret admin =
   ForgeInstance
     { _forgeInstanceConfig =
         ForgeConfig
@@ -784,7 +783,6 @@ githubForgeInstance webhookSecret clientId clientSecret admin =
             _forgeConfigKind = GithubForgeKind,
             _forgeConfigWebUrl = "https://github.com",
             _forgeConfigApiUrl = "https://api.github.com",
-            _forgeConfigWebhookSecret = webhookSecret,
             _forgeConfigOAuthClientId = clientId,
             _forgeConfigOAuthClientSecret = clientSecret,
             _forgeConfigApiToken = Nothing,
@@ -860,6 +858,7 @@ githubForgeApi =
     installationAuthOf = \case
       GithubInstallationCredentials iAuth -> iAuth
       ApiTokenCredentials -> error "The GitHub forge was handed credentials for another forge"
+      ForgeInstallationCredentials _ -> error "The GitHub forge was handed credentials for another forge"
     gh :: (GithubInterface -> a) -> M a
     gh method = method <$> view #githubInterface
     resolveInstallation repo =

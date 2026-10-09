@@ -31,7 +31,6 @@ data RegisteredForgeRow = RegisteredForgeRow
     rowApiUrl :: Text,
     rowOAuthClientId :: Text,
     rowOAuthClientSecret :: EncryptedText,
-    rowWebhookSecret :: EncryptedText,
     rowStatus :: ForgeStatus,
     -- | The account that completed its first OAuth.
     rowRegisteredBy :: Maybe UserId,
@@ -46,10 +45,10 @@ data RegisteredForgeRow = RegisteredForgeRow
     rowUpdatedAt :: UTCTime
   }
 
-type Columns = (ForgeSlug, Text, Text, Text, EncryptedText, EncryptedText, Text, Maybe UserId, Maybe Text, UTCTime, UTCTime)
+type Columns = (ForgeSlug, Text, Text, Text, EncryptedText, Text, Maybe UserId, Maybe Text, UTCTime, UTCTime)
 
 fromColumns :: Columns -> Either Text RegisteredForgeRow
-fromColumns (slug', webUrl', apiUrl', clientId, clientSecret, webhookSecret', status', registeredBy, tokenHash, createdAt, updatedAt) = do
+fromColumns (slug', webUrl', apiUrl', clientId, clientSecret, status', registeredBy, tokenHash, createdAt, updatedAt) = do
   status'' <- maybe (Left $ "unknown status of the forge " <> getForgeSlug slug' <> ": " <> status') Right $ parseForgeStatus status'
   pure
     RegisteredForgeRow
@@ -58,7 +57,6 @@ fromColumns (slug', webUrl', apiUrl', clientId, clientSecret, webhookSecret', st
         rowApiUrl = apiUrl',
         rowOAuthClientId = clientId,
         rowOAuthClientSecret = clientSecret,
-        rowWebhookSecret = webhookSecret',
         rowStatus = status'',
         rowRegisteredBy = registeredBy,
         rowCreatedAt = createdAt,
@@ -91,7 +89,7 @@ getRegisteredForge slug' = do
     DB.pgQuery
       [pgSQL|
         SELECT slug, web_url, api_url, oauth_client_id, oauth_client_secret,
-               webhook_secret, status, registered_by, registration_token_hash, created_at, updated_at
+               status, registered_by, registration_token_hash, created_at, updated_at
         FROM forges
         WHERE slug = ${slug'}
       |]
@@ -104,7 +102,7 @@ getLiveRegisteredForge slug' = do
     DB.pgQuery
       [pgSQL|
         SELECT slug, web_url, api_url, oauth_client_id, oauth_client_secret,
-               webhook_secret, status, registered_by, registration_token_hash, created_at, updated_at
+               status, registered_by, registration_token_hash, created_at, updated_at
         FROM forges
         WHERE slug = ${slug'}
           AND (status = 'active'
@@ -118,7 +116,7 @@ listActiveRegisteredForges = do
     DB.pgQuery
       [pgSQL|
         SELECT slug, web_url, api_url, oauth_client_id, oauth_client_secret,
-               webhook_secret, status, registered_by, registration_token_hash, created_at, updated_at
+               status, registered_by, registration_token_hash, created_at, updated_at
         FROM forges
         WHERE status = 'active'
         ORDER BY slug
@@ -132,7 +130,6 @@ data PendingForge = PendingForge
     pendingApiUrl :: Text,
     pendingOAuthClientId :: Text,
     pendingOAuthClientSecret :: EncryptedText,
-    pendingWebhookSecret :: EncryptedText,
     -- | Hash of the token of the browser that submits it.
     pendingTokenHash :: Text
   }
@@ -151,15 +148,14 @@ upsertPendingForge PendingForge {..} presentedHash = do
     DB.pgQuery
       [pgSQL|
         INSERT INTO forges
-          (slug, kind, web_url, api_url, oauth_client_id, oauth_client_secret, webhook_secret, status, registration_token_hash)
+          (slug, kind, web_url, api_url, oauth_client_id, oauth_client_secret, status, registration_token_hash)
         VALUES
-          (${pendingSlug}, 'gitea', ${pendingWebUrl}, ${pendingApiUrl}, ${pendingOAuthClientId}, ${pendingOAuthClientSecret}, ${pendingWebhookSecret}, 'pending', ${pendingTokenHash})
+          (${pendingSlug}, 'gitea', ${pendingWebUrl}, ${pendingApiUrl}, ${pendingOAuthClientId}, ${pendingOAuthClientSecret}, 'pending', ${pendingTokenHash})
         ON CONFLICT (slug) DO UPDATE SET
           web_url = EXCLUDED.web_url,
           api_url = EXCLUDED.api_url,
           oauth_client_id = EXCLUDED.oauth_client_id,
           oauth_client_secret = EXCLUDED.oauth_client_secret,
-          webhook_secret = EXCLUDED.webhook_secret,
           status = 'pending',
           registered_by = NULL,
           registration_token_hash = EXCLUDED.registration_token_hash,
