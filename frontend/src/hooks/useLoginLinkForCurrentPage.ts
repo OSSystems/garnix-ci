@@ -2,7 +2,6 @@ import { usePathname, useSearchParams } from "next/navigation";
 
 export function useLoginLinkForCurrentPage(): {
   loginLink: string;
-  signupLink: string;
 } {
   let pathName = usePathname();
   const search = useSearchParams();
@@ -10,6 +9,5 @@ export function useLoginLinkForCurrentPage(): {
   const queryParams = `?page=${encodeURIComponent(search.get("page") ?? pathName)}`;
   return {
     loginLink: `/login${queryParams}`,
-    signupLink: `/signup${queryParams}`,
   };
 }

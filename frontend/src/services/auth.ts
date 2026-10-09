@@ -21,7 +21,7 @@ export const getCurrentUser = async (): Promise<APIResult<User | null>> => {
   });
 };
 
-export const setLoginTargetPage = (path: string | null): void => {
+const setLoginTargetPage = (path: string | null): void => {
   if (path != null) {
     window.localStorage.setItem(loginTargetPageLocalstorageKey, path);
   }
@@ -49,67 +49,14 @@ export const getLoginLink = async (
 export const finishLogin = async (
   query: URLSearchParams,
 ): Promise<APIResult<User>> => {
-  const response = await fetchFromAPI(z.string(), "GET", "login/cb", {
-    query,
-  });
-  if (!response.ok) return response;
-  return Ok({ name: response.data });
-};
-
-export const getSignupLink = async (): Promise<APIResult<string>> => {
   const response = await fetchFromAPI(
-    z.object({ github: z.string() }),
+    z.object({ username: z.string() }),
     "GET",
-    "signup",
-  );
-  if (!response.ok) return response;
-  return Ok(response.data.github);
-};
-
-// The query is the forge's callback: its code and the state the backend
-// checks against this browser's cookie.
-export const getSignupData = async (
-  query: URLSearchParams,
-): Promise<
-  APIResult<
-    User & {
-      exists: boolean;
-    }
-  >
-> => {
-  const response = await fetchFromAPI(
-    z.object({
-      exists: z.boolean(),
-      email: z.string(),
-      github_login: z.string(),
-    }),
-    "GET",
-    "signup/fill",
+    "login/cb",
     { query },
   );
   if (!response.ok) return response;
-  return Ok({
-    exists: response.data.exists,
-    email: response.data.email,
-    name: response.data.github_login,
-  });
-};
-
-export const finishSignup = async (
-  name: string,
-  email: string,
-  agreeEmail: boolean,
-): Promise<APIResult<string>> => {
-  const response = await fetchFromAPI(z.string(), "POST", "signup", {
-    body: JSON.stringify({
-      email,
-      subscription_type: "free",
-      agree_to_emails: agreeEmail,
-      github_login: name,
-    }),
-  });
-  if (!response.ok) return response;
-  return Ok(getLoginTargetPage());
+  return Ok({ name: response.data.username });
 };
 
 export const logout = async (): Promise<APIResult<void>> => {

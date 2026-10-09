@@ -14,6 +14,9 @@ const nextConfig = {
   // (307) on purpose: browsers cache a permanent redirect for good, so a
   // rollback would leave them on /repo/github/... with no page to serve it.
   redirects: async () => [
+    // There is no signup step any more: the first login creates the account.
+    { source: "/signup", destination: "/login", permanent: false },
+    { source: "/signup/:path*", destination: "/login", permanent: false },
     {
       source: "/repo/:owner/:repo",
       destination: "/repo/github/:owner/:repo",
