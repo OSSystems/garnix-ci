@@ -10,11 +10,7 @@ import {
 } from "react";
 import { useRouter } from "next/navigation";
 import { match, P } from "ts-pattern";
-import {
-  getCurrentUser,
-  getSignupLink,
-  logout as logoutService,
-} from "@/services/auth";
+import { getCurrentUser, logout as logoutService } from "@/services/auth";
 import { Err, Ok, onUnauthorized } from "@/services";
 
 export type User = {
@@ -29,14 +25,12 @@ type UserState =
 
 type UserContextType = {
   user: UserState;
-  signupLink: string | undefined;
   setUser: (user: User) => void;
   logout: () => Promise<void>;
 };
 
 const defaultValue: UserContextType = {
   user: { state: "loading" },
-  signupLink: undefined,
   setUser: () => {},
   logout: async () => {},
 };
@@ -45,7 +39,6 @@ const UserContext = createContext<UserContextType>(defaultValue);
 
 export const UserProvider = ({ children }: PropsWithChildren) => {
   const [user, setUserState] = useState<UserState>({ state: "loading" });
-  const [signupLink, setSignupLink] = useState<string>();
   const router = useRouter();
   const setUser = useCallback((user: User) => {
     setUserState({ state: "logged-in", user });
@@ -77,12 +70,10 @@ export const UserProvider = ({ children }: PropsWithChildren) => {
           })
           .exhaustive(),
       );
-      const result = await getSignupLink();
-      if (result.ok) setSignupLink(result.data);
     })();
   }, []);
   return (
-    <UserContext.Provider value={{ user, signupLink, setUser, logout }}>
+    <UserContext.Provider value={{ user, setUser, logout }}>
       {children}
     </UserContext.Provider>
   );

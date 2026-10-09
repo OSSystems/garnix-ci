@@ -2,12 +2,7 @@
 
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
-import {
-  finishLogin,
-  getLoginTargetPage,
-  getSignupLink,
-} from "@/services/auth";
-import { isNoSuchUserError } from "@/services/apiErrors";
+import { finishLogin, getLoginTargetPage } from "@/services/auth";
 import { useUser } from "@/store/userContext";
 import { LoginAnimation } from "@/components/loginAnimation";
 import { Modal, ModalActions, ModalSection } from "@/components/modal";
@@ -25,11 +20,7 @@ const Inner = () => {
     void (async () => {
       const response = await finishLogin(params);
       if (!response.ok) {
-        if (isNoSuchUserError(response)) {
-          const signupResponse = await getSignupLink();
-          if (!signupResponse.ok) setError(response.error.message);
-          else router.replace(signupResponse.data);
-        } else setError(response.error.message);
+        setError(response.error.message);
       } else if (response.data) {
         setUser(response.data);
       }

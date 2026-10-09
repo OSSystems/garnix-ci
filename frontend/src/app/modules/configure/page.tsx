@@ -51,10 +51,10 @@ import { SecretInput } from "./moduleInputs/secretInput";
 
 const Page = () => {
   const state = useUser().user.state;
-  const signupLink = useLoginLinkForCurrentPage().signupLink;
+  const loginLink = useLoginLinkForCurrentPage().loginLink;
   return match(state)
     .with("loading", () => <WithSidebar />)
-    .with("logged-out", () => redirect(signupLink))
+    .with("logged-out", () => redirect(loginLink))
     .with("logged-in", () => (
       <WithSidebar>
         <div className={styles.container}>

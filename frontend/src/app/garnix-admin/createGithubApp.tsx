@@ -10,7 +10,7 @@ const newManifest = () => {
       url: `${origin}/api/events/github/`,
     },
     redirect_url: `${origin}/garnix-admin`,
-    callback_urls: [`${origin}/signup/fill`, `${origin}/login/cb`],
+    callback_urls: [`${origin}/login/cb`],
     description: "Garnix CI app",
     public: true,
     default_permissions: {
