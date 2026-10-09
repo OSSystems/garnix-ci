@@ -20,8 +20,6 @@ import Garnix.API.Modules
 import Garnix.API.Runs (RunAPI, runAPI)
 import Garnix.Access (repoIdFromRoute)
 import Garnix.DB qualified as DB
-import Garnix.Forge.Gitea (instanceHost)
-import Garnix.Forge.Registered (ForgeSource)
 import Garnix.Monad
 import Garnix.Prelude
 import Garnix.Types
@@ -66,7 +64,7 @@ data WholeAPI r = WholeAPI
     config :: r :- "api" :> "config" :> Get '[JSON] FrontendConfig,
     badges :: r :- "api" :> "badges" :> Capture "owner" GhRepoOwner :> Capture "repo" GhRepoName :> QueryParam "branch" Branch :> Get '[JSON] Badge,
     forgeBadges :: r :- "api" :> "badges" :> Capture "forge" ForgeSlug :> Capture "owner" GhRepoOwner :> Capture "repo" GhRepoName :> QueryParam "branch" Branch :> Get '[JSON] Badge,
-    forges :: r :- "api" :> "forges" :> Get '[JSON] [ForgeSummary],
+    forges :: r :- "api" :> "forges" :> Auth '[JWT, Cookie] AuthJwtPayload :> Get '[JSON] [ForgeSummary],
     -- | Which forge a URL names, and whether to log in through it or register
     -- it first ("Garnix.API.Forges").
     authStart :: r :- "api" :> "auth" :> "start" :> RemoteHost :> Header "X-Forwarded-For" Text :> ReqBody '[JSON] AuthStartRequest :> Post '[JSON] (Headers '[Header "Set-Cookie" SetCookie] AuthStartAnswer),
@@ -142,37 +140,6 @@ getConfig :: M FrontendConfig
 getConfig = do
   ghAppName <- view #githubAppName
   pure $ FrontendConfig {_frontendConfigGithubAppName = ghAppName}
-
--- | A forge instance as the frontend sees it: enough to build URLs and links,
--- none of its secrets.
-data ForgeSummary = ForgeSummary
-  { _forgeSummarySlug :: ForgeSlug,
-    _forgeSummaryKind :: Text,
-    _forgeSummaryWebUrl :: Text,
-    -- | @configured@ or @registered@ (through the UI).
-    _forgeSummarySource :: ForgeSource,
-    -- | What to call it: the host of its web URL.
-    _forgeSummaryName :: Text
-  }
-  deriving stock (Eq, Show, Generic)
-
-instance ToJSON ForgeSummary where
-  toEncoding = ourToEncoding
-  toJSON = ourToJSON
-
-forgesAPI :: M [ForgeSummary]
-forgesAPI = map (\(source, instance') -> summarize source (_forgeInstanceConfig instance')) <$> listActiveForges
-  where
-    summarize source config =
-      ForgeSummary
-        { _forgeSummarySlug = _forgeConfigSlug config,
-          _forgeSummaryKind = case _forgeConfigKind config of
-            GithubForgeKind -> "github"
-            GiteaForgeKind -> "gitea",
-          _forgeSummaryWebUrl = _forgeConfigWebUrl config,
-          _forgeSummarySource = source,
-          _forgeSummaryName = fromMaybe (_forgeConfigWebUrl config) (instanceHost config)
-        }
 
 waitlistAPI :: Email -> M ()
 waitlistAPI email = do

@@ -1,8 +1,9 @@
 module Garnix.Forge.RegisteredSpec (spec) where
 
+import Data.Map.Strict qualified as Map
 import Data.Text qualified as T
 import Data.Time (UTCTime (..), fromGregorian)
-import Garnix.API.Forges (Management (..), StartDecision (..), managementRefusal, startDecision)
+import Garnix.API.Forges (ForgeSummary (..), Management (..), StartDecision (..), SummaryStatus (..), disabledCandidates, forgeSummaries, managementRefusal, startDecision)
 import Garnix.Access (identityAdministers)
 import Garnix.DB.Forges (RegisteredForgeRow (..))
 import Garnix.Forge.Registered
@@ -161,6 +162,67 @@ spec = do
       managementRefusal Disable (row ForgeDisabled) (account 1 []) `shouldBe` Just NotFound
       refused ReplaceSecret ForgePending (account 1 []) `shouldBe` True
       refused Disable ForgePending (account 1 []) `shouldBe` True
+
+  describe "forgeSummaries" $ do
+    let gitea = ForgeSlug "git.example.com"
+        time = UTCTime (fromGregorian 2026 1 1) 0
+        row status' =
+          RegisteredForgeRow
+            { rowSlug = gitea,
+              rowWebUrl = "https://git.example.com",
+              rowApiUrl = "https://git.example.com/api/v1",
+              rowOAuthClientId = "client",
+              rowOAuthClientSecret = EncryptedText "",
+              rowWebhookSecret = EncryptedText "",
+              rowStatus = status',
+              rowRegisteredBy = Just (UserId 1),
+              rowCreatedAt = time,
+              rowRegistrationTokenHash = Nothing,
+              rowUpdatedAt = time
+            }
+        registrant = User (UserId 1) (Email "alice@example.com") time [ForgeIdentity githubForge "alice" False]
+        stranger = User (UserId 2) (Email "bob@example.com") time [ForgeIdentity gitea "bob" False]
+        active = [(Configured, testForgeInstance githubForge GithubForgeKind), (Registered, testForgeInstance gitea GiteaForgeKind)]
+        listed manager' active' activeRows disabledRows =
+          [ (_forgeSummarySlug summary, _forgeSummaryStatus summary, _forgeSummaryCanManage summary)
+          | summary <- forgeSummaries manager' active' activeRows disabledRows
+          ]
+
+    it "says which active registered forge the caller may manage" $ do
+      listed (Just registrant) active [row ForgeActive] []
+        `shouldBe` [(githubForge, SummaryStatus ForgeActive, False), (gitea, SummaryStatus ForgeActive, True)]
+      listed (Just stranger) active [row ForgeActive] []
+        `shouldBe` [(githubForge, SummaryStatus ForgeActive, False), (gitea, SummaryStatus ForgeActive, False)]
+
+    it "lets nobody manage a configured forge, nor anything without a caller" $ do
+      listed (Just registrant) [(Configured, testForgeInstance gitea GiteaForgeKind)] [row ForgeActive] []
+        `shouldBe` [(gitea, SummaryStatus ForgeActive, False)]
+      listed Nothing active [row ForgeActive] [row ForgeDisabled]
+        `shouldBe` [(githubForge, SummaryStatus ForgeActive, False), (gitea, SummaryStatus ForgeActive, False)]
+
+    it "lists a disabled forge only to whoever may bring it back" $ do
+      listed (Just registrant) (take 1 active) [] [row ForgeDisabled]
+        `shouldBe` [(githubForge, SummaryStatus ForgeActive, False), (gitea, SummaryStatus ForgeDisabled, True)]
+      listed (Just stranger) (take 1 active) [] [row ForgeDisabled]
+        `shouldBe` [(githubForge, SummaryStatus ForgeActive, False)]
+      -- A row read as disabled that is no longer is not listed twice.
+      listed (Just registrant) active [row ForgeActive] [row ForgeActive]
+        `shouldBe` [(githubForge, SummaryStatus ForgeActive, False), (gitea, SummaryStatus ForgeActive, True)]
+
+  describe "disabledCandidates" $ do
+    it "looks for disabled forges only among the account's identities on no active or configured forge" $ do
+      let time = UTCTime (fromGregorian 2026 1 1) 0
+          gitea = ForgeSlug "git.example.com"
+          configured = ForgeSlug "code.example.com"
+          account =
+            User
+              (UserId 1)
+              (Email "alice@example.com")
+              time
+              [ForgeIdentity githubForge "alice" False, ForgeIdentity gitea "alice" False, ForgeIdentity configured "alice" False]
+      disabledCandidates (Map.fromList [(configured, testForgeInstance configured GiteaForgeKind)]) [githubForge] account
+        `shouldBe` [gitea]
+      disabledCandidates mempty [githubForge, gitea] account `shouldBe` [configured]
 
   describe "forgetOnActivation" $ do
     it "forgets everyone on the forge unless it brings back one disabled within the quarantine" $ do
