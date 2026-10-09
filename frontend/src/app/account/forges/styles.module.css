@@ -1,0 +1,52 @@
+.section {
+  background-color: var(--color-white);
+  border: 1px solid var(--color-stone-300);
+  padding: 24px;
+  margin: 48px 0;
+}
+
+.table {
+  width: 95%;
+  margin: 24px auto;
+}
+
+.small {
+  color: var(--color-stone-600);
+  font-size: 14px;
+}
+
+.error {
+  color: var(--color-error);
+  margin-top: 8px;
+}
+
+.disabled {
+  color: var(--color-error);
+  font-size: 14px;
+}
+
+.forge {
+  border-top: 1px solid var(--color-stone-300);
+  margin-top: 24px;
+  padding-top: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.forgeHeader {
+  display: flex;
+  gap: 16px;
+  align-items: baseline;
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+}
+
+.row label p {
+  white-space: nowrap;
+}

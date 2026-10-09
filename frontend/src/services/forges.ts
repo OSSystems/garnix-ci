@@ -130,6 +130,24 @@ export const registerForge = async (
   return Ok(response.data.link);
 };
 
+// Re-enables a disabled forge too.
+export const replaceForgeSecret = (
+  slug: string,
+  clientSecret: string,
+): Promise<APIResult<unknown>> =>
+  fetchFromAPI(
+    z.unknown(),
+    "PUT",
+    `forges/${encodeURIComponent(slug)}/secret`,
+    {
+      body: JSON.stringify({ clientSecret }),
+    },
+  );
+
+// Ends every login and session through the forge; deletes nothing.
+export const disableForge = (slug: string): Promise<APIResult<unknown>> =>
+  fetchFromAPI(z.unknown(), "DELETE", `forges/${encodeURIComponent(slug)}`);
+
 // What to tell someone whose registration was refused.
 export const registrationError = (error: APIError): string => {
   switch (error.status) {
