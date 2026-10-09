@@ -63,6 +63,7 @@ dependencies:
   - cookie
   - cradle
   - crypton
+  - crypton-connection
   - data-default-class
   - directory
   - exceptions
