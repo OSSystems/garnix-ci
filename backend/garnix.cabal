@@ -69,6 +69,7 @@ library
       Garnix.DB
       Garnix.DB.FeatureFlags
       Garnix.DB.FeatureFlags.Types
+      Garnix.DB.Forges
       Garnix.DB.Hosting
       Garnix.DB.ModuleValues
       Garnix.Duration
@@ -78,6 +79,8 @@ library
       Garnix.Forge.Gitea
       Garnix.Forge.Gitea.Webhook
       Garnix.Forge.OutboundGuard
+      Garnix.Forge.Registered
+      Garnix.Forge.Registry
       Garnix.GetAttributes
       Garnix.GithubInterface
       Garnix.GithubInterface.Types
@@ -758,6 +761,7 @@ test-suite spec
       Garnix.Forge.Gitea.WebhookSpec
       Garnix.Forge.GiteaSpec
       Garnix.Forge.OutboundGuardSpec
+      Garnix.Forge.RegisteredSpec
       Garnix.GetAttributesSpec
       Garnix.GithubInterfaceSpec
       Garnix.GithubUserTokenSpec
@@ -843,6 +847,7 @@ test-suite spec
       Garnix.DB
       Garnix.DB.FeatureFlags
       Garnix.DB.FeatureFlags.Types
+      Garnix.DB.Forges
       Garnix.DB.Hosting
       Garnix.DB.ModuleValues
       Garnix.Duration
@@ -852,6 +857,8 @@ test-suite spec
       Garnix.Forge.Gitea
       Garnix.Forge.Gitea.Webhook
       Garnix.Forge.OutboundGuard
+      Garnix.Forge.Registered
+      Garnix.Forge.Registry
       Garnix.GetAttributes
       Garnix.GithubInterface
       Garnix.GithubInterface.Types

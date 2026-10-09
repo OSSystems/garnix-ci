@@ -31,6 +31,8 @@ import Garnix.DB.FeatureFlags (withRecachedFeatureFlags)
 import Garnix.DB.FeatureFlags.Types (getFeatureFlagConfig)
 import Garnix.Duration
 import Garnix.Forge.Config (forgeInstance, readForgesFile)
+import Garnix.Forge.OutboundGuard (defaultGuardOptions, guardedManager, isPublicAddress, systemResolver)
+import Garnix.Forge.Registry (newForgeRegistration)
 import Garnix.GithubInterface
 import Garnix.Hosting.Budget (hostTotalMiB, hostVcpus, parseBudget, resolveBudget)
 import Garnix.Hosting.Deploy (cleanupUnreadyServers, stopUnusedServers)
@@ -299,6 +301,12 @@ withEnv testFeatures buildLogsDir buildLogsReportingPort action = do
       >>= maybe (pure []) readForgesFile
       >>= either Control.Exception.throwIO pure
       . traverse (\config -> (config ^. slug,) <$> forgeInstance config)
+  -- Registering forges through the UI is off unless the operator allows it.
+  forgeRegistration <- do
+    enabled <- lookupEnvBool "GARNIX_FORGE_REGISTRATION" False
+    if enabled
+      then Just <$> (newForgeRegistration False =<< guardedManager defaultGuardOptions isPublicAddress systemResolver)
+      else pure Nothing
   nixConfig <-
     lookupOptionalSecret "GITHUB_ACCESS_TOKEN" (secretFile "github_access_token")
       <&> maybe defaultNixConfig (\token -> githubAccessTokenNixConfig (GhToken token) <> defaultNixConfig)
@@ -493,6 +501,7 @@ withEnv testFeatures buildLogsDir buildLogsReportingPort action = do
                 Map.singleton
                   githubForge
                   (githubForgeInstance ghK ghClientId ghClientSecret adminGhLogin),
+              forgeRegistration,
               cookieSettings =
                 defaultCookieSettings
                   { cookieXsrfSetting = Nothing,

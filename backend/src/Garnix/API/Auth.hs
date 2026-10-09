@@ -6,7 +6,7 @@ import Data.ByteString.Builder (toLazyByteString)
 import Data.Char (isAlphaNum, isAscii)
 import Data.Text qualified as T
 import Data.Time.Clock.POSIX (posixSecondsToUTCTime)
-import Garnix.Access (administeredForges, mainIdentity, webSessionUser, webSessionUserOr)
+import Garnix.Access (administeredForges, mainIdentity, sessionUserOf, webSessionUser, webSessionUserOr)
 import Garnix.AccessToken
 import Garnix.AccessToken.Types
 import Garnix.DB qualified as DB
@@ -75,8 +75,8 @@ instance ToJSON UserDto where
   toJSON = ourToJSON
 
 whoAmIAPI :: AuthResult AuthJwtPayload -> M (Maybe UserDto)
-whoAmIAPI (Authenticated session) =
-  DB.getUserById (sessionUserId session) >>= \case
+whoAmIAPI session =
+  sessionUserOf session >>= \case
     Nothing -> pure Nothing
     Just user -> do
       administered <- administeredForges (Just user)
@@ -90,7 +90,6 @@ whoAmIAPI (Authenticated session) =
               _userDtoIsAdmin = githubForge `elem` administered,
               _userDtoIdentities = [IdentityDto (i ^. forge) (i ^. ghLogin) | i <- user ^. identities]
             }
-whoAmIAPI _ = pure Nothing
 
 data AuthJwtAPI route = AuthJwtAPI
   { jwt :: route :- Header "Authorization" Text :> Auth '[JWT, Cookie] AuthJwtPayload :> Post '[JSON] AuthJwtDto
@@ -110,7 +109,8 @@ authJwtAPI =
     { jwt = getJwt
     }
 
--- | The user name is any identity of the account, as 'forgeLoginText'.
+-- | The user name is any identity of the account, as 'forgeLoginText', on a
+-- forge garnix is active on.
 getJwt :: Maybe Text -> AuthResult AuthJwtPayload -> M AuthJwtDto
 getJwt mAuthHeader authResult = do
   authHeader <- case (mAuthHeader, authResult) of
@@ -120,9 +120,11 @@ getJwt mAuthHeader authResult = do
   (username, password) <- case parseBasicAuth authHeader of
     Left err -> throw $ BadRequest $ cs err
     Right creds -> pure creds
-  userId <-
-    maybe (throw Unauthorized) pure
-      =<< maybe (pure Nothing) DB.lookupIdentityOwner (parseForgeLoginText username)
+  forgeLogin <- maybe (throw Unauthorized) pure $ parseForgeLoginText username
+  -- An identity on a forge that was disabled, or that registration being
+  -- turned off hides, logs nobody in, as it does in a browser.
+  whenM (isNothing <$> lookupActiveForge (forgeLogin ^. forge)) $ throw Unauthorized
+  userId <- maybe (throw Unauthorized) pure =<< DB.lookupIdentityOwner forgeLogin
   isValid <- isAccessTokenValid userId (AccessToken password) (^. #api)
   when (not isValid) $ do
     throw Unauthorized
@@ -508,7 +510,8 @@ removalRefusalError slug = \case
 forgeOauth :: ForgeSlug -> M OA.OAuth2
 forgeOauth slug = do
   -- The slug comes from the URL: one that names no configured instance is a
-  -- page that does not exist, not a server error.
+  -- page that does not exist, not a server error. A registered forge still
+  -- pending is found: its first OAuth is what activates it.
   config' <- forgeConfigFor slug >>= maybe (throw NotFound) pure
   fromRelativeUrl <- relativeUrlConverter
   pure $ forgeOAuth2 fromRelativeUrl slug config'

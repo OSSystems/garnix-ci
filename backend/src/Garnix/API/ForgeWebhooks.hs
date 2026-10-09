@@ -9,7 +9,6 @@ module Garnix.API.ForgeWebhooks
 where
 
 import Data.List.NonEmpty qualified as NonEmpty
-import Data.Map.Strict qualified as Map
 import Garnix.Forge.Gitea.Webhook
 import Garnix.Monad
 import Garnix.Monad.Async (logPromiseErrors)
@@ -45,10 +44,12 @@ instance MimeUnrender RawJSON LazyByteString where
 
 forgeWebhookAPI :: (HasCallStack) => ForgeSlug -> Maybe Text -> Maybe Text -> Maybe Text -> Maybe Text -> LazyByteString -> M ()
 forgeWebhookAPI slug' giteaEvent forgejoEvent giteaSignature forgejoSignature body = do
-  configured <- view #forges
-  config <- case Map.lookup slug' configured of
-    Just instance' | _forgeInstanceConfig instance' ^. kind == GiteaForgeKind -> pure $ _forgeInstanceConfig instance'
-    _ -> throw NotFound
+  -- A registered forge delivers only while active: a pending one is unproven,
+  -- a disabled one refused.
+  config <-
+    lookupActiveForge slug' >>= \case
+      Just (_, instance') | _forgeInstanceConfig instance' ^. kind == GiteaForgeKind -> pure $ _forgeInstanceConfig instance'
+      _ -> throw NotFound
   unless (verifyGiteaSignature (config ^. webhookSecret) (giteaSignature <|> forgejoSignature) body) $ do
     log Notice $ "forge webhook: rejected a delivery for " <> getForgeSlug slug' <> " with a missing or wrong signature"
     throw Unauthorized

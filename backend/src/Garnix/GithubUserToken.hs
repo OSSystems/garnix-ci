@@ -4,6 +4,8 @@ module Garnix.GithubUserToken
   ( storeCredentialsFor,
     userTokenFor,
     withUserToken,
+    encryptSecret,
+    decryptSecret,
   )
 where
 
