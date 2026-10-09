@@ -4,9 +4,9 @@ import Control.Lens
 import Data.ByteString (ByteString)
 import Data.ByteString.Builder (toLazyByteString)
 import Data.Char (isAlphaNum, isAscii)
-import Data.Map.Strict qualified as Map
 import Data.Text qualified as T
 import Data.Time.Clock.POSIX (posixSecondsToUTCTime)
+import Garnix.Access (administeredForges, mainIdentity, webSessionUser, webSessionUserOr)
 import Garnix.AccessToken
 import Garnix.AccessToken.Types
 import Garnix.DB qualified as DB
@@ -17,6 +17,7 @@ import Garnix.ParseHttpBasicAuth
 import Garnix.Prelude
 import Garnix.Types hiding (login)
 import Network.OAuth2 qualified as OA
+import Servant.API (noHeader)
 import Servant.Auth.Server
   ( Auth,
     AuthResult (Authenticated),
@@ -27,7 +28,7 @@ import Servant.Auth.Server
     acceptLogin,
     clearSession,
   )
-import Servant.Auth.Server.Internal.JWT (makeJWT)
+import Servant.Auth.Server.Internal.JWT (makeJWT, verifyJWT)
 import Web.Cookie
 
 sessionExpiresAt :: M UTCTime
@@ -46,11 +47,26 @@ sessionCookieSettings = do
         cookieMaxAge = Just $ realToFrac $ toSeconds lifetime
       }
 
+data IdentityDto = IdentityDto
+  { _identityDtoForge :: ForgeSlug,
+    _identityDtoLogin :: GhLogin
+  }
+  deriving stock (Generic)
+
+instance ToJSON IdentityDto where
+  toEncoding = ourToEncoding
+  toJSON = ourToJSON
+
+-- | @username@ and @forge@ name the account's main identity, its github one if
+-- it has one, for the frontend that predates accounts with several;
+-- @identities@ lists them all. @is_admin@ is about github.com, whose admins
+-- may set up the GitHub App: admins of another forge are not admins there.
 data UserDto = UserDto
   { _userDtoUsername :: GhLogin,
     _userDtoForge :: ForgeSlug,
     _userDtoEmail :: Email,
-    _userDtoIsAdmin :: Bool
+    _userDtoIsAdmin :: Bool,
+    _userDtoIdentities :: [IdentityDto]
   }
   deriving stock (Generic)
 
@@ -59,14 +75,21 @@ instance ToJSON UserDto where
   toJSON = ourToJSON
 
 whoAmIAPI :: AuthResult AuthJwtPayload -> M (Maybe UserDto)
-whoAmIAPI (Authenticated ((^. #user) -> user)) = do
-  pure
-    $ Just
-    $ UserDto
-      (user ^. githubLogin)
-      (user ^. forge)
-      (user ^. email)
-      (user ^. subscriptionType == Admin)
+whoAmIAPI (Authenticated session) =
+  DB.getUserById (sessionUserId session) >>= \case
+    Nothing -> pure Nothing
+    Just user -> do
+      administered <- administeredForges (Just user)
+      pure
+        $ mainIdentity user
+        <&> \main ->
+          UserDto
+            { _userDtoUsername = main ^. ghLogin,
+              _userDtoForge = main ^. forge,
+              _userDtoEmail = user ^. email,
+              _userDtoIsAdmin = githubForge `elem` administered,
+              _userDtoIdentities = [IdentityDto (i ^. forge) (i ^. ghLogin) | i <- user ^. identities]
+            }
 whoAmIAPI _ = pure Nothing
 
 data AuthJwtAPI route = AuthJwtAPI
@@ -87,6 +110,7 @@ authJwtAPI =
     { jwt = getJwt
     }
 
+-- | The user name is any identity of the account, as 'forgeLoginText'.
 getJwt :: Maybe Text -> AuthResult AuthJwtPayload -> M AuthJwtDto
 getJwt mAuthHeader authResult = do
   authHeader <- case (mAuthHeader, authResult) of
@@ -96,20 +120,15 @@ getJwt mAuthHeader authResult = do
   (username, password) <- case parseBasicAuth authHeader of
     Left err -> throw $ BadRequest $ cs err
     Right creds -> pure creds
-  user <-
-    withError
-      ( errLens %~ \case
-          NoSuchUser _ -> Unauthorized
-          err -> err
-      )
-      $ DB.getUser
-      =<< maybe (throw Unauthorized) pure (parseForgeLoginText username)
-  isValid <- isAccessTokenValid (user ^. id) (AccessToken password) (^. #api)
+  userId <-
+    maybe (throw Unauthorized) pure
+      =<< maybe (pure Nothing) DB.lookupIdentityOwner (parseForgeLoginText username)
+  isValid <- isAccessTokenValid userId (AccessToken password) (^. #api)
   when (not isValid) $ do
     throw Unauthorized
   jwtSettings' <- view #jwtSettings
   expiresAt <- sessionExpiresAt
-  jwt <- liftIO $ makeJWT (ApiSession user) jwtSettings' (Just expiresAt)
+  jwt <- liftIO $ makeJWT (ApiSession userId) jwtSettings' (Just expiresAt)
   jwt <- case jwt of
     Left err -> throw $ OtherError $ "Failed to create JWT: " <> show err
     Right jwt -> pure jwt
@@ -118,6 +137,24 @@ getJwt mAuthHeader authResult = do
       { token = cs jwt,
         expiresAt
       }
+
+type SessionCookies a =
+  Headers
+    '[ Header "Set-Cookie" SetCookie,
+       Header "Set-Cookie" SetCookie
+     ]
+    a
+
+-- | What a login or a connect answers: the account's main identity, as
+-- @whoami@ names it, and whether another account has the email of an account
+-- this login just created, so the person may already have an account to
+-- connect this forge to instead. It never says which.
+data LoginResult = LoginResult
+  { username :: GhLogin,
+    emailAlreadyUsed :: Bool
+  }
+  deriving stock (Generic)
+  deriving anyclass (ToJSON)
 
 type CallbackCookies a =
   Headers
@@ -129,50 +166,22 @@ type CallbackCookies a =
 
 data LoginAPI route = LoginAPI
   { _loginAPILogin :: route :- Get '[JSON] (Headers '[Header "Set-Cookie" SetCookie] LoginLinks),
-    _loginAPILogout ::
-      route
-        :- Delete
-             '[JSON]
-             ( Headers
-                 '[Header "Set-Cookie" SetCookie, Header "Set-Cookie" SetCookie]
-                 ()
-             ),
+    _loginAPILogout :: route :- Delete '[JSON] (SessionCookies ()),
+    -- | Where the forge sends the browser back to, for a login and for a
+    -- connect alike: the @state@ tells them apart (see 'connectStatePrefix').
     _loginAPILoginCallback ::
       route
         :- "cb"
         :> QueryParam "code" OAuthCode
         :> QueryParam "state" Text
         :> Header "Cookie" Text
-        :> Get '[JSON] (CallbackCookies GhLogin)
+        :> Auth '[Cookie] AuthJwtPayload
+        :> Get '[JSON] (CallbackCookies LoginResult)
   }
   deriving (Generic)
 
-data SignupAPI route = SignupAPI
-  { _signupAPISignup :: route :- Get '[JSON] (Headers '[Header "Set-Cookie" SetCookie] SignupLinks),
-    _signupAPISignupCallback ::
-      route
-        :- "fill"
-        :> QueryParam "code" OAuthCode
-        :> QueryParam "state" Text
-        :> Header "Cookie" Text
-        :> Get '[JSON] (CallbackCookies (CreatingUser ())),
-    _signupAPIFinishSignup ::
-      route
-        :- Auth '[Cookie] (CreatingUser (GhUserCredentials Text))
-        :> ReqBody '[JSON] CreateUser
-        :> Post
-             '[JSON]
-             ( Headers
-                 '[ Header "Set-Cookie" SetCookie,
-                    Header "Set-Cookie" SetCookie
-                  ]
-                 GhLogin
-             )
-  }
-  deriving (Generic)
-
--- | Logging in through one forge instance. The account it yields is the
--- 'ForgeLogin' on that forge: the same name on another forge is somebody else.
+-- | Logging in through one forge instance. The first login of an identity
+-- garnix does not know yet creates its account.
 loginAPI :: ForgeSlug -> LoginAPI (AsServerT M)
 loginAPI slug =
   LoginAPI
@@ -181,36 +190,34 @@ loginAPI slug =
       _loginAPILoginCallback = loginCallback slug
     }
 
-signupAPI :: ForgeSlug -> SignupAPI (AsServerT M)
-signupAPI slug =
-  SignupAPI
-    { _signupAPISignup = signup slug,
-      _signupAPISignupCallback = signupCallback slug,
-      _signupAPIFinishSignup = finishSignup
-    }
-
 -- | The link is under the @github@ key whichever forge it points to, so that
 -- the response keeps one shape across forges.
 login :: ForgeSlug -> M (Headers '[Header "Set-Cookie" SetCookie] LoginLinks)
 login slug = do
   nonce <- newOAuthNonce
-  link <- authorizeLink slug LoginFlow (getOAuthNonce nonce)
+  link <- authorizeLink slug (getOAuthNonce nonce)
   cookie <- oauthStateCookie nonce
   pure $ addHeader cookie $ LoginLinks {_loginLinksGithub = link}
 
 -- * The OAuth state
 --
--- A login or a signup puts a fresh nonce in the OAuth @state@ and sets a
+-- A login or a connect puts a fresh nonce in the OAuth @state@ and sets a
 -- cookie named by it in the browser that starts it, so several flows may be
 -- in flight in one browser. The callback only goes on when this browser holds
 -- the state's cookie, and spends it whatever happens: a callback URL somebody
 -- else made, with their own code, logs nobody into their account, and a
--- state that leaks is worth nothing once its browser has used it.
+-- state that leaks attaches nothing once its browser has used it.
 
 -- | The nonce of one flow, as 'newOAuthNonce' makes it. Only a parsed nonce
 -- names a cookie: the state in a callback URL may hold anything.
 newtype OAuthNonce = OAuthNonce {getOAuthNonce :: Text}
   deriving stock (Eq, Show)
+
+instance ToJSON OAuthNonce where
+  toJSON = toJSON . getOAuthNonce
+
+instance FromJSON OAuthNonce where
+  parseJSON value = parseJSON value >>= maybe (fail "not an OAuth nonce") pure . parseOAuthNonce . Just
 
 oauthNonceLength :: Int
 oauthNonceLength = 32
@@ -234,9 +241,9 @@ oauthStateLifetime = fromMinutes @Int 10
 
 -- | The forge's authorize link. Without a state of the library's own: it
 -- would base58-encode ours, and ours is URL-safe as it is.
-authorizeLink :: ForgeSlug -> OAuthFlow -> Text -> M Text
-authorizeLink slug flow state = do
-  oauth <- forgeOauth slug flow
+authorizeLink :: ForgeSlug -> Text -> M Text
+authorizeLink slug state = do
+  oauth <- forgeOauth slug
   link <- OA.getAuthorize OA.OAuthStateless oauth ""
   pure $ link <> "&state=" <> state
 
@@ -276,199 +283,255 @@ notStartedHere :: Error
 notStartedHere = ForbiddenWithMessage "This login was not started in this browser, or it took too long. Start again."
 
 -- | Runs a callback and spends its nonce's cookie, on an error response too.
-spendingOAuthNonce ::
-  OAuthNonce ->
-  M (Headers '[Header "Set-Cookie" SetCookie, Header "Set-Cookie" SetCookie] a) ->
-  M (CallbackCookies a)
+spendingOAuthNonce :: OAuthNonce -> M (SessionCookies a) -> M (CallbackCookies a)
 spendingOAuthNonce nonce callback = do
   spent <- spentOAuthStateCookie nonce
   try callback >>= \case
     Right response -> pure $ addHeader spent response
     Left e -> throwError e {err = WithSetCookies [cs $ toLazyByteString $ renderSetCookie spent] e}
 
-logout ::
-  M
-    ( Headers
-        '[Header "Set-Cookie" SetCookie, Header "Set-Cookie" SetCookie]
-        ()
-    )
+logout :: M (SessionCookies ())
 logout = do
   cookieSettings' <- view #cookieSettings
   return $ clearSession cookieSettings' ()
-
-signup :: ForgeSlug -> M (Headers '[Header "Set-Cookie" SetCookie] SignupLinks)
-signup slug = do
-  nonce <- newOAuthNonce
-  link <- authorizeLink slug SignupFlow (getOAuthNonce nonce)
-  cookie <- oauthStateCookie nonce
-  pure
-    $ addHeader cookie
-    $ SignupLinks
-      { _signupLinksGithub = link
-      }
 
 loginCallback ::
   ForgeSlug ->
   Maybe OAuthCode ->
   Maybe Text ->
   Maybe Text ->
-  M (CallbackCookies GhLogin)
-loginCallback slug code state cookies = do
+  AuthResult AuthJwtPayload ->
+  M (CallbackCookies LoginResult)
+loginCallback slug code state cookies session = do
   -- A slug naming no forge is a page that does not exist (see 'forgeOauth').
-  _ <- forgeOauth slug LoginFlow
-  nonce <- parsedOAuthNonce state
-  spendingOAuthNonce nonce $ loginCallback' slug code cookies nonce
+  _ <- forgeOauth slug
+  case T.stripPrefix connectStatePrefix =<< state of
+    Just connectState -> connectCallback slug code connectState cookies session
+    Nothing -> do
+      nonce <- parsedOAuthNonce state
+      spendingOAuthNonce nonce $ do
+        checkOAuthNonce cookies nonce
+        (identity, email', credentials) <- callbackHelper slug code
+        (user, emailAlreadyUsed) <- loginOrCreateAccount identity email'
+        storeCredentialsFor (identityForgeLogin identity) credentials
+          <?> "storing the forge credentials"
+        cookieSettings' <- sessionCookieSettings
+        jwtSettings' <- view #jwtSettings
+        mApplyCookies <-
+          liftIO (acceptLogin cookieSettings' jwtSettings' (WebSession (user ^. id)))
+            <?> "calling acceptLogin"
+        case mApplyCookies of
+          Nothing -> throw Unauthorized
+          Just applyCookies -> applyCookies <$> loginResult user emailAlreadyUsed
 
-loginCallback' ::
-  ForgeSlug ->
-  Maybe OAuthCode ->
-  Maybe Text ->
-  OAuthNonce ->
-  M
-    ( Headers
-        '[Header "Set-Cookie" SetCookie, Header "Set-Cookie" SetCookie]
-        GhLogin
-    )
-loginCallback' slug code cookies nonce = do
-  checkOAuthNonce cookies nonce
-  (login', _, credentials) <- callbackHelper slug LoginFlow code
-  cookieSettings' <- sessionCookieSettings
-  jwtSettings' <- view #jwtSettings
-  user <- DB.getUser login' <?> "calling getUser"
-  storeCredentialsFor (user ^. id) credentials <?> "storing the github credentials"
-  mApplyCookies <-
-    liftIO (acceptLogin cookieSettings' jwtSettings' (WebSession user))
-      <?> "calling acceptLogin"
-  case mApplyCookies of
-    Nothing -> throw Unauthorized
-    Just applyCookies ->
-      return
-        $ applyCookies
-        $ user
-        ^. githubLogin
+loginResult :: User -> DB.EmailAlreadyUsed -> M LoginResult
+loginResult user emailAlreadyUsed = do
+  main <- maybe (throw $ OtherError "an account without identities") pure $ mainIdentity user
+  pure LoginResult {username = main ^. ghLogin, emailAlreadyUsed = DB.getEmailAlreadyUsed emailAlreadyUsed}
 
-signupCallback ::
-  ForgeSlug ->
-  Maybe OAuthCode ->
-  Maybe Text ->
-  Maybe Text ->
-  M (CallbackCookies (CreatingUser ()))
-signupCallback slug code state cookies = do
-  _ <- forgeOauth slug SignupFlow
-  nonce <- parsedOAuthNonce state
-  spendingOAuthNonce nonce $ signupCallback' slug code cookies nonce
+-- | The account of a known identity, or a new account for an unknown one,
+-- with the email the forge reported (see 'LoginResult').
+loginOrCreateAccount :: ForgeIdentity -> Email -> M (User, DB.EmailAlreadyUsed)
+loginOrCreateAccount identity email' =
+  loginOrCreate identity email' =<< DB.lookupIdentityOwner (identityForgeLogin identity)
 
-signupCallback' ::
-  ForgeSlug ->
-  Maybe OAuthCode ->
-  Maybe Text ->
-  OAuthNonce ->
-  M
-    ( Headers
-        '[Header "Set-Cookie" SetCookie, Header "Set-Cookie" SetCookie]
-        (CreatingUser ())
-    )
-signupCallback' slug code cookies nonce = do
-  checkOAuthNonce cookies nonce
-  (login', email', credentials) <- callbackHelper slug SignupFlow code
-  eUser <- try $ DB.getUser login' <?> "calling getUser"
-  exists <- case eUser of
-    Right _ -> pure True
-    Left ErrorWithContext {err = NoSuchUser {}} -> pure False
-    Left e -> throwError e
-  let creatingUser =
-        CreatingUser
-          { _creatingUserExists = exists,
-            _creatingUserForge = login' ^. forge,
-            _creatingUserGithubLogin = login' ^. ghLogin,
-            _creatingUserEmail = email',
-            _creatingUserGithubToken = credentials
-          }
-  cookieSettings' <- sessionCookieSettings
-  jwtSettings' <- view #jwtSettings
-  mApplyCookies <- case eUser of
-    Right user -> do
-      storeCredentialsFor (user ^. id) credentials
-      liftIO $ acceptLogin cookieSettings' jwtSettings' (WebSession user)
-    _ -> liftIO $ acceptLogin cookieSettings' jwtSettings' creatingUser
-  case mApplyCookies of
-    Nothing -> throw Unauthorized
-    Just applyCookies -> return $ applyCookies (void creatingUser)
+-- | 'loginOrCreateAccount' once the identity's owner was looked up, which
+-- another callback of the same first login (a double click, a second tab)
+-- may have changed since: the account it created is logged in to.
+loginOrCreate :: ForgeIdentity -> Email -> Maybe UserId -> M (User, DB.EmailAlreadyUsed)
+loginOrCreate identity email' = \case
+  Just owner -> logInTo owner
+  Nothing ->
+    DB.createAccount identity email' >>= \case
+      Right created -> pure created
+      Left (DB.OwnedBy owner) -> logInTo owner
+      Left clash -> throw $ IdentityConflict $ DB.identityClashMessage login' clash
+  where
+    login' = identityForgeLogin identity
+    logInTo owner = do
+      DB.setIdentityIsForgeAdmin login' (identity ^. isForgeAdmin)
+      user <- DB.getUserById owner >>= maybe (throw $ OtherError "the identity's account is gone") pure
+      pure (user, DB.EmailAlreadyUsed False)
 
-callbackHelper :: ForgeSlug -> OAuthFlow -> Maybe OAuthCode -> M (ForgeLogin, Email, GhUserCredentials Text)
-callbackHelper _ _ Nothing = throw $ OtherError "'code' param missing"
-callbackHelper slug flow (Just code) = do
-  oauth <- forgeOauth slug flow
+callbackHelper :: ForgeSlug -> Maybe OAuthCode -> M (ForgeIdentity, Email, GhUserCredentials Text)
+callbackHelper _ Nothing = throw $ OtherError "'code' param missing"
+callbackHelper slug (Just code) = do
+  oauth <- forgeOauth slug
   credentials <-
     exchangeOauthCode slug (OA.oauthCallback oauth) code
       <?> "exchanging the oauth code"
-  (login', email') <- getCurrentUser slug (credentials ^. accessToken)
-  pure (ForgeLogin slug login', email', credentials)
+  (login', email', isForgeAdmin') <- getCurrentUser slug (credentials ^. accessToken)
+  pure (ForgeIdentity slug login' isForgeAdmin', email', credentials)
 
-finishSignup ::
-  AuthResult (CreatingUser (GhUserCredentials Text)) ->
-  CreateUser ->
-  M (Headers '[Header "Set-Cookie" SetCookie, Header "Set-Cookie" SetCookie] GhLogin)
-finishSignup (Authenticated cUser) addenda = do
-  -- The things in AuthResult we can trust, because we put them there
-  admins' <- (^. admins) . _forgeInstanceConfig <$> forgeInstanceFor (cUser ^. forge)
-  user <-
-    DB.newUser
-      (ForgeLogin (cUser ^. forge) (cUser ^. githubLogin))
-      (addenda ^. email)
-      (subscriptionFor admins' (cUser ^. githubLogin))
-      (addenda ^. agreeToEmails)
-  storeCredentialsFor (user ^. id) (cUser ^. githubToken)
-  cookieSettings' <- sessionCookieSettings
+-- * Connecting another forge to the account
+
+-- | What a connect puts in the OAuth @state@, signed: the account and forge it
+-- was started for. The callback only attaches an identity for the session that
+-- started it, so a link or code from somebody else attaches nothing.
+data ConnectState = ConnectState
+  { connectUser :: UserId,
+    connectForge :: ForgeSlug,
+    -- | The nonce of the browser that started it (see 'checkOAuthNonce').
+    connectNonce :: OAuthNonce
+  }
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass (ToJSON, FromJSON, ToJWT, FromJWT)
+
+-- | Marks the @state@ of a connect. A login's state never starts with it.
+connectStatePrefix :: Text
+connectStatePrefix = "connect."
+
+data ConnectAPI route = ConnectAPI
+  { -- | The link to the forge's OAuth app; it calls back to the login callback.
+    _connectAPIConnect ::
+      route
+        :- "connect"
+        :> Auth '[JWT, Cookie] AuthJwtPayload
+        :> Get '[JSON] (Headers '[Header "Set-Cookie" SetCookie] LoginLinks),
+    -- | Detaches the account's identity on this forge. The body is @{}@, or
+    -- @{"confirmDeleteModuleSettings": true}@ to also delete the module
+    -- settings saved through it.
+    _connectAPIDisconnect ::
+      route
+        :- "identity"
+        :> Auth '[JWT, Cookie] AuthJwtPayload
+        :> ReqBody '[JSON] DisconnectIdentity
+        :> Delete '[JSON] NoContent
+  }
+  deriving (Generic)
+
+data DisconnectIdentity = DisconnectIdentity
+  { confirmDeleteModuleSettings :: Maybe Bool
+  }
+  deriving stock (Generic)
+  deriving anyclass (FromJSON)
+
+connectAPI :: ForgeSlug -> ConnectAPI (AsServerT M)
+connectAPI slug =
+  ConnectAPI
+    { _connectAPIConnect = connect slug,
+      _connectAPIDisconnect = disconnect slug
+    }
+
+connect :: ForgeSlug -> AuthResult AuthJwtPayload -> M (Headers '[Header "Set-Cookie" SetCookie] LoginLinks)
+connect slug session = do
+  user <- webSessionUser session
+  -- An unknown slug is a 404 before anything is signed.
+  _ <- forgeOauth slug
+  nonce <- newOAuthNonce
   jwtSettings' <- view #jwtSettings
-  mApplyCookies <- liftIO $ acceptLogin cookieSettings' jwtSettings' (WebSession user)
-  case mApplyCookies of
-    Nothing -> throw Unauthorized
-    Just applyCookies -> return $ applyCookies $ user ^. githubLogin
-finishSignup _ _ = throw $ OtherError "Did not receive expected user info"
+  expiresAt <- addTime oauthStateLifetime <$> liftIO getCurrentTime
+  state <-
+    liftIO (makeJWT (ConnectState (user ^. id) slug nonce) jwtSettings' (Just expiresAt)) >>= \case
+      Left e -> throw $ OtherError $ "Failed to sign the connect state: " <> show e
+      Right state -> pure $ cs state
+  link <- authorizeLink slug (connectStatePrefix <> state)
+  cookie <- oauthStateCookie nonce
+  pure $ addHeader cookie $ LoginLinks {_loginLinksGithub = link}
 
--- | A new account administers garnix when its forge instance lists its login
--- among the admins.
-subscriptionFor :: [GhLogin] -> GhLogin -> SubscriptionType
-subscriptionFor admins' login'
-  | login' `elem` admins' = Admin
-  | otherwise = FreeSubscription
+-- | A connect's state names the account and forge of the callback's session
+-- and route.
+validateConnect :: ConnectState -> UserId -> ForgeSlug -> Either Error ()
+validateConnect state userId slug
+  | connectUser state /= userId || connectForge state /= slug =
+      Left $ ForbiddenWithMessage "This connect link was started for another session. Start connecting again."
+  | otherwise = Right ()
 
-data OAuthFlow = LoginFlow | SignupFlow
+-- | What a connect does with the identity the forge vouches for, from who
+-- holds it: an identity of another account is never moved.
+data ConnectAction = Refresh | Attach | Refuse DB.IdentityClash
+  deriving stock (Eq, Show)
+
+connectAction :: UserId -> Maybe UserId -> ConnectAction
+connectAction userId = \case
+  Nothing -> Attach
+  Just owner
+    | owner == userId -> Refresh
+    | otherwise -> Refuse (DB.OwnedBy owner)
+
+-- | Attaches the identity the forge vouches for to the session's account,
+-- which keeps one identity per forge.
+connectCallback ::
+  ForgeSlug ->
+  Maybe OAuthCode ->
+  Text ->
+  Maybe Text ->
+  AuthResult AuthJwtPayload ->
+  M (CallbackCookies LoginResult)
+connectCallback slug code signedState cookies session = do
+  jwtSettings' <- view #jwtSettings
+  state <-
+    liftIO (verifyJWT jwtSettings' (cs signedState))
+      >>= maybe (throw $ ForbiddenWithMessage "This connect link is invalid or has expired. Start connecting again.") pure
+  spendingOAuthNonce (connectNonce state) $ do
+    -- Not a 401, which would log the browser out of what it came back to.
+    user <- webSessionUserOr (ForbiddenWithMessage "Log in to connect a forge to your account.") session
+    either throw pure $ validateConnect state (user ^. id) slug
+    checkOAuthNonce cookies (connectNonce state)
+    (identity, _, credentials) <- callbackHelper slug code
+    let login' = identityForgeLogin identity
+        refuse = throw . IdentityConflict . DB.identityClashMessage login'
+    owner <- DB.lookupIdentityOwner login'
+    case connectAction (user ^. id) owner of
+      Refresh -> DB.setIdentityIsForgeAdmin login' (identity ^. isForgeAdmin)
+      Attach -> DB.tryAddIdentity (user ^. id) identity >>= either refuse pure
+      Refuse clash -> refuse clash
+    storeCredentialsFor login' credentials <?> "storing the forge credentials"
+    connected <- DB.getUserById (user ^. id) >>= maybe (throw Unauthorized) pure
+    noHeader . noHeader <$> loginResult connected (DB.EmailAlreadyUsed False)
+
+-- | Builds and other history the identity requested stay; its credentials go,
+-- and so do module settings saved through it, once the request confirms it.
+disconnect :: ForgeSlug -> AuthResult AuthJwtPayload -> DisconnectIdentity -> M NoContent
+disconnect slug session body = do
+  user <- webSessionUser session
+  let moduleSettings
+        | confirmDeleteModuleSettings body == Just True = DB.DeleteModuleSettings
+        | otherwise = DB.KeepModuleSettings
+  DB.removeIdentity (user ^. id) slug moduleSettings
+    >>= either (throw . removalRefusalError slug) (const $ pure NoContent)
+
+removalRefusalError :: ForgeSlug -> DB.RemovalRefusal -> Error
+removalRefusalError slug = \case
+  DB.NoSuchIdentity -> NotFound
+  DB.LastIdentity ->
+    IdentityConflict
+      $ getForgeSlug slug
+      <> " is the only forge your account logs in with. Connect another forge before disconnecting it."
+  DB.HasModuleSettings ->
+    IdentityConflict
+      $ "Disconnecting "
+      <> getForgeSlug slug
+      <> " deletes the module settings saved through it. Confirm with confirmDeleteModuleSettings to disconnect anyway."
 
 -- | The OAuth app of one forge instance.
-forgeOauth :: ForgeSlug -> OAuthFlow -> M OA.OAuth2
-forgeOauth slug flow = do
+forgeOauth :: ForgeSlug -> M OA.OAuth2
+forgeOauth slug = do
   -- The slug comes from the URL: one that names no configured instance is a
   -- page that does not exist, not a server error.
-  configured <- view #forges
-  config' <- maybe (throw NotFound) (pure . _forgeInstanceConfig) (Map.lookup slug configured)
+  config' <- forgeConfigFor slug >>= maybe (throw NotFound) pure
   fromRelativeUrl <- relativeUrlConverter
-  pure $ forgeOAuth2 fromRelativeUrl slug config' flow
+  pure $ forgeOAuth2 fromRelativeUrl slug config'
 
 -- | GitHub and Gitea both serve the OAuth app under @/login/oauth/@ on their
 -- web host. The first argument turns a path into an absolute garnix URL.
-forgeOAuth2 :: (Text -> Text) -> ForgeSlug -> ForgeConfig -> OAuthFlow -> OA.OAuth2
-forgeOAuth2 fromRelativeUrl slug config' flow =
+forgeOAuth2 :: (Text -> Text) -> ForgeSlug -> ForgeConfig -> OA.OAuth2
+forgeOAuth2 fromRelativeUrl slug config' =
   OA.OAuth2
     { oauthClientId = config' ^. oAuthClientId,
       oauthClientSecret = config' ^. oAuthClientSecret,
       oauthOAuthorizeEndpoint = webUrl' <> "/login/oauth/authorize",
       oauthAccessTokenEndpoint = webUrl' <> "/login/oauth/access_token",
-      oauthCallback = fromRelativeUrl (oauthCallbackPath slug flow),
+      oauthCallback = fromRelativeUrl (oauthCallbackPath slug),
       oauthScopes = []
     }
   where
     webUrl' = config' ^. Garnix.Types.webUrl
 
--- | Where the forge sends the browser back to. GitHub keeps the callbacks its
--- OAuth app has always been registered with; every other forge calls back
--- under its own slug.
-oauthCallbackPath :: ForgeSlug -> OAuthFlow -> Text
-oauthCallbackPath slug flow
-  | slug == githubForge = case flow of
-      LoginFlow -> "login/cb"
-      SignupFlow -> "signup/fill"
-  | otherwise = case flow of
-      LoginFlow -> "auth/" <> getForgeSlug slug <> "/login/cb"
-      SignupFlow -> "auth/" <> getForgeSlug slug <> "/signup/fill"
+-- | Where the forge sends the browser back to, after a login or a connect.
+-- GitHub keeps the callback its OAuth app has always been registered with;
+-- every other forge calls back under its own slug.
+oauthCallbackPath :: ForgeSlug -> Text
+oauthCallbackPath slug
+  | slug == githubForge = "login/cb"
+  | otherwise = "auth/" <> getForgeSlug slug <> "/login/cb"

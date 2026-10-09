@@ -1,7 +1,7 @@
 module Garnix.API.Runs where
 
 import Garnix.API.Builds.Types
-import Garnix.Access (Access (..), getRunWithAccess)
+import Garnix.Access (Access (..), getRunWithAccess, withSessionUser)
 import Garnix.Monad
 import Garnix.Prelude
 import Garnix.Types
@@ -15,15 +15,10 @@ data RunAPI route = RunAPI
   deriving stock (Generic)
 
 runAPI :: AuthResult AuthJwtPayload -> RunAPI (AsServerT M)
-runAPI (Authenticated ((^. #user) -> user)) =
+runAPI auth =
   RunAPI
-    { _runAPIGetRun = getRun (Just user),
-      _runAPIGetLogs = getRunLogs (Just user)
-    }
-runAPI _ =
-  RunAPI
-    { _runAPIGetRun = getRun Nothing,
-      _runAPIGetLogs = getRunLogs Nothing
+    { _runAPIGetRun = \runId -> withSessionUser auth $ \user -> getRun user runId,
+      _runAPIGetLogs = \runId after -> withSessionUser auth $ \user -> getRunLogs user runId after
     }
 
 getRun :: Maybe User -> RunId -> M RunSummary

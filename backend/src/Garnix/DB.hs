@@ -6,6 +6,7 @@ import Control.Lens
 import Control.Monad.Trans.Control (liftBaseOp_)
 import Data.ByteString qualified
 import Data.Map qualified as Map
+import Data.Maybe (listToMaybe)
 import Data.Map.Strict (Map, fromList)
 import Data.Pool (withResource)
 import Data.Set qualified as Set
@@ -27,68 +28,209 @@ import Garnix.Password
 import Garnix.Prelude
 import Garnix.Types
 
+-- * Accounts and their forge identities
+
+-- | The account a session names, with its identities as they are now.
+getUserById :: UserId -> M (Maybe User)
+getUserById userId = do
+  res <- pgQuery [pgSQL| SELECT email, created_at FROM users WHERE id = ${userId} |]
+  case res of
+    [] -> pure Nothing
+    [(email', createdAt')] -> Just . User userId email' createdAt' <$> getIdentities userId
+    _ -> throw $ OtherError "Got more than 1 user from getUserById"
+
+getIdentities :: UserId -> M [ForgeIdentity]
+getIdentities userId =
+  map (\(forge', login', isForgeAdmin') -> ForgeIdentity forge' login' isForgeAdmin')
+    <$> pgQuery
+      [pgSQL|
+        SELECT forge, login, is_forge_admin
+        FROM forge_identities
+        WHERE user_id = ${userId}
+        ORDER BY created_at, forge
+      |]
+
+-- | The account an identity belongs to.
 getUser :: ForgeLogin -> M User
-getUser (ForgeLogin forge' ghLogin) = do
+getUser login' = Garnix.DB.getUserId login' >>= getUserById >>= maybe (throw $ NoSuchUser (login' ^. ghLogin)) pure
+
+getUserId :: ForgeLogin -> M UserId
+getUserId login' = lookupIdentityOwner login' >>= maybe (throw $ NoSuchUser (login' ^. ghLogin)) pure
+
+-- | The account holding an identity; 'Nothing' for an identity garnix does not
+-- know yet, as at its first login.
+lookupIdentityOwner :: ForgeLogin -> M (Maybe UserId)
+lookupIdentityOwner (ForgeLogin forge' ghLogin') = do
+  res <- pgQuery [pgSQL| SELECT user_id FROM forge_identities WHERE forge = ${forge'} AND login = ${ghLogin'} |]
+  case res of
+    [] -> pure Nothing
+    [id] -> pure $ Just $ UserId id
+    _ -> throw $ OtherError "Got more than 1 user from lookupIdentityOwner"
+
+-- | Whether another account has the email of an account just created,
+-- compared without case. An email is contact data only: it never identifies
+-- an account, nor links two.
+newtype EmailAlreadyUsed = EmailAlreadyUsed {getEmailAlreadyUsed :: Bool}
+  deriving stock (Eq, Show)
+
+-- | A new account holding one identity. When the identity is attached
+-- meanwhile (two callbacks of one first login), no account is created and
+-- the clash says who holds it.
+createAccount :: ForgeIdentity -> Email -> M (Either IdentityClash (User, EmailAlreadyUsed))
+createAccount identity email' = withinTransaction $ do
+  emailAlreadyUsed <-
+    pgQuery [pgSQL| SELECT EXISTS (SELECT 1 FROM users WHERE lower(email) = lower(${email'})) |]
+      <&> EmailAlreadyUsed
+      . (== [Just True])
+  created <-
+    pgQuery
+      [pgSQL|
+        INSERT INTO users (email, subscription_type)
+        VALUES (${email'}, 'free')
+        RETURNING id, created_at
+      |]
+  case created of
+    [(id', createdAt')] -> do
+      let userId = UserId id'
+      tryAddIdentity userId identity >>= \case
+        Right () -> pure $ Right (User userId email' createdAt' [identity], emailAlreadyUsed)
+        Left clash -> do
+          void $ pgExec [pgSQL| DELETE FROM users WHERE id = ${userId} |]
+          pure $ Left clash
+    _ -> throw $ OtherError "impossible: not exactly one user created"
+
+-- | An account holding one identity, for tests and the dev login.
+newUser :: ForgeLogin -> Email -> M User
+newUser login' email' =
+  createAccount (ForgeIdentity (login' ^. forge) (login' ^. ghLogin) False) email'
+    >>= either (throw . IdentityConflict . identityClashMessage login') (pure . fst)
+
+-- | Why an identity could not be attached to an account.
+data IdentityClash
+  = -- | Another account holds the identity.
+    OwnedBy UserId
+  | -- | The account holds another identity on that forge: this login.
+    AlreadyOnForge GhLogin
+  | -- | Neither any more: the identity or the account's other one went away
+    -- between the insert and the reads.
+    Raced
+  deriving stock (Eq, Show)
+
+-- | The clash, from who holds the identity and which login the account holds
+-- on its forge.
+identityClash :: UserId -> Maybe UserId -> Maybe GhLogin -> IdentityClash
+identityClash userId owner onForge = case (owner, onForge) of
+  (Just ownerId, _) | ownerId /= userId -> OwnedBy ownerId
+  (_, Just login') -> AlreadyOnForge login'
+  (_, Nothing) -> Raced
+
+identityClashMessage :: ForgeLogin -> IdentityClash -> Text
+identityClashMessage (ForgeLogin forge' login') = \case
+  OwnedBy _ ->
+    "The " <> getForgeSlug forge' <> " identity " <> getGhLogin login' <> " already belongs to another garnix account."
+  AlreadyOnForge other ->
+    "Your account is already connected to " <> getForgeSlug forge' <> " as " <> getGhLogin other <> ". Disconnect it first."
+  Raced -> "The " <> getForgeSlug forge' <> " identity " <> getGhLogin login' <> " could not be attached. Try again."
+
+-- | Attaches an identity to an account, unless the identity belongs to an
+-- account already or the account has another identity on that forge.
+tryAddIdentity :: UserId -> ForgeIdentity -> M (Either IdentityClash ())
+tryAddIdentity userId identity = do
+  let forge' = identity ^. forge
+      login' = identity ^. ghLogin
+  inserted <-
+    pgExec
+      [pgSQL|
+        INSERT INTO forge_identities (user_id, forge, login, is_forge_admin)
+        VALUES (${userId}, ${forge'}, ${login'}, ${identity ^. isForgeAdmin})
+        ON CONFLICT DO NOTHING
+      |]
+  if inserted == 1
+    then pure $ Right ()
+    else do
+      owner <- lookupIdentityOwner (identityForgeLogin identity)
+      onForge <- pgQuery [pgSQL| SELECT login FROM forge_identities WHERE user_id = ${userId} AND forge = ${forge'} |]
+      pure $ Left $ identityClash userId owner (GhLogin <$> listToMaybe onForge)
+
+-- | 'tryAddIdentity', failing with the clash's message.
+addIdentity :: UserId -> ForgeIdentity -> M ()
+addIdentity userId identity =
+  tryAddIdentity userId identity
+    >>= either (throw . IdentityConflict . identityClashMessage (identityForgeLogin identity)) pure
+
+-- | Records what the forge said about the identity at this login.
+setIdentityIsForgeAdmin :: ForgeLogin -> Bool -> M ()
+setIdentityIsForgeAdmin (ForgeLogin forge' ghLogin') isForgeAdmin' =
+  void
+    $ pgExec
+      [pgSQL|
+        UPDATE forge_identities SET is_forge_admin = ${isForgeAdmin'}
+        WHERE forge = ${forge'} AND login = ${ghLogin'}
+      |]
+
+-- | Whether module settings were saved through this identity.
+identityHasModuleSettings :: ForgeLogin -> M Bool
+identityHasModuleSettings (ForgeLogin forge' ghLogin') = do
   res <-
     pgQuery
       [pgSQL|
-    SELECT
-      id,
-      email,
-      subscription_type,
-      created_at
-    FROM users
-    WHERE forge = ${forge'}
-      AND github_login = ${ghLogin}
-  |]
-  case res of
-    [] -> throw $ NoSuchUser ghLogin
-    [(id', email', sub', cre')] -> pure $ User id' forge' ghLogin email' sub' cre'
-    _ -> throw $ OtherError "Got more than 1 user from getUser"
+        SELECT id FROM module_user_repo
+        WHERE forge = ${forge'} AND github_login = ${ghLogin'}
+      |]
+  pure $ not $ null (res :: [Int64])
 
-getUserId :: ForgeLogin -> M UserId
-getUserId (ForgeLogin forge' ghLogin) = do
-  res <- pgQuery [pgSQL| SELECT id FROM users WHERE forge = ${forge'} AND github_login = ${ghLogin} |]
-  case res of
-    [] -> throw $ NoSuchUser ghLogin
-    [id] -> pure $ UserId id
-    _ -> throw $ OtherError "Got more than 1 user from getUserId"
+-- | What a disconnect does with the module settings saved through the
+-- identity: they are deleted only once the request confirms it.
+data ModuleSettings = KeepModuleSettings | DeleteModuleSettings
+  deriving stock (Eq, Show)
 
-newUser :: ForgeLogin -> Email -> SubscriptionType -> Bool -> M User
-newUser (ForgeLogin forge' ghLogin) email' sub agreeToEmails' = do
-  r <-
-    pgQuery
-      [pgSQL|
-    INSERT INTO users
-      ( forge,
-        github_login,
-        email,
-        subscription_type,
-        agree_to_emails
-      )
-    VALUES
-      ( ${forge'},
-        ${ghLogin},
-        ${email'},
-        ${sub},
-        ${agreeToEmails'}
-      )
-    ON CONFLICT DO NOTHING
-    RETURNING id, created_at
-  |]
-  case r of
-    [(id', cre')] ->
-      pure
-        $ User
-          { _userId = id',
-            _userForge = forge',
-            _userGithubLogin = ghLogin,
-            _userEmail = email',
-            _userSubscriptionType = sub,
-            _userCreatedAt = cre'
-          }
-    [] -> throw $ UserAlreadyExists ghLogin
-    _ -> throw $ OtherError "impossible: more than two users created"
+-- | Why an identity is not removed.
+data RemovalRefusal = NoSuchIdentity | LastIdentity | HasModuleSettings
+  deriving stock (Eq, Show)
+
+-- | The account's identity on a forge, among its identities.
+identityToRemove :: ForgeSlug -> [ForgeIdentity] -> Either RemovalRefusal ForgeIdentity
+identityToRemove forge' = maybe (Left NoSuchIdentity) Right . find ((== forge') . (^. forge))
+
+-- | Whether that identity may go, from how many identities the account has
+-- and whether module settings were saved through it.
+mayRemove :: ModuleSettings -> Int -> Bool -> ForgeIdentity -> Either RemovalRefusal ForgeIdentity
+mayRemove moduleSettings identityCount hasModuleSettings identity
+  | identityCount <= 1 = Left LastIdentity
+  | hasModuleSettings && moduleSettings == KeepModuleSettings = Left HasModuleSettings
+  | otherwise = Right identity
+
+-- | Detaches the account's identity on a forge, with its credentials and the
+-- module settings saved through it (see 'mayRemove'). Builds and other
+-- history it requested stay. The account's row is locked, so two concurrent
+-- removals cannot leave it with no identity.
+removeIdentity :: UserId -> ForgeSlug -> ModuleSettings -> M (Either RemovalRefusal ())
+removeIdentity userId forge' moduleSettings = withinTransaction $ do
+  _ <- pgQuery [pgSQL| SELECT id FROM users WHERE id = ${userId} FOR UPDATE |] :: M [Int32]
+  identities <- getIdentities userId
+  plan <- forM (identityToRemove forge' identities) $ \identity -> do
+    hasModuleSettings <- identityHasModuleSettings (identityForgeLogin identity)
+    pure $ mayRemove moduleSettings (length identities) hasModuleSettings identity
+  forM (join plan) $ \identity -> do
+    void
+      $ pgExec
+        [pgSQL|
+          DELETE FROM module_values
+          WHERE module_user_repo_id IN (
+            SELECT id FROM module_user_repo
+            WHERE forge = ${forge'} AND github_login = ${identity ^. ghLogin}
+          )
+        |]
+    void $ pgExec [pgSQL| DELETE FROM module_user_repo WHERE forge = ${forge'} AND github_login = ${identity ^. ghLogin} |]
+    void $ pgExec [pgSQL| DELETE FROM forge_identities WHERE user_id = ${userId} AND forge = ${forge'} |]
+
+-- | The identities of an account as two parallel arrays, for queries that
+-- match @(forge, req_user)@ against any of them.
+identityArrays :: [ForgeIdentity] -> ([Text], [Text])
+identityArrays identities =
+  ( getForgeSlug . (^. forge) <$> identities,
+    getGhLogin . (^. ghLogin) <$> identities
+  )
 
 getRepoConfig :: RepoId -> M RepoConfig
 getRepoConfig (RepoId forge' repoOwner repoName) = do
@@ -155,11 +297,11 @@ getBuild buildId = do
     [] -> throw $ NoSuchBuild buildId
     _ -> throw $ OtherError "Impossible: more than one result"
 
-getOriginalBuildForDrvPath :: Maybe User -> FilePath -> M (Maybe OriginalBuild)
-getOriginalBuildForDrvPath user drvPath = do
-  let mghLogin = user ^? _Just . githubLogin
-      mForge = user ^? _Just . forge
-      isAdmin = user ^? _Just . subscriptionType == Just Admin
+-- | @adminForges@ are the forges whose every repository the user administers.
+getOriginalBuildForDrvPath :: Maybe User -> [ForgeSlug] -> FilePath -> M (Maybe OriginalBuild)
+getOriginalBuildForDrvPath user adminForges drvPath = do
+  let (forges, logins) = identityArrays $ user ^. _Just . identities
+      adminForges' = getForgeSlug <$> adminForges
   res <-
     map (\(id, commit, status) -> OriginalBuild id commit status)
       <$> pgQuery
@@ -171,8 +313,8 @@ getOriginalBuildForDrvPath user drvPath = do
         FROM builds
         WHERE (
           repo_is_public
-            OR (${isAdmin} AND forge = ${mForge})
-            OR (${mghLogin}::text IS NOT NULL AND req_user = ${mghLogin} AND forge = ${mForge})
+            OR forge = ANY(${adminForges'}::text[])
+            OR (forge, req_user) IN (SELECT * FROM unnest(${forges}::text[], ${logins}::text[]))
         )
         AND already_built = false
         AND drv_path = ${drvPath}
@@ -306,8 +448,10 @@ getLatestBuildsMatching repoInfo commit = do
       start_time DESC
   |]
 
+-- | Builds any identity of the account requested.
 getBuilds :: User -> M [Build]
 getBuilds usr = do
+  let (forges, logins) = identityArrays $ usr ^. identities
   pgQueryPrism
     _Build
     [pgSQL|
@@ -336,8 +480,7 @@ getBuilds usr = do
       uploaded_to_cache,
       already_built
     FROM builds
-    WHERE forge = ${usr ^. forge}
-      AND req_user = ${usr ^. githubLogin}
+    WHERE (forge, req_user) IN (SELECT * FROM unnest(${forges}::text[], ${logins}::text[]))
     ORDER BY start_time DESC
     LIMIT 500
   |]
@@ -1290,8 +1433,9 @@ insertAccessTokenForUser userId name scopes tokenHash = do
           VALUES (${name}, ${tokenHash}, ${userId}, ${cache}, ${api})
       |]
 
-getGithubUserCredentials :: UserId -> M (Maybe (GhUserCredentials EncryptedText))
-getGithubUserCredentials userId = do
+-- | The OAuth credentials of an identity, if the forge's last answer left any.
+getIdentityCredentials :: ForgeLogin -> M (Maybe (GhUserCredentials EncryptedText))
+getIdentityCredentials (ForgeLogin forge' ghLogin') = do
   res <-
     pgQuery
       [pgSQL|
@@ -1300,13 +1444,15 @@ getGithubUserCredentials userId = do
       access_token_expires_at,
       refresh_token,
       refresh_token_expires_at
-    FROM github_user_credentials
-    WHERE user_id = ${userId}
+    FROM forge_identities
+    WHERE forge = ${forge'}
+      AND login = ${ghLogin'}
+      AND access_token IS NOT NULL
   |]
-  singleCredentialsRow "getGithubUserCredentials" res
+  singleCredentialsRow "getIdentityCredentials" res
 
-lockGithubUserCredentials :: UserId -> M (Maybe (GhUserCredentials EncryptedText))
-lockGithubUserCredentials userId = do
+lockIdentityCredentials :: ForgeLogin -> M (Maybe (GhUserCredentials EncryptedText))
+lockIdentityCredentials (ForgeLogin forge' ghLogin') = do
   res <-
     pgQuery
       [pgSQL|
@@ -1315,19 +1461,21 @@ lockGithubUserCredentials userId = do
       access_token_expires_at,
       refresh_token,
       refresh_token_expires_at
-    FROM github_user_credentials
-    WHERE user_id = ${userId}
+    FROM forge_identities
+    WHERE forge = ${forge'}
+      AND login = ${ghLogin'}
+      AND access_token IS NOT NULL
     FOR UPDATE
   |]
-  singleCredentialsRow "lockGithubUserCredentials" res
+  singleCredentialsRow "lockIdentityCredentials" res
 
 singleCredentialsRow ::
   Text ->
-  [(EncryptedText, Maybe UTCTime, Maybe EncryptedText, Maybe UTCTime)] ->
+  [(Maybe EncryptedText, Maybe UTCTime, Maybe EncryptedText, Maybe UTCTime)] ->
   M (Maybe (GhUserCredentials EncryptedText))
 singleCredentialsRow caller = \case
   [] -> pure Nothing
-  [(accessToken', accessTokenExpiresAt', refreshToken', refreshTokenExpiresAt')] ->
+  [(Just accessToken', accessTokenExpiresAt', refreshToken', refreshTokenExpiresAt')] ->
     pure
       $ Just
       $ GhUserCredentials
@@ -1336,46 +1484,44 @@ singleCredentialsRow caller = \case
           _ghUserCredentialsRefreshToken = refreshToken',
           _ghUserCredentialsRefreshTokenExpiresAt = refreshTokenExpiresAt'
         }
+  [(Nothing, _, _, _)] -> pure Nothing
   _ -> throw $ OtherError $ "Got more than 1 row from " <> caller
 
-upsertGithubUserCredentials :: UserId -> GhUserCredentials EncryptedText -> M ()
-upsertGithubUserCredentials userId credentials = do
+setIdentityCredentials :: ForgeLogin -> GhUserCredentials EncryptedText -> M ()
+setIdentityCredentials (ForgeLogin forge' ghLogin') credentials = do
   let accessToken' = credentials ^. accessToken
       accessTokenExpiresAt' = credentials ^. accessTokenExpiresAt
       refreshToken' = credentials ^. refreshToken
       refreshTokenExpiresAt' = credentials ^. refreshTokenExpiresAt
-  void
-    $ pgExec
+  updated <-
+    pgExec
       [pgSQL|
-    INSERT INTO github_user_credentials
-      ( user_id,
-        access_token,
-        access_token_expires_at,
-        refresh_token,
-        refresh_token_expires_at
-      )
-    VALUES
-      ( ${userId},
-        ${accessToken'},
-        ${accessTokenExpiresAt'},
-        ${refreshToken'},
-        ${refreshTokenExpiresAt'}
-      )
-    ON CONFLICT (user_id) DO UPDATE SET
-      access_token = EXCLUDED.access_token,
-      access_token_expires_at = EXCLUDED.access_token_expires_at,
-      refresh_token = EXCLUDED.refresh_token,
-      refresh_token_expires_at = EXCLUDED.refresh_token_expires_at,
-      updated_at = now()
+    UPDATE forge_identities SET
+      access_token = ${accessToken'},
+      access_token_expires_at = ${accessTokenExpiresAt'},
+      refresh_token = ${refreshToken'},
+      refresh_token_expires_at = ${refreshTokenExpiresAt'},
+      credentials_updated_at = now()
+    WHERE forge = ${forge'}
+      AND login = ${ghLogin'}
   |]
+  when (updated /= 1) $ throw $ NoSuchUser ghLogin'
 
-deleteGithubUserCredentials :: UserId -> M ()
-deleteGithubUserCredentials userId = do
+-- | Forgets the credentials of an identity the forge stopped renewing; the
+-- identity stays, and the next login stores new ones.
+deleteIdentityCredentials :: ForgeLogin -> M ()
+deleteIdentityCredentials (ForgeLogin forge' ghLogin') = do
   void
     $ pgExec
       [pgSQL|
-    DELETE FROM github_user_credentials
-    WHERE user_id = ${userId}
+    UPDATE forge_identities SET
+      access_token = NULL,
+      access_token_expires_at = NULL,
+      refresh_token = NULL,
+      refresh_token_expires_at = NULL,
+      credentials_updated_at = now()
+    WHERE forge = ${forge'}
+      AND login = ${ghLogin'}
   |]
 
 deleteAccessTokenForUser :: UserId -> Int64 -> M ()
@@ -1390,8 +1536,10 @@ deleteAccessTokenForUser userId tokenId = do
 
 -- * /api/build/commits
 
+-- | Commits any identity of the account requested builds for.
 getCommitsForReqUser :: User -> M [CommitSummary]
 getCommitsForReqUser user = do
+  let (forges, logins) = identityArrays $ user ^. identities
   map
     ( \( forge' :: ForgeSlug,
          repoOwner :: GhRepoOwner,
@@ -1416,8 +1564,7 @@ getCommitsForReqUser user = do
         -- future queries just operate on this or use the git_commit index.
         commits_for_req_user AS (
           SELECT git_commit, max(start_time) as commit_start_time FROM builds
-          WHERE forge = ${user ^. forge}
-            AND req_user = ${user ^. githubLogin}
+          WHERE (forge, req_user) IN (SELECT * FROM unnest(${forges}::text[], ${logins}::text[]))
           GROUP BY git_commit
           ORDER BY commit_start_time DESC
           LIMIT 100
@@ -1441,8 +1588,7 @@ getCommitsForReqUser user = do
           FROM commits_for_req_user
           LEFT JOIN builds
             ON commits_for_req_user.git_commit = builds.git_commit
-          WHERE forge = ${user ^. forge}
-            AND req_user = ${user ^. githubLogin}
+          WHERE (forge, req_user) IN (SELECT * FROM unnest(${forges}::text[], ${logins}::text[]))
         ),
 
         -- Now filter out re-runs using `SELECT DISTINCT`
@@ -2227,6 +2373,13 @@ pgTransaction inner = do
               Right r -> do
                 liftIO $ PSQLP.pgCommit conn
                 pure r
+
+-- | 'pgTransaction', or, inside one already, that one.
+withinTransaction :: M a -> M a
+withinTransaction inner =
+  view #dbConn >>= \case
+    Transaction _ -> inner
+    ConnectionPool _ -> pgTransaction inner
 
 pgExec :: (PGQuery q ()) => q -> M Int
 pgExec q = withConnection $ \conn -> timingAs #dbQueryTime $ do

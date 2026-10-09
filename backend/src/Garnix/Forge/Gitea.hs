@@ -142,7 +142,7 @@ giteaForgeApi config =
         email' <- case body ^? key "email" . _String of
           Just e | not (T.null e) -> pure e
           _ -> throw $ OtherError "No email address"
-        pure (GhLogin login', Email email'),
+        pure (GhLogin login', Email email', body ^? key "is_admin" . _Bool == Just True),
       _forgeGetPullRequestsForCommit = \repoInfo' (CommitHash commit') -> do
         let repo = repoInfo' ^. repoId
             fetchPage page =

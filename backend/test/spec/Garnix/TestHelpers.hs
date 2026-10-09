@@ -1,6 +1,7 @@
 module Garnix.TestHelpers where
 
 import Control.Exception.Safe (throwIO)
+import Control.Lens (Getter)
 import Control.Exception.Safe qualified
 import Cradle
 import Data.Aeson qualified as Aeson
@@ -152,7 +153,7 @@ parseRepo repo =
 notifyOfCommit :: CheckSuiteEvent -> M ()
 notifyOfCommit event = do
   let GhRepoOwner (GhLogin ghRepoOwner) = event ^. eventRepoName . _1
-  _ <- try $ DB.newUser (ForgeLogin githubForge (GhLogin ghRepoOwner)) "owner@owner.com" FreeSubscription True
+  _ <- try $ DB.newUser (ForgeLogin githubForge (GhLogin ghRepoOwner)) "owner@owner.com"
   mFlakePromise <- ghWebhookCheckSuite event
   resolve mFlakePromise
 
@@ -182,7 +183,7 @@ truncateDBMNoInsert = do
           server_heartbeat,
           eval_heartbeat,
           access_tokens,
-          github_user_credentials,
+          forge_identities,
           cache_store_hashes,
           cache_store_hash_tags,
           cache_store_hash_references,
@@ -263,13 +264,20 @@ waitFor duration action = do
               threadDelay $ fromSeconds @Double 0.1
               go startTime
 
+-- | The login of an account that holds one identity, as tests make them.
+soleLogin :: Getter User GhLogin
+soleLogin = to $ \user -> soleForgeLogin user ^. ghLogin
+
+soleForgeLogin :: User -> ForgeLogin
+soleForgeLogin user = case user ^. identities of
+  [identity] -> identityForgeLogin identity
+  identities' -> error $ "expected an account with one identity, got " <> show identities'
+
 testUser :: M User
 testUser =
   DB.newUser
     (ForgeLogin githubForge "user")
     (Email "foo@example.com")
-    FreeSubscription
-    True
 
 testBuild :: (Build -> Build) -> M Build
 testBuild f = do

@@ -360,7 +360,7 @@ spec = do
             GH.withLocalRepo ghState "owner" "repo" identity defaultCommitInfo (GH.simpleSetup flake) $ \commitInfo -> do
               resolve =<< Orchestrator.handleCommit mempty True commitInfo
               waitFor (fromSeconds @Int 40) $ do
-                builds <- DB.getBuilds $ User undefined githubForge "owner" undefined undefined undefined
+                builds <- DB.getBuilds $ User undefined undefined undefined [ForgeIdentity githubForge "owner" False]
                 let statuses = Map.fromList $ mapMaybe (\build -> fmap (build ^. package,) (build ^. uploadedToCache)) builds
                 statuses `shouldBeM` Map.fromList [("Build starting", False), ("foo", True)]
 
@@ -379,7 +379,7 @@ spec = do
                   repoDir <> "#foo"
                 ]
             resolve =<< Orchestrator.handleCommit mempty True commitInfo
-            builds <- DB.getBuilds $ User undefined githubForge "owner" undefined undefined undefined
+            builds <- DB.getBuilds $ User undefined undefined undefined [ForgeIdentity githubForge "owner" False]
             let statuses = Map.fromList $ mapMaybe (\build -> fmap (build ^. package,) (build ^. status)) builds
             statuses
               `shouldBeM` ("Build starting" ~> Success)
@@ -476,20 +476,20 @@ spec = do
         GH.withFakeGithubInterface $ \github -> do
           withServer $ \server -> do
             user <- testUser
-            GH.mkRepo github (GhRepoOwner $ user ^. githubLogin) "repo"
+            GH.mkRepo github (GhRepoOwner $ user ^. soleLogin) "repo"
               $ (#publicity .~ RepoIsPublic False)
             (evalResult, storePath) <- localTestBuild simpleFlake
-            upload mempty (RepoId githubForge (GhRepoOwner $ user ^. githubLogin) "repo") evalResult (RepoIsPublic False)
+            upload mempty (RepoId githubForge (GhRepoOwner $ user ^. soleLogin) "repo") evalResult (RepoIsPublic False)
             liftIO $ garbageCollectStorePath (cs storePath)
             narInfoResponse <- server.get ("/api/cache/" <> cs (getHash storePath) <> ".narinfo")
             narInfoResponse ^. responseStatus `shouldBeM` notFound404
 
       describe "accessing private uploaded nar files with access tokens" $ do
         let createDerivationInCache user github = do
-              GH.mkRepo github (GhRepoOwner $ user ^. githubLogin) "repo"
+              GH.mkRepo github (GhRepoOwner $ user ^. soleLogin) "repo"
                 $ (#publicity .~ RepoIsPublic False)
               (evalResult, storePath) <- localTestBuild simpleFlake
-              upload mempty (RepoId githubForge (GhRepoOwner $ user ^. githubLogin) "repo") evalResult (RepoIsPublic False)
+              upload mempty (RepoId githubForge (GhRepoOwner $ user ^. soleLogin) "repo") evalResult (RepoIsPublic False)
               liftIO $ garbageCollectStorePath (cs storePath)
               pure storePath
 
@@ -506,7 +506,7 @@ spec = do
                   $ unindent
                   $ [i|
                       machine localhost
-                      login #{getGhLogin (user ^. githubLogin)}
+                      login #{getGhLogin (user ^. soleLogin)}
                       password #{getAccessTokenText accessToken}
                     |]
                 testCachePubKey <- liftIO $ getEnv "TEST_CACHE_PUB_KEY"
@@ -550,10 +550,10 @@ spec = do
           GH.withFakeGithubInterface $ \github -> do
             withServer $ \server -> do
               user <- testUser
-              GH.mkRepo github (GhRepoOwner $ user ^. githubLogin) "repo"
+              GH.mkRepo github (GhRepoOwner $ user ^. soleLogin) "repo"
                 $ (#publicity .~ RepoIsPublic False)
               (evalResult, storePath) <- localTestBuild simpleFlake
-              upload mempty (RepoId githubForge (GhRepoOwner $ user ^. githubLogin) "repo") evalResult (RepoIsPublic False)
+              upload mempty (RepoId githubForge (GhRepoOwner $ user ^. soleLogin) "repo") evalResult (RepoIsPublic False)
               liftIO $ garbageCollectStorePath (cs storePath)
               let plainTextToken = "hunter2"
               hashPassword plainTextToken >>= DB.insertAccessTokenForUser (user ^. id) "test token" (AccessTokenScopes {api = False, cache = True})

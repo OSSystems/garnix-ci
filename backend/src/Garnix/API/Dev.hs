@@ -31,27 +31,26 @@ devAPI = do
   cookieSettings' <- sessionCookieSettings
   jwtSettings' <- view #jwtSettings
   storeCredentialsFor
-    (user ^. id)
+    devLogin
     GhUserCredentials
       { _ghUserCredentialsAccessToken = "tok",
         _ghUserCredentialsAccessTokenExpiresAt = Nothing,
         _ghUserCredentialsRefreshToken = Nothing,
         _ghUserCredentialsRefreshTokenExpiresAt = Nothing
       }
-  mApplyCookies <- liftIO $ acceptLogin cookieSettings' jwtSettings' (WebSession user)
+  mApplyCookies <- liftIO $ acceptLogin cookieSettings' jwtSettings' (WebSession (user ^. id))
   case mApplyCookies of
     Nothing -> throw Unauthorized
     Just applyCookies -> pure $ applyCookies (#success .== True)
 
+devLogin :: ForgeLogin
+devLogin = ForgeLogin githubForge "dev-user"
+
 getTestUser :: M User
 getTestUser = do
-  existing <- try $ DB.getUser (ForgeLogin githubForge "dev-user")
+  existing <- try $ DB.getUser devLogin
   case existing of
     Right user -> return user
     Left (ErrorWithContext {err = NoSuchUser {}}) -> do
-      DB.newUser
-        (ForgeLogin githubForge "dev-user")
-        (Email "dev-user@example.com")
-        FreeSubscription
-        True
+      DB.newUser devLogin (Email "dev-user@example.com")
     Left e -> throwError e

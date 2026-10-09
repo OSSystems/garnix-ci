@@ -4,7 +4,7 @@ import Data.Maybe (maybeToList)
 import Data.Text qualified as T
 import Garnix.API.Builds.Types
 import Garnix.API.Commits (GetCommit, ListCommits, getCommitsForUser, getSingleCommit)
-import Garnix.Access (Access (..), getBuildWithAccess)
+import Garnix.Access (Access (..), administeredForges, getBuildWithAccess, withRequiredUser, withSessionUser)
 import Garnix.DB qualified as DB
 import Garnix.Monad
 import Garnix.Orchestrator qualified as Orchestrator
@@ -30,24 +30,14 @@ data BuildAPI route = BuildAPI
   deriving (Generic)
 
 buildAPI :: AuthResult AuthJwtPayload -> BuildAPI (AsServerT M)
-buildAPI (Authenticated ((^. #user) -> user')) =
+buildAPI auth =
   BuildAPI
-    { _buildAPIgetLogs = getBuildLogs (Just user'),
-      _buildAPIgetLogsRaw = getLogsRaw (Just user'),
-      _buildAPIgetBuild = getBuild' (Just user'),
-      _buildAPIupdateBuild = updateBuild user',
-      _buildAPIlistCommits = getCommitsForUser user',
-      _buildAPIgetCommit = getSingleCommit (Just user'),
-      _buildAPIsubmitTestBuild = submitTestBuild
-    }
-buildAPI _ =
-  BuildAPI
-    { _buildAPIgetLogs = getBuildLogs Nothing,
-      _buildAPIgetLogsRaw = getLogsRaw Nothing,
-      _buildAPIgetBuild = getBuild' Nothing,
-      _buildAPIupdateBuild = \_ _ -> throw Unauthorized,
-      _buildAPIlistCommits = throw Unauthorized,
-      _buildAPIgetCommit = getSingleCommit Nothing,
+    { _buildAPIgetLogs = \buildId after -> withSessionUser auth $ \user' -> getBuildLogs user' buildId after,
+      _buildAPIgetLogsRaw = \buildId -> withSessionUser auth $ \user' -> getLogsRaw user' buildId,
+      _buildAPIgetBuild = \buildId -> withSessionUser auth $ \user' -> getBuild' user' buildId,
+      _buildAPIupdateBuild = \buildId update -> withRequiredUser auth $ \user' -> updateBuild user' buildId update,
+      _buildAPIlistCommits = withRequiredUser auth getCommitsForUser,
+      _buildAPIgetCommit = \commit' -> withSessionUser auth $ \user' -> getSingleCommit user' commit',
       _buildAPIsubmitTestBuild = submitTestBuild
     }
 
@@ -115,7 +105,9 @@ getBuild' :: Maybe User -> BuildId -> M BuildResponse
 getBuild' user' buildId = do
   b <- getBuildWithAccess Read user' buildId
   originalBuild <- case b ^. drvPath of
-    Just drv | b ^. alreadyBuilt == Just True -> DB.getOriginalBuildForDrvPath user' drv
+    Just drv | b ^. alreadyBuilt == Just True -> do
+      adminForges <- administeredForges user'
+      DB.getOriginalBuildForDrvPath user' adminForges drv
     _ -> pure Nothing
   pure
     $ BuildResponse

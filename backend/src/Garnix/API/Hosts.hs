@@ -26,6 +26,7 @@ import Data.Map (Map)
 import Data.Map qualified as Map
 import Data.Maybe (listToMaybe, mapMaybe)
 import Data.Text qualified as T
+import Garnix.Access (githubIdentity, requireGithubIdentity, webSessionUser)
 import Garnix.DB qualified as DB
 import Garnix.DB.Hosting qualified as DBHosting
 import Garnix.Duration
@@ -377,23 +378,28 @@ onDemandCheck queried = do
 
 -- * The authenticated view
 
+-- | Servers are listed for GitHub owners, so for the account's github
+-- identity.
 getHosts :: AuthResult AuthJwtPayload -> M [RunningServer]
-getHosts (Authenticated (WebSession user)) =
-  withGithubUserToken user $ getRunningAndRecentServersForOwners (user ^. forge) <=< ownersOf user
-getHosts _ = throw Unauthorized
+getHosts auth =
+  githubIdentity <$> webSessionUser auth >>= \case
+    Nothing -> pure []
+    Just login' -> withUserToken login' $ getRunningAndRecentServersForOwners githubForge <=< ownersOf login'
 
 deleteHost :: AuthResult AuthJwtPayload -> ServerId -> M ()
-deleteHost (Authenticated (WebSession user)) serverId = withGithubUserToken user $ \ghToken -> do
-  servers <- getRunningAndRecentServersForOwners (user ^. forge) =<< ownersOf user ghToken
-  -- Deleting is gated on the server appearing in the caller's own list, so a
-  -- server id alone is not authorization to tear it down.
-  if any ((== serverId) . _runningServerId) servers
-    then stopServer serverId
-    else throw NotFound
-deleteHost _ _ = throw Unauthorized
+deleteHost auth serverId = do
+  login' <- requireGithubIdentity =<< webSessionUser auth
+  withUserToken login' $ \ghToken -> do
+    servers <- getRunningAndRecentServersForOwners githubForge =<< ownersOf login' ghToken
+    -- Deleting is gated on the server appearing in the caller's own list, so a
+    -- server id alone is not authorization to tear it down.
+    if any ((== serverId) . _runningServerId) servers
+      then stopServer serverId
+      else throw NotFound
+
 
 -- | The owners a session may see servers for: the user, plus every org the
 -- garnix app is installed on for them.
-ownersOf :: User -> GhToken -> M [GhRepoOwner]
-ownersOf user ghToken =
-  (GhRepoOwner (user ^. githubLogin) :) . map organizationName <$> getInstalledOrgs ghToken
+ownersOf :: ForgeLogin -> GhToken -> M [GhRepoOwner]
+ownersOf login' ghToken =
+  (GhRepoOwner (login' ^. ghLogin) :) . map organizationName <$> getInstalledOrgs ghToken

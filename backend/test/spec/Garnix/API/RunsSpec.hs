@@ -59,7 +59,7 @@ spec = inM
         withFakeGithubInterface $ \ghState -> do
           withServer $ \testServer -> do
             user <- testServer.login
-            mkRepo ghState "owner" "repo" $ (#publicity .~ RepoIsPublic False) . (#collaborators .~ [user ^. githubLogin])
+            mkRepo ghState "owner" "repo" $ (#publicity .~ RepoIsPublic False) . (#collaborators .~ [user ^. soleLogin])
             run <- DB.newRun "some-run" defaultCommitInfo
             let runId = run ^. id . to getRunId . re hashIdText
             result <- testServer.get $ cs $ "/api/run/" <> runId
@@ -130,7 +130,7 @@ spec = inM
         withFakeGithubInterface $ \ghState -> do
           withServer $ \testServer -> do
             user <- testServer.login
-            mkRepo ghState "owner" "repo" $ (#publicity .~ RepoIsPublic False) . (#collaborators .~ [user ^. githubLogin])
+            mkRepo ghState "owner" "repo" $ (#publicity .~ RepoIsPublic False) . (#collaborators .~ [user ^. soleLogin])
             run <- DB.newRun "some-run" defaultCommitInfo
             storeRunLogLine run (mkLogLine "some log line")
             let runId = run ^. id . to getRunId . re hashIdText

@@ -54,14 +54,13 @@ data WholeAPI r = WholeAPI
     forgeKeys :: r :- "api" :> "keys" :> Capture "forge" ForgeSlug :> Capture "owner" GhRepoOwner :> Capture "repo" GhRepoName :> "repo-key.public" :> Get '[PlainText] PublicKey,
     forgeActionKeys :: r :- "api" :> "keys" :> Capture "forge" ForgeSlug :> Capture "owner" GhRepoOwner :> Capture "repo" GhRepoName :> "actions" :> Capture "action" PackageName :> "key.public" :> Get '[PlainText] PublicKey,
     login :: r :- "api" :> "login" :> ToServantApi LoginAPI,
-    signup :: r :- "api" :> "signup" :> ToServantApi SignupAPI,
     whoami :: r :- "api" :> "whoami" :> Auth '[JWT, Cookie] AuthJwtPayload :> Get '[JSON] (Maybe UserDto),
     authJwt :: r :- "api" :> "auth" :> "jwt" :> ToServantApi AuthJwtAPI,
-    -- | Logging in and signing up through any configured forge instance.
-    -- @login@ and @signup@ above are GitHub's, kept for the routes its OAuth
-    -- app calls back to.
+    -- | Logging in through any configured forge instance. @login@ above is
+    -- GitHub's, kept for the route its OAuth app calls back to.
     forgeLogin :: r :- "api" :> "auth" :> Capture "forge" ForgeSlug :> "login" :> ToServantApi LoginAPI,
-    forgeSignup :: r :- "api" :> "auth" :> Capture "forge" ForgeSlug :> "signup" :> ToServantApi SignupAPI,
+    -- | Connecting the session's account to a forge, and disconnecting it.
+    forgeConnect :: r :- "api" :> "auth" :> Capture "forge" ForgeSlug :> ToServantApi ConnectAPI,
     config :: r :- "api" :> "config" :> Get '[JSON] FrontendConfig,
     badges :: r :- "api" :> "badges" :> Capture "owner" GhRepoOwner :> Capture "repo" GhRepoName :> QueryParam "branch" Branch :> Get '[JSON] Badge,
     forgeBadges :: r :- "api" :> "badges" :> Capture "forge" ForgeSlug :> Capture "owner" GhRepoOwner :> Capture "repo" GhRepoName :> QueryParam "branch" Branch :> Get '[JSON] Badge,
@@ -104,9 +103,8 @@ wholeAPI =
       account = toServant . accountAPI,
       dev = devAPI,
       login = toServant (loginAPI githubForge),
-      signup = toServant (signupAPI githubForge),
       forgeLogin = toServant . loginAPI,
-      forgeSignup = toServant . signupAPI,
+      forgeConnect = toServant . connectAPI,
       whoami = whoAmIAPI,
       authJwt = toServant authJwtAPI,
       keys = \owner name -> Garnix.API.Keys.getRepoPublicKey (RepoId githubForge owner name),

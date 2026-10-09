@@ -101,7 +101,7 @@ spec = do
                     };
                   }
                 |]
-        user <- DB.newUser (ForgeLogin githubForge (GhLogin "owner")) "owner@owner.com" FreeSubscription True
+        user <- DB.newUser (ForgeLogin githubForge (GhLogin "owner")) "owner@owner.com"
         GH.withLocalRepo ghState "owner" "repo" identity defaultCommitInfo (GH.simpleSetup flake) $ \commitInfo -> do
           testHandleCommit commitInfo
           build <- fromSingleton <$> filter (\b -> b ^. packageType /= TypeOverall) <$> DB.getBuilds user
@@ -111,7 +111,7 @@ spec = do
           logLines `shouldContainM` [(Just "succeeding", "test build log")]
 
       it "skips builds if the same repoOwner, repoName, commit, and branch are pushed multiple times" $ GH.withFakeGithubInterface $ \ghState -> do
-        user <- DB.newUser (ForgeLogin githubForge (GhLogin "owner")) "owner@owner.com" FreeSubscription True
+        user <- DB.newUser (ForgeLogin githubForge (GhLogin "owner")) "owner@owner.com"
         GH.withLocalRepo ghState "owner" "repo" identity defaultCommitInfo (GH.simpleSetup "{ outputs = {self}: { packages = {}; }; }") $ \commitInfo -> do
           let reporter = mkGithubReporter (commitInfo ^. repoInfo) (commitInfo ^. commit) <> openSearchReporter
           resolve =<< handleCommit reporter False commitInfo
@@ -135,7 +135,7 @@ spec = do
                       };
                     }
                   |]
-          user <- DB.newUser (ForgeLogin githubForge (GhLogin "owner")) "owner@owner.com" FreeSubscription True
+          user <- DB.newUser (ForgeLogin githubForge (GhLogin "owner")) "owner@owner.com"
           GH.withLocalRepo ghState "owner" "repo" identity defaultCommitInfo (GH.simpleSetup flake) $ \commitInfo -> do
             testHandleCommit commitInfo
             build1 <-
@@ -159,7 +159,7 @@ spec = do
                       };
                     }
                   |]
-          user <- DB.newUser (ForgeLogin githubForge (GhLogin "owner")) "owner@owner.com" FreeSubscription True
+          user <- DB.newUser (ForgeLogin githubForge (GhLogin "owner")) "owner@owner.com"
           GH.withLocalRepo ghState "owner" "repo" identity defaultCommitInfo (GH.simpleSetup flake) $ \commitInfo -> do
             void $ try $ testHandleCommit commitInfo
             build <-
@@ -323,7 +323,7 @@ spec = do
 
       it "should report build result to the database" $ do
         GH.withFakeGithubInterface $ \ghState -> do
-          user <- DB.newUser (ForgeLogin githubForge (GhLogin "owner")) "owner@owner.com" FreeSubscription True
+          user <- DB.newUser (ForgeLogin githubForge (GhLogin "owner")) "owner@owner.com"
           GH.withLocalRepo ghState "owner" "repo" identity defaultCommitInfo (GH.simpleSetup "{ outputs = {self}: { packages = {}; }; }") $ \commitInfo -> do
             testHandleCommit commitInfo
             build <- fromSingleton <$> DB.getBuilds user
@@ -331,7 +331,7 @@ spec = do
 
       it "should report build end time to the database" $ do
         GH.withFakeGithubInterface $ \ghState -> do
-          user <- DB.newUser (ForgeLogin githubForge (GhLogin "owner")) "owner@owner.com" FreeSubscription True
+          user <- DB.newUser (ForgeLogin githubForge (GhLogin "owner")) "owner@owner.com"
           GH.withLocalRepo ghState "owner" "repo" identity defaultCommitInfo (GH.simpleSetup "{ outputs = {self}: { packages = {}; }; }") $ \commitInfo -> do
             beforeBuild <- liftIO getCurrentTime
             testHandleCommit commitInfo
@@ -343,7 +343,7 @@ spec = do
                 Nothing -> False
 
       it "should not allow unauthenticated users to view private repos" $ do
-        user <- DB.newUser (ForgeLogin githubForge (GhLogin "owner")) "owner@owner.com" FreeSubscription True
+        user <- DB.newUser (ForgeLogin githubForge (GhLogin "owner")) "owner@owner.com"
         GH.withFakeGithubInterface $ \ghState -> do
           let commitInfo = defaultCommitInfo & repoPublicity .~ RepoIsPublic False
           GH.withLocalRepo ghState "owner" "repo" identity commitInfo (GH.simpleSetup "{ outputs = _: {}; }") $ \commitInfo -> do
@@ -373,7 +373,7 @@ spec = do
           local (#githubInterface .~ throwingGithubIface) $ testHandleCommit commitInfo
 
       it "adds the build output paths to the builds table" $ GH.withFakeGithubInterface $ \ghState -> do
-        user <- DB.newUser (ForgeLogin githubForge (GhLogin "owner")) "owner@owner.com" FreeSubscription True
+        user <- DB.newUser (ForgeLogin githubForge (GhLogin "owner")) "owner@owner.com"
         randomness :: Int <- randomIO
         let flake =
               cs
@@ -402,7 +402,7 @@ spec = do
           Nix.getOutputByName "bar" outputs `shouldSatisfyM` isJust
 
       it "reports the correct url for builds" $ GH.withFakeGithubInterface $ \ghState -> do
-        user <- DB.newUser (ForgeLogin githubForge (GhLogin "owner")) "owner@owner.com" FreeSubscription True
+        user <- DB.newUser (ForgeLogin githubForge (GhLogin "owner")) "owner@owner.com"
         GH.withLocalRepo ghState "owner" "repo" identity defaultCommitInfo (GH.simpleSetup "{ outputs = _: {}; }") $ \commitInfo -> do
           testHandleCommit commitInfo
           build <- fromSingleton <$> DB.getBuilds user
@@ -617,7 +617,7 @@ spec = do
               shouldIncrementalize ghState commit'
 
       it "should allow unauthenticated users to view public repos" $ do
-        user <- DB.newUser (ForgeLogin githubForge (GhLogin "owner")) "owner@owner.com" FreeSubscription True
+        user <- DB.newUser (ForgeLogin githubForge (GhLogin "owner")) "owner@owner.com"
         GH.withFakeGithubInterface $ \ghState -> do
           let commitInfo = defaultCommitInfo & repoPublicity .~ RepoIsPublic True
           GH.withLocalRepo ghState "owner" "repo" identity commitInfo (GH.simpleSetup "{ outputs = _: {}; }") $ \commitInfo -> do
@@ -870,7 +870,7 @@ spec = do
         context "rerunning builds" $ aroundM_ suppressLogsWhenPassing $ do
           let rerunSingleCheckRun :: PackageName -> CommitInfo -> M ()
               rerunSingleCheckRun p _ = do
-                builds <- DB.getBuilds $ User undefined githubForge "owner" undefined undefined undefined
+                builds <- DB.getBuilds $ User undefined undefined undefined [ForgeIdentity githubForge "owner" False]
                 build <-
                   maybe
                     (error $ "Test setup failure. Could not find build " <> cs (show p))
@@ -1058,7 +1058,7 @@ spec = do
 
             mkBuildInfo user commit =
               CommitInfo
-                (ForgeLogin githubForge (user ^. githubLogin))
+                (ForgeLogin githubForge (user ^. soleLogin))
                 (RepoIsPublic True)
                 (RepoInfo undefined (GhToken "test-token") (RepoId githubForge "owner" "repo"))
                 (Just "branch")
@@ -1107,7 +1107,7 @@ spec = do
                                     "repoName": "repo",
                                     "branch": "branch",
                                     "commit": #{commitHash},
-                                    "requestingUser": #{user ^. githubLogin}
+                                    "requestingUser": #{user ^. soleLogin}
                                   }
                                 |]
 
