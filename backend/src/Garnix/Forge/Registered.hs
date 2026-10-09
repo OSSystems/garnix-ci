@@ -11,7 +11,12 @@ module Garnix.Forge.Registered
     normaliseRegistrationUrl,
     pendingForgeTtl,
     pendingForgeLock,
+    disabledForgeQuarantine,
+    LastDisabled (..),
+    forgetOnActivation,
     mayManageRegisteredForge,
+    pendingLoginRefusal,
+    pendingLogin,
     withLiveIdentities,
   )
 where
@@ -42,7 +47,8 @@ instance ToJSON ForgeSource where
 
 -- | A registered forge is pending until an OAuth through it succeeds, which
 -- proves the client id and secret it was registered with work on it.
--- Disabling one keeps its row, and the history that names its slug.
+-- Disabling one keeps its row, its identities and the history that names its
+-- slug.
 data ForgeStatus = ForgePending | ForgeActive | ForgeDisabled
   deriving stock (Eq, Show, Enum, Bounded)
 
@@ -64,6 +70,35 @@ pendingForgeTtl = 24 * 60 * 60
 -- finished does not keep the host from others for long.
 pendingForgeLock :: NominalDiffTime
 pendingForgeLock = 15 * 60
+
+-- | How long a disabled forge stays the forge everyone logged in through:
+-- registered again within it, it comes back with everyone. Past it, its host
+-- may well have changed hands (a domain expires, and is bought), and a new
+-- registration forgets everyone who logged in through it before.
+disabledForgeQuarantine :: NominalDiffTime
+disabledForgeQuarantine = 30 * 24 * 60 * 60
+
+-- | When the forge a registration takes over was last disabled, against
+-- 'disabledForgeQuarantine', on the database's clock.
+data LastDisabled
+  = -- | Never: the host is new, or its row is gone (a registration that was
+    -- never completed is purged, and so is one that replaced a forge
+    -- disabled longer ago than the quarantine).
+    NeverDisabled
+  | DisabledWithinQuarantine
+  | DisabledBeforeQuarantine
+  deriving stock (Eq, Show, Enum, Bounded)
+
+-- | Whether activating a registration forgets the identities on its forge,
+-- and the accounts left with none ('Garnix.DB.Forges.forgetIdentitiesOn'):
+-- unless it brings back a forge disabled within the quarantine. Identities on
+-- a host never registered before are those of a configured forge the
+-- operator removed, which vouch for nobody on it now.
+forgetOnActivation :: LastDisabled -> Bool
+forgetOnActivation = \case
+  NeverDisabled -> True
+  DisabledWithinQuarantine -> False
+  DisabledBeforeQuarantine -> True
 
 -- | A forge URL as someone typed it, normalised.
 data RegistrationUrl = RegistrationUrl
@@ -104,10 +139,11 @@ normaliseRegistrationUrl allowHttp raw = do
         registrationWebUrl = scheme <> "//" <> host <> cs (uriPort authority)
       }
 
--- | Who may replace a registered forge's client secret, or disable it: the
--- account that registered it (the one that completed its first OAuth), or an
--- account whose identity on that very forge the forge calls an administrator.
--- What another forge says of an identity there never counts.
+-- | Who may replace a registered forge's client secret (which re-enables a
+-- disabled one), or disable it: the account that registered it (the one that
+-- completed its first OAuth), or an account whose identity on that very forge
+-- the forge calls an administrator. What another forge says of an identity
+-- there never counts.
 mayManageRegisteredForge ::
   ForgeSlug ->
   -- | The account that registered it
@@ -130,3 +166,35 @@ mayManageRegisteredForge slug' registeredBy caller identity =
 -- through it.
 withLiveIdentities :: [ForgeIdentity] -> User -> Maybe User
 withLiveIdentities live user = (user & identities .~ live) <$ guard (not $ null live)
+
+-- | Why a login through a forge, from a browser that holds the token of its
+-- registration or not, must not go on: a registered forge still pending logs
+-- in only whoever registered it, whose login is what activates it. Anybody
+-- else would get an account through a forge nobody vouched for yet.
+pendingLoginRefusal :: ForgeSlug -> ForgeStatus -> Bool -> Maybe Error
+pendingLoginRefusal slug' status holdsToken = case status of
+  ForgeActive -> Nothing
+  ForgePending
+    | holdsToken -> Nothing
+    | otherwise ->
+        Just
+          $ ForbiddenWithMessage
+          $ getForgeSlug slug'
+          <> " is still waiting for whoever registered it to log in through it. Try again once they have."
+  ForgeDisabled -> Just NotFound
+
+-- | What a login or a connect through a registered forge does, from its
+-- status, the hash of its registration token and the hash of the token the
+-- browser presents: refused ('pendingLoginRefusal'), or let through, and if
+-- it completes a pending registration, the hash that registration is
+-- activated with.
+pendingLogin :: ForgeSlug -> ForgeStatus -> Maybe Text -> Maybe Text -> Either Error (Maybe Text)
+pendingLogin slug' status registered presented =
+  maybe (Right activates) Left $ pendingLoginRefusal slug' status holdsToken
+  where
+    holdsToken = isJust presented && presented == registered
+    activates = case status of
+      ForgePending | holdsToken -> presented
+      ForgePending -> Nothing
+      ForgeActive -> Nothing
+      ForgeDisabled -> Nothing

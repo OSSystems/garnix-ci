@@ -1,7 +1,6 @@
 module Garnix.API where
 
 import Autodocodec.Schema (JSONSchema)
-import Data.Map.Strict qualified as Map
 import Data.Text qualified as T
 import Garnix.API.Account
 import Garnix.API.Auth
@@ -12,6 +11,7 @@ import Garnix.API.Commits
 import Garnix.API.ConfigSchema (garnixConfigJsonSchema)
 import Garnix.API.Dev (DevAPI, devAPI)
 import Garnix.API.ForgeWebhooks (ForgeWebhookAPI, forgeWebhookAPI)
+import Garnix.API.Forges
 import Garnix.API.GhWebhooks
 import Garnix.API.Health
 import Garnix.API.Hosts (HostsAPI, hostsAPI)
@@ -20,6 +20,8 @@ import Garnix.API.Modules
 import Garnix.API.Runs (RunAPI, runAPI)
 import Garnix.Access (repoIdFromRoute)
 import Garnix.DB qualified as DB
+import Garnix.Forge.Gitea (instanceHost)
+import Garnix.Forge.Registered (ForgeSource)
 import Garnix.Monad
 import Garnix.Prelude
 import Garnix.Types
@@ -65,6 +67,12 @@ data WholeAPI r = WholeAPI
     badges :: r :- "api" :> "badges" :> Capture "owner" GhRepoOwner :> Capture "repo" GhRepoName :> QueryParam "branch" Branch :> Get '[JSON] Badge,
     forgeBadges :: r :- "api" :> "badges" :> Capture "forge" ForgeSlug :> Capture "owner" GhRepoOwner :> Capture "repo" GhRepoName :> QueryParam "branch" Branch :> Get '[JSON] Badge,
     forges :: r :- "api" :> "forges" :> Get '[JSON] [ForgeSummary],
+    -- | Which forge a URL names, and whether to log in through it or register
+    -- it first ("Garnix.API.Forges").
+    authStart :: r :- "api" :> "auth" :> "start" :> RemoteHost :> Header "X-Forwarded-For" Text :> ReqBody '[JSON] AuthStartRequest :> Post '[JSON] (Headers '[Header "Set-Cookie" SetCookie] AuthStartAnswer),
+    registerForge :: r :- "api" :> "forges" :> RemoteHost :> Header "X-Forwarded-For" Text :> Header "Cookie" Text :> ReqBody '[JSON] RegisterForgeRequest :> Post '[JSON] (Headers '[Header "Set-Cookie" SetCookie, Header "Set-Cookie" SetCookie] AuthStartAnswer),
+    replaceForgeSecret :: r :- "api" :> "forges" :> Capture "slug" ForgeSlug :> "secret" :> Auth '[JWT, Cookie] AuthJwtPayload :> ReqBody '[JSON] ReplaceForgeSecretRequest :> Put '[JSON] (),
+    removeForge :: r :- "api" :> "forges" :> Capture "slug" ForgeSlug :> Auth '[JWT, Cookie] AuthJwtPayload :> Delete '[JSON] (),
     waitlist :: r :- "api" :> "waitlist" :> ReqBody '[JSON] Email :> Post '[JSON] (),
     cache :: r :- "api" :> "cache" :> ToServantApi CacheAPI,
     garnixConfigSchema :: r :- "api" :> "garnix-config-schema.json" :> Get '[JSON] JSONSchema,
@@ -119,6 +127,10 @@ wholeAPI =
       badges = \owner name -> badgesAPI (RepoId githubForge owner name),
       forgeBadges = \slug owner name branch' -> repoIdFromRoute slug owner name >>= \repo -> badgesAPI repo branch',
       forges = forgesAPI,
+      authStart = authStartAPI,
+      registerForge = registerForgeAPI,
+      replaceForgeSecret = replaceForgeSecretAPI,
+      removeForge = removeForgeAPI,
       waitlist = waitlistAPI,
       cache = toServant cacheAPI,
       garnixConfigSchema = pure garnixConfigJsonSchema,
@@ -136,7 +148,11 @@ getConfig = do
 data ForgeSummary = ForgeSummary
   { _forgeSummarySlug :: ForgeSlug,
     _forgeSummaryKind :: Text,
-    _forgeSummaryWebUrl :: Text
+    _forgeSummaryWebUrl :: Text,
+    -- | @configured@ or @registered@ (through the UI).
+    _forgeSummarySource :: ForgeSource,
+    -- | What to call it: the host of its web URL.
+    _forgeSummaryName :: Text
   }
   deriving stock (Eq, Show, Generic)
 
@@ -145,17 +161,17 @@ instance ToJSON ForgeSummary where
   toJSON = ourToJSON
 
 forgesAPI :: M [ForgeSummary]
-forgesAPI = do
-  configured <- view #forges
-  pure $ map (summarize . _forgeInstanceConfig) $ Map.elems configured
+forgesAPI = map (\(source, instance') -> summarize source (_forgeInstanceConfig instance')) <$> listActiveForges
   where
-    summarize config =
+    summarize source config =
       ForgeSummary
         { _forgeSummarySlug = _forgeConfigSlug config,
           _forgeSummaryKind = case _forgeConfigKind config of
             GithubForgeKind -> "github"
             GiteaForgeKind -> "gitea",
-          _forgeSummaryWebUrl = _forgeConfigWebUrl config
+          _forgeSummaryWebUrl = _forgeConfigWebUrl config,
+          _forgeSummarySource = source,
+          _forgeSummaryName = fromMaybe (_forgeConfigWebUrl config) (instanceHost config)
         }
 
 waitlistAPI :: Email -> M ()

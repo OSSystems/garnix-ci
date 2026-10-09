@@ -49,6 +49,7 @@ import Garnix.Monad.Pool (Pool)
 import Garnix.Nix.Types (StoreHash)
 import Garnix.Nix.Types qualified as Nix
 import Garnix.Prelude
+import Garnix.RateLimit (RateLimiter)
 import Garnix.Types hiding (ghRunId, statusCode)
 import GitHub qualified as GH
 import GitHub.App.Auth (InstallationAuth)
@@ -502,6 +503,9 @@ data ForgeInstance = ForgeInstance
 -- | A registered forge, as its registration finds it.
 data RegisteredForge = RegisteredForge
   { _registeredForgeStatus :: ForgeStatus,
+    -- | The hash of the token of the browser that submitted it, while it is
+    -- pending.
+    _registeredForgeTokenHash :: Maybe Text,
     _registeredForgeInstance :: ForgeInstance
   }
 
@@ -517,7 +521,11 @@ data ForgeRegistration = ForgeRegistration
     -- non-public addresses ("Garnix.Forge.OutboundGuard").
     _forgeRegistrationManager :: Manager,
     -- | Whether plain http forge URLs are accepted. Only tests set it.
-    _forgeRegistrationAllowHttp :: Bool
+    _forgeRegistrationAllowHttp :: Bool,
+    -- | Per client, for @POST /api/auth/start@.
+    _forgeRegistrationStartLimit :: RateLimiter,
+    -- | Per client, for @POST /api/forges@, which makes garnix probe the URL.
+    _forgeRegistrationRegisterLimit :: RateLimiter
   }
 
 -- * Provisioner

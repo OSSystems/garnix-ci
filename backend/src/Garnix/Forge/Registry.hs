@@ -9,23 +9,33 @@ module Garnix.Forge.Registry
     newForgeRegistrationWithCache,
     registeredForgeInstance,
     registeredForgeConfig,
+    loginThrough,
+    activatingRegistration,
     configuredOnHost,
+    registrationCookieName,
+    registrationTokenFromCookies,
+    hashRegistrationToken,
   )
 where
 
 import Control.Concurrent (MVar, modifyMVar_, newMVar, readMVar)
+import Crypto.Hash (SHA256 (..), hashWith)
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
 import Data.Maybe (listToMaybe)
 import Data.Set qualified as Set
 import Data.Text.Encoding qualified as T
+import Garnix.DB qualified as DB (withinTransaction)
 import Garnix.DB.Forges qualified as DB
 import Garnix.Forge.Gitea (giteaForgeApi, instanceHost)
+import Garnix.Forge.Registered (forgetOnActivation, pendingLogin)
 import Garnix.GithubUserToken (decryptSecret)
 import Garnix.Monad
 import Garnix.Prelude
+import Garnix.RateLimit (newRateLimiter)
 import Garnix.Types
 import Network.HTTP.Client (Manager)
+import Web.Cookie (parseCookiesText)
 
 -- | The forges built from rows, with the @updated_at@ of the row each was
 -- built from. Decrypting a secret runs age, so a forge is kept until its row
@@ -47,7 +57,9 @@ newForgeRegistration allowHttp manager' = do
   newForgeRegistrationWithCache cache allowHttp manager'
 
 newForgeRegistrationWithCache :: ForgeCache -> Bool -> Manager -> IO ForgeRegistration
-newForgeRegistrationWithCache (ForgeCache cache) allowHttp manager' =
+newForgeRegistrationWithCache (ForgeCache cache) allowHttp manager' = do
+  startLimit <- newRateLimiter 30 60
+  registerLimit <- newRateLimiter 10 (60 * 60)
   pure
     ForgeRegistration
       { -- The row itself is read on every lookup: it is cheap, and it lets
@@ -60,7 +72,10 @@ newForgeRegistrationWithCache (ForgeCache cache) allowHttp manager' =
                 Nothing -> do
                   liftIO $ modifyMVar_ cache (pure . Map.delete slug')
                   pure Nothing
-                Just row -> Just . RegisteredForge (DB.rowStatus row) <$> cachedInstance cache manager' row,
+                Just row ->
+                  Just
+                    . RegisteredForge (DB.rowStatus row) (DB.rowRegistrationTokenHash row)
+                    <$> cachedInstance cache manager' row,
         _forgeRegistrationListActive = do
           rows <- filterM (fmap not . shadowedByConfigured . DB.rowSlug) =<< DB.listActiveRegisteredForges
           liftIO $ modifyMVar_ cache (pure . (`Map.restrictKeys` Set.fromList (map DB.rowSlug rows)))
@@ -73,7 +88,9 @@ newForgeRegistrationWithCache (ForgeCache cache) allowHttp manager' =
                 log Error $ "skipping the registered forge " <> getForgeSlug (DB.rowSlug row) <> ": " <> showPretty (err e)
                 pure Nothing,
         _forgeRegistrationManager = manager',
-        _forgeRegistrationAllowHttp = allowHttp
+        _forgeRegistrationAllowHttp = allowHttp,
+        _forgeRegistrationStartLimit = startLimit,
+        _forgeRegistrationRegisterLimit = registerLimit
       }
 
 -- | Whether a configured forge takes the host a registered forge is named
@@ -166,3 +183,67 @@ registeredForgeInstance manager' config =
         <> " repositories of "
         <> getForgeSlug (config ^. slug)
         <> ": forges registered through the UI are only used to log in"
+
+-- | Whether a login or a connect through the forge, from a browser with
+-- these cookies, may go on: refused ('Garnix.Forge.Registered.pendingLogin'),
+-- or the hash of the registration token it completes, if it completes a
+-- pending registration. A configured forge, or a slug naming no forge,
+-- completes nothing (an unknown slug is refused elsewhere, as a page that does
+-- not exist).
+loginThrough :: ForgeSlug -> Maybe Text -> M (Maybe Text)
+loginThrough slug' cookies =
+  lookupRegisteredForge slug' >>= \case
+    Nothing -> pure Nothing
+    Just registered ->
+      either throw pure
+        $ pendingLogin
+          slug'
+          (_registeredForgeStatus registered)
+          (_registeredForgeTokenHash registered)
+          (hashRegistrationToken <$> registrationTokenFromCookies slug' cookies)
+
+-- | Runs a login or a connect through the forge, which answers the account it
+-- logged in to. When it completes a pending registration ('loginThrough'), it
+-- runs in one transaction with the registration's activation. Unless the
+-- registration brings back a forge disabled within the quarantine
+-- ('forgetOnActivation'), the identities on the forge from before are
+-- forgotten first ('DB.forgetIdentitiesOn'), so that whoever registered its
+-- host again lands in none of their accounts. Then the login runs, and the
+-- forge becomes active, with the logged-in account as its registrant. A
+-- registration that changed meanwhile undoes all of it. The login should run
+-- nothing but SQL: the rows it touches stay locked until it ends.
+activatingRegistration :: ForgeSlug -> Maybe Text -> M (UserId, a) -> M a
+activatingRegistration slug' completes login' = case completes of
+  Nothing -> snd <$> login'
+  Just tokenHash -> DB.withinTransaction $ do
+    lastDisabled' <- DB.lastDisabled slug'
+    when (forgetOnActivation lastDisabled') $ DB.forgetIdentitiesOn slug'
+    (registrant, result) <- login'
+    activated <- DB.activatePendingForge slug' registrant tokenHash
+    unless activated
+      $ throw
+      $ ConflictWithMessage
+      $ "the registration of "
+      <> getForgeSlug slug'
+      <> " changed meanwhile; register it again"
+    log Notice
+      $ "the registered forge "
+      <> getForgeSlug slug'
+      <> " is now active, registered by the account "
+      <> show (getUserId registrant)
+      <> if forgetOnActivation lastDisabled' then "" else ", with everyone who logged in through it before it was disabled"
+    pure result
+
+-- | The cookie that holds, in the browser that submitted a registration, the
+-- token proving it did.
+registrationCookieName :: ForgeSlug -> Text
+registrationCookieName slug' = "garnix-forge-registration-" <> getForgeSlug slug'
+
+-- | The registration token for the forge in a @Cookie@ header.
+registrationTokenFromCookies :: ForgeSlug -> Maybe Text -> Maybe Text
+registrationTokenFromCookies slug' header =
+  lookup (registrationCookieName slug') . parseCookiesText . T.encodeUtf8 =<< header
+
+-- | Only the hash of a token is stored.
+hashRegistrationToken :: Text -> Text
+hashRegistrationToken = show . hashWith SHA256 . T.encodeUtf8
