@@ -2,6 +2,7 @@ module Garnix.Forge.OutboundGuardSpec (spec) where
 
 import Control.Concurrent (modifyMVar_, newMVar, readMVar, threadDelay)
 import Control.Exception qualified
+import Cradle
 import Data.ByteString qualified as BS
 import Data.ByteString.Builder (byteString)
 import Data.IORef (atomicModifyIORef', newIORef)
@@ -9,7 +10,7 @@ import Data.Word (Word16, Word8)
 import Garnix.Forge.OutboundGuard
 import Garnix.Prelude
 import Network.HTTP.Client (HttpException (..), HttpExceptionContent (..), Manager, httpLbs, parseRequest, requestHeaders, responseBody)
-import Network.HTTP.Types (status200)
+import Network.HTTP.Types (status200, status302)
 import Network.Socket (SockAddr (..), tupleToHostAddress, tupleToHostAddress6)
 import Network.Wai qualified as Wai
 import Network.Wai.Handler.Warp (testWithApplication)
@@ -90,6 +91,48 @@ isForbidden = \case
 
 spec :: Spec
 spec = do
+  describe "pinnedGitConfig" $ do
+    it "pins the host and port to every checked address, IPv6 ones in brackets, and turns off redirects and proxies" $ do
+      pinnedGitConfig "git.example.com" 443 [v4 (93, 184, 216, 34), v6 (0x2001, 0x4860, 0, 0, 0, 0, 0, 0x8888)]
+        `shouldBe` Just
+          [ ("http.curloptResolve", "git.example.com:443:93.184.216.34,[2001:4860:0:0:0:0:0:8888]"),
+            ("http.followRedirects", "false"),
+            ("http.proxy", "")
+          ]
+
+    it "pins nothing, which garnix refuses, with no address or one curl cannot connect to" $ do
+      pinnedGitConfig "git.example.com" 443 [] `shouldBe` Nothing
+      pinnedGitConfig "git.example.com" 443 [v4 (93, 184, 216, 34), SockAddrUnix "/run/forge.sock"] `shouldBe` Nothing
+
+    it "is handed to a git that another program runs through the environment" $ do
+      gitConfigEnv [("http.followRedirects", "false"), ("http.proxy", "")]
+        `shouldBe` [ ("GIT_CONFIG_COUNT", "2"),
+                     ("GIT_CONFIG_KEY_0", "http.followRedirects"),
+                     ("GIT_CONFIG_VALUE_0", "false"),
+                     ("GIT_CONFIG_KEY_1", "http.proxy"),
+                     ("GIT_CONFIG_VALUE_1", "")
+                   ]
+
+    it "makes git connect to the pinned address, whatever the name resolves to, and follow no redirect" $ do
+      requests <- newMVar []
+      let app request respond = do
+            modifyMVar_ requests (pure . (<> [(Wai.rawPathInfo request <> Wai.rawQueryString request, lookup "Host" (Wai.requestHeaders request))]))
+            respond $ Wai.responseLBS status302 [("Location", "/elsewhere/info/refs?service=git-upload-pack")] ""
+      (exitCode, StderrRaw _) <- testWithApplication (pure app) $ \port -> do
+        -- The name resolves nowhere (.invalid): only the pin can reach the
+        -- fake server.
+        let host = "garnix-pin.invalid" :: Text
+        run
+          $ cmd "git"
+          & addArgs (gitConfigArgs (fromMaybe [] $ pinnedGitConfig host port [fakeServer port]) <> ["ls-remote", "http://" <> host <> ":" <> show port <> "/acme/app.git"] :: [Text])
+          & modifyEnvVar "GIT_TERMINAL_PROMPT" (const $ Just "0")
+      (exitCode /= ExitSuccess) `shouldBe` True
+      received <- readMVar requests
+      -- One request, to the fake server under the pinned name; the redirect
+      -- it answered was not followed.
+      map fst received `shouldBe` ["/acme/app.git/info/refs?service=git-upload-pack"]
+      (fmap ("garnix-pin.invalid:" `BS.isPrefixOf`) . snd <$> received) `shouldBe` [Just True]
+
   describe "isPublicAddress" $ do
     it "refuses loopback, private, link-local, CGNAT and their IPv6 counterparts" $ do
       forM_

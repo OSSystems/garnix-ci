@@ -35,6 +35,7 @@ import Garnix.Prelude
 import Garnix.RateLimit (newRateLimiter)
 import Garnix.Types
 import Network.HTTP.Client (Manager)
+import Network.Socket (HostName, SockAddr)
 import Web.Cookie (parseCookiesText)
 
 -- | The forges built from rows, with the @updated_at@ of the row each was
@@ -49,15 +50,16 @@ newForgeCache = ForgeCache <$> newMVar mempty
 cachedForgeSlugs :: ForgeCache -> IO [ForgeSlug]
 cachedForgeSlugs (ForgeCache cache) = Map.keys <$> readMVar cache
 
--- | Registration as the server runs it. The manager is the guarded one; the
--- flag allows plain http forge URLs, for tests.
-newForgeRegistration :: Bool -> Manager -> IO ForgeRegistration
-newForgeRegistration allowHttp manager' = do
+-- | Registration as the server runs it. The manager is the guarded one, and
+-- the resolver the one it checks addresses with; the flag allows plain http
+-- forge URLs, for tests.
+newForgeRegistration :: Bool -> (HostName -> Int -> IO [SockAddr]) -> Manager -> IO ForgeRegistration
+newForgeRegistration allowHttp checkedAddresses' manager' = do
   cache <- newForgeCache
-  newForgeRegistrationWithCache cache allowHttp manager'
+  newForgeRegistrationWithCache cache allowHttp checkedAddresses' manager'
 
-newForgeRegistrationWithCache :: ForgeCache -> Bool -> Manager -> IO ForgeRegistration
-newForgeRegistrationWithCache (ForgeCache cache) allowHttp manager' = do
+newForgeRegistrationWithCache :: ForgeCache -> Bool -> (HostName -> Int -> IO [SockAddr]) -> Manager -> IO ForgeRegistration
+newForgeRegistrationWithCache (ForgeCache cache) allowHttp checkedAddresses' manager' = do
   startLimit <- newRateLimiter 30 60
   registerLimit <- newRateLimiter 10 (60 * 60)
   pure
@@ -88,6 +90,7 @@ newForgeRegistrationWithCache (ForgeCache cache) allowHttp manager' = do
                 log Error $ "skipping the registered forge " <> getForgeSlug (DB.rowSlug row) <> ": " <> showPretty (err e)
                 pure Nothing,
         _forgeRegistrationManager = manager',
+        _forgeRegistrationCheckedAddresses = checkedAddresses',
         _forgeRegistrationAllowHttp = allowHttp,
         _forgeRegistrationStartLimit = startLimit,
         _forgeRegistrationRegisterLimit = registerLimit
@@ -139,28 +142,27 @@ registeredForgeConfig row = do
         _forgeConfigAdmins = []
       }
 
--- | A registered forge: the Gitea forge a configured instance gets, with two
--- differences. Every call it makes goes through the guarded manager. And it
--- is login-only: it resolves no repository and hands out no clone URL, so no
--- URL of it ever reaches git or nix, which resolve names themselves and could
--- be led to a private address.
+-- | A registered forge: the Gitea forge a configured instance gets, every
+-- call it makes going through the guarded manager. git and nix resolve names
+-- themselves, so whatever fetches from it is pinned to the addresses the
+-- guard checked ('Garnix.Monad.forgeGitConfig').
 registeredForgeInstance :: Manager -> ForgeConfig -> ForgeInstance
 registeredForgeInstance manager' config =
   ForgeInstance
     { _forgeInstanceConfig = config,
       _forgeInstanceForge =
         Forge
-          { _forgeResolveCredentials = \_ -> pure Nothing,
-            _forgeResolveRepo = \_ -> pure Nothing,
+          { _forgeResolveCredentials = \repo -> guarded $ _forgeResolveCredentials gitea repo,
+            _forgeResolveRepo = \repo -> guarded $ _forgeResolveRepo gitea repo,
             _forgeGetDefaultBranch = \credentials' repo -> guarded $ _forgeGetDefaultBranch gitea credentials' repo,
             _forgeGetHeadCommit = \token repo branch -> guarded $ _forgeGetHeadCommit gitea token repo branch,
             _forgeNewBuildReport = \repoInfo' report -> guarded $ _forgeNewBuildReport gitea repoInfo' report,
             _forgeUpdateBuildReport = \runId' report repoInfo' -> guarded $ _forgeUpdateBuildReport gitea runId' report repoInfo',
             _forgeDoesRepoFileExist = \commitInfo path -> guarded $ _forgeDoesRepoFileExist gitea commitInfo path,
-            _forgeGetRemote = \_ -> loginOnly "clone",
+            _forgeGetRemote = \commitInfo -> guarded $ _forgeGetRemote gitea commitInfo,
             _forgeGetRepoCollaborators = \credentials' repo -> guarded $ _forgeGetRepoCollaborators gitea credentials' repo,
             _forgeGetRepoPublicity = \credentials' repo -> guarded $ _forgeGetRepoPublicity gitea credentials' repo,
-            _forgeOpenPullRequest = \_ _ -> loginOnly "open pull requests on",
+            _forgeOpenPullRequest = \repo pr -> guarded $ _forgeOpenPullRequest gitea repo pr,
             _forgeExchangeOauthCode = \callbackUrl code -> guarded $ _forgeExchangeOauthCode gitea callbackUrl code,
             _forgeRefreshUserCredentials = \token -> guarded $ _forgeRefreshUserCredentials gitea token,
             _forgeGetCurrentUser = \token -> guarded $ _forgeGetCurrentUser gitea token,
@@ -172,15 +174,6 @@ registeredForgeInstance manager' config =
     gitea = giteaForgeApi config
     guarded :: M a -> M a
     guarded = local (#manager .~ manager')
-    loginOnly :: Text -> M a
-    loginOnly what =
-      throw
-        $ OtherError
-        $ "garnix does not "
-        <> what
-        <> " repositories of "
-        <> getForgeSlug (config ^. slug)
-        <> ": forges registered through the UI are only used to log in"
 
 -- | Whether a login or a connect through the forge, from a browser with
 -- these cookies, may go on: refused ('Garnix.Forge.Registered.pendingLogin'),

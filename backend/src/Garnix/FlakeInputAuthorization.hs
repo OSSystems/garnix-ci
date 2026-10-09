@@ -14,6 +14,7 @@ module Garnix.FlakeInputAuthorization
     _parseFlakeMetaData,
     _parseGiteaInputs,
     _privateInputCredentials,
+    _registeredForgeInputRefusal,
     _githubVisibility,
     _extractPrivateReposFromErrors,
   )
@@ -30,8 +31,10 @@ import Data.Containers.ListUtils (nubOrd)
 import Data.Either (lefts, rights)
 import Data.Functor ((<&>))
 import Data.Map.Strict qualified as Map
+import Data.Maybe (mapMaybe)
 import Data.Text qualified as T
 import Garnix.Forge.Gitea (giteaInputHost, giteaInputRepo, giteaNetRcEntry, giteaToken)
+import Garnix.Forge.Registered (ForgeSource (..))
 import Garnix.Monad
 import Garnix.NixConfig
 import Garnix.Prelude
@@ -113,11 +116,8 @@ checkAuthorization flakeDir repoConfig commitInfo = do
       self = repoInfo' ^. repoId
   -- Only the instance the repository is on hands its builds credentials, so
   -- only its inputs are matched; a GitHub repository's are left as they were.
-  giteaConfigs <-
-    view #forges
-      <&> filter (\config -> config ^. kind == GiteaForgeKind && config ^. slug == self ^. forge)
-        . map _forgeInstanceConfig
-        . Map.elems
+  selfForge <- lookupForge (self ^. forge) >>= maybe (throw $ OtherError $ "No forge is known under the slug " <> getForgeSlug (self ^. forge)) pure
+  let giteaConfigs = filter ((== GiteaForgeKind) . view kind) [_forgeInstanceConfig (snd selfForge)]
   (inputs, (rejectedUrls, instanceInputs)) <-
     aesonDecode
       "output of 'nix flake metadata --json'"
@@ -188,7 +188,7 @@ checkAuthorization flakeDir repoConfig commitInfo = do
             <> ". This is usually temporary; retry the build later."
   privateInputs <- filterM (fmap (not . isRepoPublic) . getRepoPublicity (repoInfo' ^. credentials)) forgeInputs
   selfRepoPublicity <- getRepoPublicity (repoInfo' ^. credentials) self
-  selfConfig <- _forgeInstanceConfig <$> forgeInstanceFor (self ^. forge)
+  let selfConfig = _forgeInstanceConfig (snd selfForge)
   -- A Gitea installation's token may be older than it lasts.
   inputToken <-
     if null privateInputs || selfConfig ^. kind /= GiteaForgeKind
@@ -220,6 +220,12 @@ checkAuthorization flakeDir repoConfig commitInfo = do
         <> ", which garnix does not support for "
         <> getForgeSlug (self ^. forge)
         <> "."
+  -- A registered forge's host is untrusted: the git nix runs is pinned to
+  -- the addresses garnix checked ('forgeGitConfig'), but nix's own downloads
+  -- (tarball and file inputs) cannot be.
+  when (fst selfForge == Registered)
+    $ mapM_ (throw . OtherError)
+    $ mapMaybe (_registeredForgeInputRefusal (self ^. forge)) (authorizationPrefetch credentialsForPrivateInputs)
   case privateInputs of
     [] -> pure $ InputAuthorization (NixConfig mempty) [] []
     _
@@ -313,6 +319,20 @@ _githubVisibility = \case
     GithubRequestTimeout -> GithubUnknown "GitHub did not answer in time"
     other -> GithubUnknown $ "GitHub failed: " <> show other
   Left (Left e) -> GithubUnknown $ "GitHub failed: " <> show e
+
+-- | Why a private input of a registered forge, as its lock file pins it, is
+-- not fetched, if it is not: anything but a git input is downloaded by nix
+-- itself, which cannot be pinned to the addresses garnix checked.
+_registeredForgeInputRefusal :: ForgeSlug -> Value -> Maybe Text
+_registeredForgeInputRefusal slug' locked
+  | locked ^? key "type" . _String == Just "git" = Nothing
+  | otherwise =
+      Just
+        $ "flake input disallowed: "
+        <> fromMaybe "a private input" (locked ^? key "url" . _String)
+        <> " is private and not a git input. garnix only fetches private inputs of "
+        <> getForgeSlug slug'
+        <> " with git (git+https://…), which it can pin to the addresses it checked."
 
 -- | What nix needs to fetch the private inputs of a repository on the given
 -- forge, which are all on that same forge: GitHub's token goes in

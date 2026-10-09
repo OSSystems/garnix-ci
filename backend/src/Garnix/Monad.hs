@@ -37,6 +37,7 @@ import Garnix.Build.Types (EvaluationResult)
 import Garnix.BuildLogs.Types (LogLine)
 import Garnix.DB.FeatureFlags.Types (FeatureFlagConfig)
 import Garnix.Duration
+import Garnix.Forge.OutboundGuard (ForbiddenAddress (..), pinnedGitConfig)
 import Garnix.Forge.Registered (ForgeSource (..), ForgeStatus (..))
 import Garnix.GithubInterface.Types
 import Garnix.Hosting.Types
@@ -59,6 +60,8 @@ import GitHub.Data.Apps (App)
 import GitHub.Data.Installations qualified as GHA
 import Network.HTTP.Client (Manager)
 import Network.HTTP.Types (statusCode)
+import Network.Socket (HostName, SockAddr)
+import Network.URI (URI (..), URIAuth (..), parseURI)
 import Network.Wai qualified as Wai
 import Network.Wai.Header (contentLength)
 import Network.Wreq qualified as Wreq
@@ -520,6 +523,10 @@ data ForgeRegistration = ForgeRegistration
     -- | Opens every connection garnix makes to a registered forge, refusing
     -- non-public addresses ("Garnix.Forge.OutboundGuard").
     _forgeRegistrationManager :: Manager,
+    -- | The addresses a host and port resolve to, if every one is public
+    -- ('Garnix.Forge.OutboundGuard.checkedAddresses'): what git is pinned to
+    -- when it fetches from a registered forge ('forgeGitConfig').
+    _forgeRegistrationCheckedAddresses :: HostName -> Int -> IO [SockAddr],
     -- | Whether plain http forge URLs are accepted. Only tests set it.
     _forgeRegistrationAllowHttp :: Bool,
     -- | Per client, for @POST /api/auth/start@.
@@ -708,6 +715,63 @@ getRemote :: (HasCallStack) => CommitInfo -> M RemoteUrl
 getRemote commitInfo = do
   forge' <- forgeFor (commitInfo ^. repoInfo . repoId . forge)
   _forgeGetRemote forge' commitInfo
+
+-- | Where to clone a commit from, and the git configuration to clone it
+-- with ('forgeGitConfigOf'), from one lookup of its forge: the remote, which
+-- carries the token, never goes to git without the pin of the forge it came
+-- from, whatever happens to the forge meanwhile.
+checkoutRemote :: (HasCallStack) => CommitInfo -> M (RemoteUrl, [(Text, Text)])
+checkoutRemote commitInfo = do
+  let slug' = commitInfo ^. repoInfo . repoId . forge
+  (source, instance') <- lookupForge slug' >>= maybe (throw $ unknownForge slug') pure
+  remote <- _forgeGetRemote (_forgeInstanceForge instance') commitInfo
+  (remote,) <$> forgeGitConfigOf source instance'
+
+-- | 'forgeGitConfigOf' the repository's forge. A forge garnix no longer
+-- knows (a registered one disabled meanwhile) is refused, never fetched
+-- from unpinned.
+forgeGitConfig :: (HasCallStack) => RepoId -> M [(Text, Text)]
+forgeGitConfig repo =
+  lookupForge (repo ^. forge) >>= \case
+    Just (source, instance') -> forgeGitConfigOf source instance'
+    Nothing -> throw $ unknownForge (repo ^. forge)
+
+unknownForge :: ForgeSlug -> Error
+unknownForge slug' = OtherError $ "garnix does not fetch from " <> getForgeSlug slug' <> ": it knows no such forge (any longer)"
+
+-- | The git configuration git fetches from a forge with. None for a
+-- configured forge, which the operator trusts. A registered forge's host is
+-- resolved now, through the outbound guard, and git is pinned to the
+-- addresses it let through, follows no redirect and uses no proxy: git
+-- resolves names itself, and would otherwise connect wherever the name
+-- points by then (DNS rebinding). A host that resolves to a non-public
+-- address is refused.
+forgeGitConfigOf :: (HasCallStack) => ForgeSource -> ForgeInstance -> M [(Text, Text)]
+forgeGitConfigOf source instance' = case source of
+  Configured -> pure []
+  Registered -> do
+    registration <- view #forgeRegistration >>= maybe (throw $ OtherError "registered forges are off") pure
+    let config = _forgeInstanceConfig instance'
+    (host, port) <- maybe (throw $ OtherError $ "The web URL of forge " <> getForgeSlug (config ^. slug) <> " has no host") pure $ webHostAndPort config
+    result <- liftIO $ SafeException.try $ SafeException.try $ _forgeRegistrationCheckedAddresses registration (cs host) port
+    case result of
+      Right (Right addresses) ->
+        maybe (throw $ OtherError $ "garnix does not fetch from " <> host <> ": it resolves to nothing it can pin git to") pure
+          $ pinnedGitConfig host port addresses
+      Right (Left (ForbiddenAddress _ address)) ->
+        throw $ OtherError $ "garnix does not fetch from " <> host <> ": it resolves to " <> show address <> ", which is not a public address"
+      Left (e :: SafeException.IOException) ->
+        throw $ OtherError $ "garnix could not resolve " <> host <> ": " <> show e
+  where
+    webHostAndPort config = do
+      uri <- parseURI (cs $ config ^. webUrl)
+      authority <- uriAuthority uri
+      let host = cs (uriRegName authority) :: Text
+          port = case uriPort authority of
+            ':' : digits | Just p <- readMaybe digits -> p
+            _ -> if uriScheme uri == "http:" then 80 else 443
+      guard (not $ T.null host)
+      pure (host, port)
 
 getRepoCollaborators :: (HasCallStack) => ForgeCredentials -> RepoId -> M GhCollaborators
 getRepoCollaborators credentials' repo = do

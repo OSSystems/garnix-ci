@@ -6,6 +6,7 @@ import Data.Aeson.Types (parseEither)
 import Data.Containers.ListUtils (nubOrd)
 import Data.Functor ((<&>))
 import Data.Map.Strict qualified as Map
+import Data.Text qualified as T
 import Data.Yaml.TH (yamlQQ)
 import Garnix.FlakeInputAuthorization
 import Garnix.NixConfig (NetRcEntry (..))
@@ -143,6 +144,15 @@ spec = do
                     type: path
           |]
       sort inputs `shouldBe` sort [Github $ GithubFlakeInput "test-owner" "test-repo", PathInput "/test-file-input"]
+
+  describe "_registeredForgeInputRefusal" $ do
+    let locked type' = object ["type" .= (type' :: Text), "url" .= ("https://forge.example/acme/dep" :: Text)]
+    it "lets git fetch a private input of a registered forge, pinned as the clone is" $ do
+      _registeredForgeInputRefusal "forge.example" (locked "git") `shouldBe` Nothing
+
+    it "refuses a private input that nix would download itself, unpinned" $ do
+      forM_ ["tarball", "file"] $ \type' ->
+        fmap ("is private and not a git input" `T.isInfixOf`) (_registeredForgeInputRefusal "forge.example" (locked type')) `shouldBe` Just True
 
   describe "_parseGiteaInputs" $ do
     let instance' slug' url =

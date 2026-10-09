@@ -31,7 +31,7 @@ import Garnix.DB.FeatureFlags (withRecachedFeatureFlags)
 import Garnix.DB.FeatureFlags.Types (getFeatureFlagConfig)
 import Garnix.Duration
 import Garnix.Forge.Config (forgeInstance, readForgesFile)
-import Garnix.Forge.OutboundGuard (defaultGuardOptions, guardedManager, isPublicAddress, systemResolver)
+import Garnix.Forge.OutboundGuard (checkedAddresses, defaultGuardOptions, guardedManager, isPublicAddress, systemResolver)
 import Garnix.Forge.Registry (newForgeRegistration)
 import Garnix.GithubInterface
 import Garnix.Hosting.Budget (hostTotalMiB, hostVcpus, parseBudget, resolveBudget)
@@ -305,7 +305,7 @@ withEnv testFeatures buildLogsDir buildLogsReportingPort action = do
   forgeRegistration <- do
     enabled <- lookupEnvBool "GARNIX_FORGE_REGISTRATION" False
     if enabled
-      then Just <$> (newForgeRegistration False =<< guardedManager defaultGuardOptions isPublicAddress systemResolver)
+      then Just <$> (newForgeRegistration False (checkedAddresses isPublicAddress systemResolver) =<< guardedManager defaultGuardOptions isPublicAddress systemResolver)
       else pure Nothing
   nixConfig <-
     lookupOptionalSecret "GITHUB_ACCESS_TOKEN" (secretFile "github_access_token")

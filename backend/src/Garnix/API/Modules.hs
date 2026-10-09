@@ -1,6 +1,8 @@
 module Garnix.API.Modules
   ( ModulesAPI,
     modulesAPI,
+    -- exported for testing:
+    commitAndPush,
   )
 where
 
@@ -106,11 +108,7 @@ createPullRequest login' = do
     pushNewBranch :: ModuleValues.GetRepoAndModuleValues -> CommitInfo -> Branch -> Branch -> M ()
     pushNewBranch repoAndModuleValues commitInfo baseBranch newBranch = do
       let remote = Build.Module.remoteWithFlake baseBranch repoAndModuleValues Checkout.remoteWithConfig
-      remoteUrl <- getRemote commitInfo
-      Checkout.runWithCheckout remote commitInfo $ \_garnixConfig -> do
-        SubProcess.runGitProcess ["checkout", "-b", getBranch newBranch]
-        SubProcess.runGitProcess ["commit", "-am", "Add garnix modules."]
-        SubProcess.runGitProcess ["push", realRemoteUrl remoteUrl, getBranch newBranch]
+      Checkout.runWithCheckout remote commitInfo $ \_garnixConfig -> commitAndPush commitInfo newBranch
 
     openModulesPullRequest :: CommitInfo -> Branch -> Branch -> M PullRequestResult
     openModulesPullRequest commitInfo baseBranch newBranch =
@@ -122,6 +120,16 @@ createPullRequest login' = do
             _pullRequestHeadBranch = newBranch,
             _pullRequestBaseBranch = baseBranch
           }
+
+-- | In the checkout of the commit ('Checkout.withCheckout'), whose git
+-- configuration it is pushed with: commits what changed to a new branch, and
+-- pushes it.
+commitAndPush :: CommitInfo -> Branch -> M ()
+commitAndPush commitInfo newBranch = do
+  remoteUrl <- getRemote commitInfo
+  SubProcess.runGitProcess ["checkout", "-b", getBranch newBranch]
+  SubProcess.runGitProcess ["commit", "-am", "Add garnix modules."]
+  SubProcess.runGitProcess ["push", realRemoteUrl remoteUrl, getBranch newBranch]
 
 getFlake :: ForgeLogin -> M (Headers '[Header "Content-Disposition" Text] ByteString)
 getFlake login' = do

@@ -5,6 +5,7 @@ module Garnix.API.ForgesSpec (spec) where
 import Control.Lens ((^?!))
 import Data.Aeson (Value, encode, object, (.=))
 import Data.Aeson.Lens (key, values, _Bool, _String)
+import Data.ByteString qualified as BS
 import Data.ByteString.Base64 qualified as Base64
 import Data.ByteString.Lazy qualified as BSL
 import Data.IORef (IORef, newIORef, readIORef, writeIORef)
@@ -12,12 +13,16 @@ import Data.Map.Strict qualified as Map
 import Data.Text qualified as T
 import Database.PostgreSQL.Typed (pgSQL)
 import Garnix.API.Forges (ForgeSummary (..), clientAddress, forgesAPI)
+import Garnix.API.Modules (commitAndPush)
 import Garnix.Access (administeredForges, hasAccessToRepo, liveAccount)
 import Garnix.AccessToken (generateToken)
 import Garnix.AccessToken.Types (AccessToken (..), AccessTokenScopes (..))
+import Garnix.Build.Checkout (withCheckout)
 import Garnix.DB qualified as DB
 import Garnix.DB.Forges qualified as Forges
-import Garnix.Forge.OutboundGuard (GuardOptions (..), defaultGuardOptions, guardedManager, isPublicAddress)
+import Garnix.DB.Installations qualified as Installations
+import Garnix.Forge.Installation (InstallTarget (..))
+import Garnix.Forge.OutboundGuard (GuardOptions (..), checkedAddresses, defaultGuardOptions, guardedManager, isPublicAddress)
 import Garnix.Forge.Registered (ForgeStatus (..))
 import Garnix.Forge.Registry (ForgeCache, cachedForgeSlugs, hashRegistrationToken, newForgeCache, newForgeRegistrationWithCache)
 import Garnix.GithubUserToken (encryptSecret)
@@ -27,13 +32,18 @@ import Garnix.TestHelpers
 import Garnix.TestHelpers.Monad
 import Garnix.TestHelpers.WithServer
 import Garnix.Types hiding (message, slug, status, statusCode)
-import Network.HTTP.Types (hAuthorization, parseSimpleQuery, status200, status400, status401, status404)
+import Network.HTTP.Types (hAuthorization, hContentType, mkStatus, parseSimpleQuery, status200, status400, status401, status404)
 import Network.Socket (SockAddr (..), tupleToHostAddress, tupleToHostAddress6)
 import Network.Wai qualified as Wai
 import Network.Wai.Handler.Warp (testWithApplication)
 import Network.Wreq (Response, responseBody, responseStatus, statusCode)
 import Servant.Auth.Server (AuthResult (Authenticated))
+import System.Environment (getEnvironment)
+import System.IO.Temp (withSystemTempDirectory)
+import System.Process.Typed (byteStringInput, proc, readProcess, readProcessStdout_, runProcess_, setEnv, setStdin, setWorkingDir)
 import Test.Hspec
+import Text.Read (readMaybe)
+import Prelude qualified
 
 -- | The OAuth client secret every registration in these specs uses: no
 -- answer may contain it.
@@ -69,6 +79,65 @@ fakeGitea request respond = do
       _ -> json status401 $ object []
     _ -> json status404 $ object []
 
+-- | Serves the bare repositories under the directory (@<owner>/<name>.git@)
+-- over git's smart HTTP protocol, through @git http-backend@, pushes and the
+-- fetches of a partial clone included. Everything else goes to the other
+-- application.
+withGitBackend :: FilePath -> Wai.Application -> Wai.Application
+withGitBackend root fallback request respond
+  | any (".git" `T.isSuffixOf`) (Wai.pathInfo request) = do
+      body <- Wai.strictRequestBody request
+      environment <- getEnvironment
+      let header name = maybe "" cs $ lookup name (Wai.requestHeaders request)
+          cgi =
+            [ ("GIT_PROJECT_ROOT", root),
+              ("GIT_HTTP_EXPORT_ALL", "1"),
+              -- Someone authenticated: http-backend takes pushes from them.
+              ("REMOTE_USER", "alice"),
+              ("REMOTE_ADDR", "127.0.0.1"),
+              ("REQUEST_METHOD", cs $ Wai.requestMethod request),
+              ("PATH_INFO", cs $ Wai.rawPathInfo request),
+              ("QUERY_STRING", cs $ BS.drop 1 $ Wai.rawQueryString request),
+              ("CONTENT_TYPE", header hContentType),
+              ("CONTENT_LENGTH", Prelude.show (BSL.length body)),
+              ("HTTP_CONTENT_ENCODING", header "Content-Encoding"),
+              ("HTTP_GIT_PROTOCOL", header "Git-Protocol"),
+              ("GIT_CONFIG_COUNT", "2"),
+              ("GIT_CONFIG_KEY_0", "uploadpack.allowFilter"),
+              ("GIT_CONFIG_VALUE_0", "true"),
+              ("GIT_CONFIG_KEY_1", "uploadpack.allowAnySHA1InWant"),
+              ("GIT_CONFIG_VALUE_1", "true")
+            ]
+      (_, out, _) <-
+        readProcess
+          $ setEnv (cgi <> filter ((`notElem` map fst cgi) . fst) environment)
+          $ setStdin (byteStringInput body)
+          $ proc "git" ["http-backend"]
+      let (head', rest) = BS.breakSubstring "\r\n\r\n" (BSL.toStrict out)
+          headers = [(fromString (cs name :: String), BS.drop 2 value) | line <- BS.split 10 (BS.filter (/= 13) head'), let (name, value) = BS.breakSubstring ": " line, not (BS.null name)]
+          status' = case lookup "Status" headers of
+            Just value | Just code <- readMaybe (cs $ BS.take 3 value) -> mkStatus code (BS.drop 4 value)
+            _ -> status200
+      respond $ Wai.responseLBS status' (filter ((/= "Status") . fst) headers) (BSL.fromStrict $ BS.drop 4 rest)
+  | otherwise = fallback request respond
+
+-- | A bare repository at the path: @main@, with a @README@, and @feature@ on
+-- top of it, adding @feature.txt@. Answers @feature@'s commit.
+seedRepository :: FilePath -> IO CommitHash
+seedRepository bare = withSystemTempDirectory "garnix-seed" $ \work -> do
+  let git args = runProcess_ $ setWorkingDir work $ proc "git" (["-c", "user.name=spec", "-c", "user.email=spec@example.com"] <> args)
+  runProcess_ $ proc "git" ["init", "--quiet", "--bare", "--initial-branch=main", bare]
+  git ["init", "--quiet", "--initial-branch=main", "."]
+  Prelude.writeFile (work </> "README") "app\n"
+  git ["add", "README"]
+  git ["commit", "--quiet", "-m", "main"]
+  git ["checkout", "--quiet", "-b", "feature"]
+  Prelude.writeFile (work </> "feature.txt") "feature\n"
+  git ["add", "feature.txt"]
+  git ["commit", "--quiet", "-m", "feature"]
+  git ["push", "--quiet", bare, "main", "feature"]
+  CommitHash . T.strip . cs <$> readProcessStdout_ (setWorkingDir work $ proc "git" ["rev-parse", "HEAD"])
+
 -- | Runs the action with 'fakeGitea' served at the URL it is given.
 withFakeGitea :: (Int -> M a) -> M a
 withFakeGitea = liftBaseOp (testWithApplication (pure fakeGitea))
@@ -96,7 +165,7 @@ withRegistration allowHttp resolution action = do
 withRegistrationCache :: ForgeCache -> Bool -> IORef (Int -> [SockAddr]) -> M a -> M a
 withRegistrationCache cache allowHttp resolution action = do
   manager' <- liftIO $ guardedManager defaultGuardOptions {guardAllowPlainHttp = allowHttp} allowedInSpecs (\_ port -> ($ port) <$> readIORef resolution)
-  registration <- liftIO $ newForgeRegistrationWithCache cache allowHttp manager'
+  registration <- liftIO $ newForgeRegistrationWithCache cache allowHttp (checkedAddresses allowedInSpecs (\_ port -> ($ port) <$> readIORef resolution)) manager'
   local (#forgeRegistration ?~ registration) action
 
 -- | Registration on, plain http allowed, names resolving to the fake.
@@ -127,12 +196,16 @@ statusOf slug' = fmap Forges.rowStatus <$> Forges.getRegisteredForge slug'
 -- login link sets the OAuth state's cookie, and the forge calls back with
 -- that state. The first login creates the account.
 logInThroughForge :: TestServer -> Text -> M (Response LazyByteString)
-logInThroughForge server login' = do
-  started <- server.get "/api/auth/localhost/login"
+logInThroughForge = logInThroughForgeOn slug
+
+logInThroughForgeOn :: ForgeSlug -> TestServer -> Text -> M (Response LazyByteString)
+logInThroughForgeOn slug' server login' = do
+  let base = "/api/auth/" <> cs (getForgeSlug slug')
+  started <- server.get $ base <> "/login"
   case T.breakOn "&state=" <$> (started ^? responseBody . key "github" . _String) of
     Just (_, state)
       | not (T.null state) ->
-          server.get $ "/api/auth/localhost/login/cb?code=" <> cs login' <> "-code&state=" <> cs (T.drop (T.length "&state=") state)
+          server.get $ base <> "/login/cb?code=" <> cs login' <> "-code&state=" <> cs (T.drop (T.length "&state=") state)
     -- The forge is not one to log in through: the answer says why.
     _ -> pure started
 
@@ -487,11 +560,62 @@ spec = inM $ beforeM_ truncateDBM $ aroundM_ suppressLogsWhenPassing $ do
         (status failed >= 400) `shouldBeM` True
         statusOf slug `shouldReturnM` Just ForgePending
 
-    it "never resolves a repository on a registered forge, so nothing of it reaches git or nix" $ withHttpRegistration $ withFakeGitea $ \port -> withServer $ \server -> do
+    it "pins the git that fetches from a registered forge to the addresses it checked, and refuses one rebound to a private address" $ withFakeGitea $ \port -> do
+      resolution <- liftIO $ newIORef (pure . loopback)
+      withRegistration True resolution $ withServer $ \server -> do
+        _ <- assert200 $ server.post "/api/forges" (registerBody port)
+        _ <- assert200 $ logInThroughForge server "alice"
+        forgeGitConfig (RepoId slug "alice" "app")
+          `shouldReturnM` [ ("http.curloptResolve", "localhost:" <> show port <> ":127.0.0.1"),
+                            ("http.followRedirects", "false"),
+                            ("http.proxy", "")
+                          ]
+        liftIO $ writeIORef resolution (const [SockAddrInet 80 (tupleToHostAddress (169, 254, 169, 254))])
+        refused <- try $ forgeGitConfig (RepoId slug "alice" "app")
+        either (Just . show . err) (const Nothing) refused `shouldSatisfyM` maybe False ("not a public address" `T.isInfixOf`)
+
+    it "holds every git that talks to a registered forge to the pin: the clone, the fetches of the checkout after it, and the push of a modules pull request" $ withSystemTempDirectory "garnix-forge-repos" $ \root -> do
+      feature <- liftIO $ seedRepository (root </> "alice" </> "app.git")
+      -- The name resolves nowhere (.invalid): git reaches the forge only
+      -- through the pin, at the address garnix checked.
+      let pinned = ForgeSlug "garnix-pin.invalid"
+      resolution <- liftIO $ newIORef (pure . loopback)
+      withRegistration True resolution $ liftBaseOp (testWithApplication (pure $ withGitBackend root fakeGitea)) $ \port -> withServer $ \server -> do
+        _ <- assert200 $ server.post "/api/forges" (object ["url" .= ("http://garnix-pin.invalid:" <> show port :: Text), "clientId" .= ("client-id" :: Text), "clientSecret" .= clientSecret])
+        _ <- assert200 $ logInThroughForgeOn pinned server "alice"
+        installation <-
+          maybe (error "not installed") pure
+            =<< Installations.insertForgeInstallation pinned (InstallOnUser "alice") "alice" (EncryptedText "")
+        let commitInfo =
+              CommitInfo
+                { _commitInfoReqUser = ForgeLogin pinned "alice",
+                  _commitInfoRepoPublicity = RepoIsPublic False,
+                  _commitInfoRepoInfo = RepoInfo (ForgeInstallationCredentials installation) (GhToken "alice-token") (RepoId pinned "alice" "app"),
+                  _commitInfoBranch = Just "feature",
+                  _commitInfoPrFromFork = Nothing,
+                  -- Not the default branch: the partial clone has none of
+                  -- its trees, which the checkout fetches.
+                  _commitInfoCommit = feature
+                }
+        withSystemTempDirectory "garnix-xdg-cache-dir" $ \cacheDir -> local (#nixXdgCacheDir ?~ cacheDir) $ withCheckout commitInfo $ do
+          dir <- view #workingDir
+          liftIO (Prelude.readFile (dir </> "feature.txt")) `shouldReturnM` "feature\n"
+          liftIO $ Prelude.appendFile (dir </> "README") "modules\n"
+          commitAndPush commitInfo "garnix-modules-spec"
+        pushed <- liftIO $ readProcessStdout_ $ proc "git" ["--git-dir", root </> "alice" </> "app.git", "log", "-1", "--format=%s", "garnix-modules-spec"]
+        pushed `shouldBeM` "Add garnix modules.\n"
+
+    it "refuses to hand git anything for a registered forge disabled since the build started" $ withHttpRegistration $ withFakeGitea $ \port -> withServer $ \server -> do
       _ <- assert200 $ server.post "/api/forges" (registerBody port)
       _ <- assert200 $ logInThroughForge server "alice"
-      (isNothing <$> resolveRepo (RepoId slug "alice" "app")) `shouldReturnM` True
-      (isNothing <$> resolveCredentials (RepoId slug "alice" "app")) `shouldReturnM` True
+      _ <- assert200 $ server.delete "/api/forges/localhost"
+      refused <- try $ forgeGitConfig (RepoId slug "alice" "app")
+      either (Just . show . err) (const Nothing) refused `shouldSatisfyM` maybe False ("knows no such forge" `T.isInfixOf`)
+
+    it "leaves the git that fetches from a configured forge alone" $ do
+      local (#forges %~ Map.insert "git.example" (testForgeInstance "git.example" GiteaForgeKind))
+        $ forgeGitConfig (RepoId "git.example" "alice" "app")
+        `shouldReturnM` []
 
   describe "managing a registered forge" $ do
     let activeForge server port = do
