@@ -14,6 +14,11 @@ module Garnix.API.Forges
     registerForgeAPI,
     replaceForgeSecretAPI,
     removeForgeAPI,
+    ForgeSummary (..),
+    SummaryStatus (..),
+    forgesAPI,
+    forgeSummaries,
+    disabledCandidates,
     clientAddress,
     Management (..),
     managementRefusal,
@@ -27,13 +32,14 @@ import Data.Aeson ((.:), (.=))
 import Data.Aeson qualified as Aeson
 import Data.Aeson.Lens (key, _String)
 import Data.Char (isDigit)
+import Data.Map.Strict (Map)
 import Data.Maybe (listToMaybe)
 import Data.Text qualified as T
 import Data.Text.Encoding qualified as T
 import Data.Time.Format (defaultTimeLocale, formatTime)
 import Data.Word (Word16)
 import Garnix.API.Auth (authorizeLink, getOAuthNonce, newOAuthNonce, oauthCallbackPath, oauthStateCookie)
-import Garnix.Access (webSessionUser)
+import Garnix.Access (sessionUserOf, webSessionUser)
 import Garnix.DB qualified as DB (getUserById)
 import Garnix.DB.Forges qualified as DB
 import Garnix.Forge.OutboundGuard (ForbiddenAddress (..), GuardLimitExceeded (..), PlainHttpRefused (..), isPublicAddress)
@@ -50,7 +56,7 @@ import Network.URI (URIAuth (..), parseAbsoluteURI, uriAuthority)
 import Network.Wreq qualified as Wreq
 import Numeric (readHex, showHex)
 import Servant (noHeader)
-import Servant.Auth.Server (AuthResult, CookieSettings (..), IsSecure (Secure))
+import Servant.Auth.Server (AuthResult (Authenticated), CookieSettings (..), IsSecure (Secure))
 import Text.Read (readMaybe)
 import Web.Cookie (SetCookie (..), defaultSetCookie, sameSiteLax)
 
@@ -88,6 +94,119 @@ newtype ReplaceForgeSecretRequest = ReplaceForgeSecretRequest {replaceClientSecr
 
 instance FromJSON ReplaceForgeSecretRequest where
   parseJSON = Aeson.withObject "ReplaceForgeSecretRequest" $ \o -> ReplaceForgeSecretRequest <$> o .: "clientSecret"
+
+-- | A forge instance as the frontend sees it: enough to build URLs and links,
+-- none of its secrets.
+data ForgeSummary = ForgeSummary
+  { _forgeSummarySlug :: ForgeSlug,
+    _forgeSummaryKind :: Text,
+    _forgeSummaryWebUrl :: Text,
+    -- | @configured@ or @registered@ (through the UI).
+    _forgeSummarySource :: ForgeSource,
+    -- | What to call it: the host of its web URL.
+    _forgeSummaryName :: Text,
+    -- | @active@, or @disabled@ for a registered forge the caller may bring
+    -- back.
+    _forgeSummaryStatus :: SummaryStatus,
+    -- | Whether the caller may replace its secret and disable it
+    -- ('managementRefusal'), so that the UI offers only what it may do.
+    _forgeSummaryCanManage :: Bool
+  }
+  deriving stock (Eq, Show, Generic)
+
+instance ToJSON ForgeSummary where
+  toEncoding = ourToEncoding
+  toJSON = ourToJSON
+
+-- | A forge's status as 'renderForgeStatus' writes it.
+newtype SummaryStatus = SummaryStatus ForgeStatus
+  deriving stock (Eq, Show)
+
+instance ToJSON SummaryStatus where
+  toJSON (SummaryStatus status') = toJSON (renderForgeStatus status')
+
+-- | A forge as anybody sees it: active, and managed by nobody.
+-- 'forgeSummaries' sets the rest by field. The source has no safe default,
+-- so it is always given.
+plainSummary :: ForgeSource -> ForgeSlug -> ForgeKind -> Text -> ForgeSummary
+plainSummary source slug' kind webUrl' =
+  ForgeSummary
+    { _forgeSummarySlug = slug',
+      _forgeSummaryKind = case kind of
+        GithubForgeKind -> "github"
+        GiteaForgeKind -> "gitea",
+      _forgeSummaryWebUrl = webUrl',
+      _forgeSummarySource = source,
+      _forgeSummaryName = fromMaybe webUrl' (hostOf webUrl'),
+      _forgeSummaryStatus = SummaryStatus ForgeActive,
+      _forgeSummaryCanManage = False
+    }
+
+-- | @GET /api/forges@: every forge garnix is active on, and, to whoever may
+-- manage them, the disabled registered forges they may re-enable.
+forgesAPI :: AuthResult AuthJwtPayload -> M [ForgeSummary]
+forgesAPI authResult = do
+  manager' <- managingAccount authResult
+  active <- listActiveForges
+  configured <- view #forges
+  -- Registered rows are read only for a caller who may manage some: one
+  -- query for the active ones, one lookup per candidate for disabled ones.
+  (activeRows, disabledRows) <- case manager' of
+    Nothing -> pure ([], [])
+    Just account ->
+      (,)
+        <$> DB.listActiveRegisteredForges
+        <*> (catMaybes <$> mapM DB.getRegisteredForge (disabledCandidates configured (map (_forgeConfigSlug . _forgeInstanceConfig . snd) active) account))
+  pure $ forgeSummaries manager' active activeRows disabledRows
+
+-- | The active forges, each saying whether the manager may manage it, then
+-- the disabled registered forges among the rows that the manager may bring
+-- back. Without a manager nobody may manage anything.
+forgeSummaries :: Maybe User -> [(ForgeSource, ForgeInstance)] -> [DB.RegisteredForgeRow] -> [DB.RegisteredForgeRow] -> [ForgeSummary]
+forgeSummaries manager' active activeRows disabledRows =
+  [ (plainSummary source slug' (_forgeConfigKind config) (_forgeConfigWebUrl config))
+      { _forgeSummaryCanManage = source == Registered && any (\row -> DB.rowSlug row == slug' && mayManage row) activeRows
+      }
+  | (source, instance') <- active,
+    let config = _forgeInstanceConfig instance'
+        slug' = _forgeConfigSlug config
+  ]
+    <> [ (plainSummary Registered (DB.rowSlug row) GiteaForgeKind (DB.rowWebUrl row))
+           { _forgeSummaryStatus = SummaryStatus ForgeDisabled,
+             _forgeSummaryCanManage = True
+           }
+       | row <- disabledRows,
+         DB.rowStatus row == ForgeDisabled,
+         mayManage row
+       ]
+  where
+    mayManage row = any (isNothing . managementRefusal ReplaceSecret row) manager'
+
+-- | Where a disabled registered forge the account may manage can be: a
+-- disabled forge is found through the account's own identity on it, which it
+-- keeps while the forge is disabled. So: the slugs of its identities on no
+-- active forge, and on no configured forge's host.
+disabledCandidates :: Map ForgeSlug ForgeInstance -> [ForgeSlug] -> User -> [ForgeSlug]
+disabledCandidates configured activeSlugs account =
+  [ slug'
+  | identity <- account ^. identities,
+    let slug' = identity ^. forge,
+    slug' `notElem` activeSlugs,
+    isNothing (configuredOnHost (getForgeSlug slug') configured)
+  ]
+
+-- | The account of a browser session, with all its identities, as
+-- 'managedForge' judges it; 'Nothing' for an api token, which manages no
+-- forge, for anybody logged out, and while registration is off.
+managingAccount :: AuthResult AuthJwtPayload -> M (Maybe User)
+managingAccount authResult = do
+  registration <- view #forgeRegistration
+  case (registration, authResult) of
+    (Just _, Authenticated (WebSession _)) ->
+      sessionUserOf authResult >>= \case
+        Nothing -> pure Nothing
+        Just session -> DB.getUserById (session ^. id)
+    _ -> pure Nothing
 
 -- | @POST /api/auth/start@: reads what 'startDecision' needs, and answers
 -- it.
