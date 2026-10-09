@@ -42,7 +42,11 @@ beforeEach(() => {
         status: 200,
         body: JSON.stringify(
           loggedIn
-            ? { username: "alice", email: "a@example.com" }
+            ? {
+                username: "alice",
+                email: "a@example.com",
+                identities: [{ forge: "github", login: "alice" }],
+              }
             : null,
         ),
       };

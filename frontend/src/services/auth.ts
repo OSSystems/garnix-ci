@@ -13,6 +13,8 @@ const whoamiSchema = z.nullable(
   z.object({
     username: z.string(),
     email: z.string(),
+    // The account's identities on the forges garnix is active on.
+    identities: z.array(z.object({ forge: z.string(), login: z.string() })),
   }),
 );
 
@@ -87,6 +89,58 @@ export const finishLogin = async (
     user: { name: response.data.username },
     emailAlreadyUsed: response.data.emailAlreadyUsed,
   });
+};
+
+export type Identity = { forge: string; login: string };
+
+// The account's identities on the forges garnix is active on.
+export const getIdentities = async (): Promise<APIResult<Array<Identity>>> => {
+  const response = await fetchFromAPI(whoamiSchema, "GET", "whoami");
+  if (!response.ok) return response;
+  return Ok(response.data?.identities ?? []);
+};
+
+// The link that attaches the account's identity on the forge, coming back to
+// the account page.
+export const getConnectLink = async (
+  forge: string,
+): Promise<APIResult<string>> => {
+  const response = await fetchFromAPI(
+    loginLinkSchema,
+    "GET",
+    `auth/${encodeURIComponent(forge)}/connect`,
+  );
+  if (!response.ok) return response;
+  setLoginTargetPage("/account");
+  return Ok(response.data.github);
+};
+
+export type Disconnected = "disconnected" | "holds-module-settings";
+
+// Without `deleteModuleSettings`, an identity that module settings were saved
+// through is not disconnected: the backend asks to confirm their deletion.
+export const disconnectIdentity = async (
+  forge: string,
+  deleteModuleSettings: boolean,
+): Promise<APIResult<Disconnected>> => {
+  const response = await fetchFromAPI(
+    z.unknown(),
+    "DELETE",
+    `auth/${encodeURIComponent(forge)}/identity`,
+    {
+      body: JSON.stringify(
+        deleteModuleSettings ? { confirmDeleteModuleSettings: true } : {},
+      ),
+    },
+  );
+  if (response.ok) return Ok("disconnected");
+  if (
+    !deleteModuleSettings &&
+    response.error.status === 409 &&
+    response.error.refusal === "has_module_settings"
+  )
+    return Ok("holds-module-settings");
+  return response;
 };
 
 export const logout = async (): Promise<APIResult<void>> => {
