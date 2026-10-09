@@ -31,6 +31,25 @@ garnix acts on the instance as a bot user, with the token in `apiTokenFile`.
 A repository counts as having garnix installed when that bot can push to it:
 give the bot write access to the repositories garnix should build.
 
+## Logging in
+
+Register `https://<garnix>/auth/<slug>/login/cb` as the redirect URI of the
+instance's OAuth application. The web login page offers GitHub only, so this
+path has no page of its own in the frontend.
+
+A garnix account holds at most one identity per forge. The first login
+through an instance creates an account with the email the instance reports.
+An email is contact data only: two accounts may share one, and it never links
+them.
+
+## Admins
+
+Admin rights belong to one forge: the logins in an instance's `admins`
+administer that instance's repositories and no other forge's. On github.com
+the admin is the login in `GARNIX_ADMIN_GITHUB_LOGIN`. Nothing else grants
+admin rights: accounts whose `subscription_type` is `admin` in the database
+lose them on upgrade unless their login is listed there.
+
 ## Webhooks
 
 Add a webhook to each repository (or organisation) with:
