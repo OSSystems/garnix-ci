@@ -12,6 +12,7 @@ import Garnix.API.ConfigSchema (garnixConfigJsonSchema)
 import Garnix.API.Dev (DevAPI, devAPI)
 import Garnix.API.ForgeWebhooks (ForgeWebhookAPI, forgeWebhookAPI)
 import Garnix.API.Forges
+import Garnix.API.Installations (InstallationsAPI, installationsAPI)
 import Garnix.API.GhWebhooks
 import Garnix.API.Health
 import Garnix.API.Hosts (HostsAPI, hostsAPI)
@@ -38,8 +39,11 @@ data WholeAPI r = WholeAPI
           :> "events"
           :> "github"
           :> ToServantApi GhWebhookAPI,
-    -- | Webhooks of the forge instances in @GARNIX_FORGES_FILE@.
+    -- | Webhook deliveries of Gitea/Forgejo installations ("Garnix.API.ForgeWebhooks").
     forgeEvents :: r :- "api" :> "forges" :> ForgeWebhookAPI,
+    -- | Installing garnix on Gitea/Forgejo accounts, organisations and
+    -- instances ("Garnix.API.Installations").
+    forgeInstallations :: r :- "api" :> "forges" :> Capture "slug" ForgeSlug :> Auth '[JWT, Cookie] AuthJwtPayload :> ToServantApi InstallationsAPI,
     account :: r :- "api" :> "account" :> Auth '[JWT, Cookie] AuthJwtPayload :> ToServantApi AccountAPI,
     build :: r :- "api" :> "build" :> Auth '[JWT, Cookie] AuthJwtPayload :> ToServantApi BuildAPI,
     commit :: r :- "api" :> "commits" :> Auth '[JWT, Cookie] AuthJwtPayload :> ToServantApi CommitAPI,
@@ -106,6 +110,7 @@ wholeAPI =
   WholeAPI
     { events = toServant ghWebhookAPI,
       forgeEvents = forgeWebhookAPI,
+      forgeInstallations = \slug' -> toServant . installationsAPI slug',
       account = toServant . accountAPI,
       dev = devAPI,
       login = toServant (loginAPI githubForge),

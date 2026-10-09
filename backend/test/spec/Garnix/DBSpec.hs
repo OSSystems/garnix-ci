@@ -484,7 +484,9 @@ spec = do
 
     it "checks every table that has a forge column" $ do
       script <- T.unlines <$> readRevert
-      tables <- forgeTables
+      -- The tables later changes add are gone, by their own reverts, before
+      -- this one runs.
+      tables <- filter (`notElem` ["forge_installation_repos", "forge_installations"]) <$> forgeTables
       length tables `shouldBeM` 14
       filter (\t -> not (("FROM " <> t <> " WHERE forge <> 'github'") `T.isInfixOf` script)) tables
         `shouldBeM` []
@@ -577,7 +579,7 @@ spec = do
       -- collaborator list, which is empty. git.example lists "root" as admin;
       -- github lists nobody.
       let repoLess slug' admins' =
-            let base = githubForgeInstance "other-webhook-secret" "other-client-id" "other-client-secret" Nothing
+            let base = githubForgeInstance "other-client-id" "other-client-secret" Nothing
              in base
                   { _forgeInstanceConfig = (_forgeInstanceConfig base) {_forgeConfigSlug = slug', _forgeConfigAdmins = admins'},
                     _forgeInstanceForge = (_forgeInstanceForge base) {_forgeResolveCredentials = \_ -> pure Nothing}

@@ -290,7 +290,7 @@ withTestEnvironment tempDir action = do
                   forges =
                     Map.singleton
                       githubForge
-                      (githubForgeInstance "github-webhook-secret" "github-client-id" "github-client-secret" Nothing),
+                      (githubForgeInstance "github-client-id" "github-client-secret" Nothing),
                   forgeRegistration = Nothing,
                   cookieSettings = defaultCookieSettings {cookieXsrfSetting = Nothing},
                   jwtSettings = defaultJWTSettings $ fromSecret $ cs jwtKey,

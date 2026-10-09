@@ -6,7 +6,6 @@
 -- >     "kind": "gitea",
 -- >     "webUrl": "https://git.example.com",
 -- >     "apiUrl": "https://git.example.com/api/v1",
--- >     "webhookSecretFile": "/run/secrets/webhook_secret",
 -- >     "oauthClientId": "…",
 -- >     "oauthClientSecretFile": "/run/secrets/oauth_client_secret",
 -- >     "apiTokenFile": "/run/secrets/api_token",
@@ -15,7 +14,9 @@
 -- > }
 --
 -- Each key is the instance's 'ForgeSlug'. Secrets live in their own files so
--- the forges file itself can sit in the Nix store.
+-- the forges file itself can sit in the Nix store. @apiTokenFile@ is
+-- optional: it names the token of a bot account garnix then calls the
+-- instance with, instead of the token of whoever installed garnix.
 module Garnix.Forge.Config
   ( readForgesFile,
     parseForgesFile,
@@ -84,19 +85,17 @@ parseForgesFile readSecret contents = do
           let stripped = T.strip $ T.decodeUtf8Lenient raw
           when (T.null stripped) $ failWith $ field <> ": " <> cs secretPath <> " is empty"
           pure stripped
-    webhookSecret' <- secret "webhookSecretFile" (entryWebhookSecretFile entry)
     oAuthClientSecret' <- secret "oauthClientSecretFile" (entryOAuthClientSecretFile entry)
-    apiToken' <- secret "apiTokenFile" (entryApiTokenFile entry)
+    apiToken' <- traverse (secret "apiTokenFile") (entryApiTokenFile entry)
     pure
       ForgeConfig
         { _forgeConfigSlug = ForgeSlug slug',
           _forgeConfigKind = entryKind entry,
           _forgeConfigWebUrl = entryWebUrl entry,
           _forgeConfigApiUrl = entryApiUrl entry,
-          _forgeConfigWebhookSecret = T.encodeUtf8 webhookSecret',
           _forgeConfigOAuthClientId = entryOAuthClientId entry,
           _forgeConfigOAuthClientSecret = oAuthClientSecret',
-          _forgeConfigApiToken = Just $ GhToken apiToken',
+          _forgeConfigApiToken = GhToken <$> apiToken',
           _forgeConfigAdmins = GhLogin <$> entryAdmins entry
         }
   -- Credentials reach nix as netrc entries, which name a host alone: two
@@ -115,7 +114,7 @@ parseForgesFile readSecret contents = do
       <> "; there can be one forge per host"
   pure configs
 
--- | The slug names the instance in URLs (@/api/forges/:slug/webhook@), so it
+-- | The slug names the instance in URLs (@/api/forges/:slug/installations/:id/webhook@), so it
 -- has to be a plain path segment. @github@ is github.com, which is configured
 -- from the GitHub App settings, never from this file.
 validateSlug :: Text -> Either Text ()
@@ -133,10 +132,9 @@ data Entry = Entry
   { entryKind :: ForgeKind,
     entryWebUrl :: Text,
     entryApiUrl :: Text,
-    entryWebhookSecretFile :: FilePath,
     entryOAuthClientId :: Text,
     entryOAuthClientSecretFile :: FilePath,
-    entryApiTokenFile :: FilePath,
+    entryApiTokenFile :: Maybe FilePath,
     entryAdmins :: [Text]
   }
 
@@ -150,13 +148,11 @@ parseEntry o = do
     <$> (o .: "webUrl" >>= httpUrl "webUrl")
     <*> (o .: "apiUrl" >>= httpUrl "apiUrl")
     <*> o
-    .: "webhookSecretFile"
-    <*> o
     .: "oauthClientId"
     <*> o
     .: "oauthClientSecretFile"
     <*> o
-    .: "apiTokenFile"
+    .:? "apiTokenFile"
     <*> o
     .:? "admins"
     .!= []

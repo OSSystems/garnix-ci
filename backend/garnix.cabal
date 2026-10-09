@@ -46,6 +46,7 @@ library
       Garnix.API.GhWebhooks
       Garnix.API.Health
       Garnix.API.Hosts
+      Garnix.API.Installations
       Garnix.API.Keys
       Garnix.API.Modules
       Garnix.API.Runs
@@ -72,6 +73,7 @@ library
       Garnix.DB.FeatureFlags.Types
       Garnix.DB.Forges
       Garnix.DB.Hosting
+      Garnix.DB.Installations
       Garnix.DB.ModuleValues
       Garnix.Duration
       Garnix.ExpiringCache
@@ -79,6 +81,7 @@ library
       Garnix.Forge.Config
       Garnix.Forge.Gitea
       Garnix.Forge.Gitea.Webhook
+      Garnix.Forge.Installation
       Garnix.Forge.OutboundGuard
       Garnix.Forge.Registered
       Garnix.Forge.Registry
@@ -828,6 +831,7 @@ test-suite spec
       Garnix.API.GhWebhooks
       Garnix.API.Health
       Garnix.API.Hosts
+      Garnix.API.Installations
       Garnix.API.Keys
       Garnix.API.Modules
       Garnix.API.Runs
@@ -854,6 +858,7 @@ test-suite spec
       Garnix.DB.FeatureFlags.Types
       Garnix.DB.Forges
       Garnix.DB.Hosting
+      Garnix.DB.Installations
       Garnix.DB.ModuleValues
       Garnix.Duration
       Garnix.ExpiringCache
@@ -861,6 +866,7 @@ test-suite spec
       Garnix.Forge.Config
       Garnix.Forge.Gitea
       Garnix.Forge.Gitea.Webhook
+      Garnix.Forge.Installation
       Garnix.Forge.OutboundGuard
       Garnix.Forge.Registered
       Garnix.Forge.Registry

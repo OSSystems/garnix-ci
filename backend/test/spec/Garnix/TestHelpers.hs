@@ -197,7 +197,9 @@ truncateDBMNoInsert = do
           server_pool,
           server_stats,
           runs,
-          forges
+          forges,
+          forge_installations,
+          forge_installation_repos
       |]
 
 truncateDBM :: M ()
@@ -475,7 +477,6 @@ testForgeInstance slug kind =
             _forgeConfigKind = kind,
             _forgeConfigWebUrl = "https://" <> getForgeSlug slug,
             _forgeConfigApiUrl = "https://" <> getForgeSlug slug <> "/api/v1",
-            _forgeConfigWebhookSecret = "test-webhook-secret",
             _forgeConfigOAuthClientId = "test-client-id",
             _forgeConfigOAuthClientSecret = "test-client-secret",
             _forgeConfigApiToken = Just (GhToken "test-api-token"),

@@ -822,12 +822,12 @@ data ForgeConfig = ForgeConfig
     _forgeConfigWebUrl :: Text,
     -- | Base of the forge's REST API, e.g. @https://api.github.com@.
     _forgeConfigApiUrl :: Text,
-    -- | Shared secret the forge signs its webhook deliveries with.
-    _forgeConfigWebhookSecret :: StrictByteString,
     _forgeConfigOAuthClientId :: Text,
     _forgeConfigOAuthClientSecret :: Text,
-    -- | A bot token for forges that are called with one ('ApiTokenCredentials').
-    -- GitHub mints installation tokens instead and leaves this empty.
+    -- | A bot token which, when set, garnix calls the forge and clones with
+    -- instead of the token of whoever installed garnix
+    -- ('ApiTokenCredentials'). GitHub mints installation tokens instead and
+    -- leaves this empty.
     _forgeConfigApiToken :: Maybe GhToken,
     -- | Logins on this forge that administer garnix.
     _forgeConfigAdmins :: [GhLogin]
@@ -1658,6 +1658,15 @@ data ForgeCredentials
   | -- | A forge that is called with a plain API token and nothing else; the
     -- token is the one in '_repoInfoGhToken'.
     ApiTokenCredentials
+  | -- | A Gitea installation, called with the OAuth token of whoever
+    -- installed it, which garnix renews: the token in '_repoInfoGhToken' is
+    -- only good for about an hour.
+    ForgeInstallationCredentials ForgeInstallationId
+
+-- | garnix installed on a Gitea account, organisation or instance.
+newtype ForgeInstallationId = ForgeInstallationId {getForgeInstallationId :: Int32}
+  deriving stock (Eq, Show, Generic)
+  deriving newtype (ToJSON, Ord, FromJSON, Servant.FromHttpApiData, Servant.ToHttpApiData, PGColumn "integer", PGParameter "integer")
 
 data RepoInfo = RepoInfo
   { _repoInfoCredentials :: ForgeCredentials,

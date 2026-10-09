@@ -151,7 +151,6 @@ spec = do
               _forgeConfigKind = GiteaForgeKind,
               _forgeConfigWebUrl = url,
               _forgeConfigApiUrl = url <> "/api/v1",
-              _forgeConfigWebhookSecret = "webhook-secret",
               _forgeConfigOAuthClientId = "client-id",
               _forgeConfigOAuthClientSecret = "client-secret",
               _forgeConfigApiToken = Just (GhToken "bot-token"),
