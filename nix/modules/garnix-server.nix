@@ -74,7 +74,7 @@ let
     };
 
   forgeType = lib.types.submodule (
-    { name, ... }:
+    { name, config, ... }:
     {
       options = {
         kind = lib.mkOption {
@@ -105,9 +105,19 @@ let
           example = [ "alice" ];
           description = "Logins on this instance that administer garnix.";
         };
-        webhookSecretFile = secretFileOption "Path to the secret the instance signs its webhook deliveries with";
         oauthClientSecretFile = secretFileOption "Path to the client secret of the OAuth2 application";
-        apiTokenFile = secretFileOption "Path to the access token of the bot account garnix calls the instance's API and clones with";
+        apiTokenFile = lib.mkOption {
+          type = lib.types.nullOr lib.types.str;
+          default = null;
+          description = ''
+            Path to the access token of a bot account (string path. Do NOT use
+            a Nix path literal or the secret will be copied into the
+            world-readable /nix/store). When set, garnix calls the instance's
+            API and clones with it instead of the token of whoever installed
+            garnix on the account, organisation or instance, so the bot needs
+            write access to every repository garnix builds there.
+          '';
+        };
         exposeTokenToActions = lib.mkOption {
           type = lib.types.bool;
           default = false;
@@ -129,8 +139,9 @@ let
           internal = true;
           readOnly = true;
           default = {
-            webhookSecretFile = "${cfg.secrets.dir}/forges/${name}/webhook_secret";
             oauthClientSecretFile = "${cfg.secrets.dir}/forges/${name}/oauth_client_secret";
+          }
+          // lib.optionalAttrs (config.apiTokenFile != null) {
             apiTokenFile = "${cfg.secrets.dir}/forges/${name}/api_token";
           };
           description = ''
@@ -722,9 +733,7 @@ in
             apiUrl = "https://git.example.com/api/v1";
             oauthClientId = "0b8f…";
             admins = [ "alice" ];
-            webhookSecretFile = "/run/secrets/gitea/webhook_secret";
             oauthClientSecretFile = "/run/secrets/gitea/oauth_client_secret";
-            apiTokenFile = "/run/secrets/gitea/api_token";
           };
         }
       '';
@@ -748,9 +757,9 @@ in
         (POST /api/auth/start and POST /api/forges) and log in through it,
         besides the instances in `forges`. Registered instances must be
         served over https at the root of their host and resolve only to
-        public addresses; they are used to log in only, and are never handed
-        to git or nix. Their OAuth client secrets are stored in the database,
-        encrypted with the instance's age key.
+        public addresses; git fetches from them pinned to the addresses
+        garnix checked. Their OAuth client secrets are stored in the
+        database, encrypted with the instance's age key.
 
         When off, only `forges` and github.com are answered, and registered
         instances already in the database are ignored.
@@ -816,6 +825,10 @@ in
     ++ lib.mapAttrsToList (slug: forge: {
       assertion = forge.exposeTokenToActions -> config.garnix.actionRunner.enable;
       message = "services.garnixServer.forges.\"${slug}\".exposeTokenToActions requires garnix.actionRunner.enable.";
+    }) cfg.forges
+    ++ lib.mapAttrsToList (slug: forge: {
+      assertion = forge.exposeTokenToActions -> forge.apiTokenFile != null;
+      message = "services.garnixServer.forges.\"${slug}\".exposeTokenToActions requires apiTokenFile.";
     }) cfg.forges;
 
     users = {
