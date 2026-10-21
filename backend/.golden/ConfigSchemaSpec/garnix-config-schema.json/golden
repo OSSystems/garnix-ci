@@ -10,7 +10,14 @@
                         "properties": {
                             "on": {
                                 "$comment": "Event that triggers this action",
-                                "const": "push"
+                                "oneOf": [
+                                    {
+                                        "const": "push"
+                                    },
+                                    {
+                                        "const": "success"
+                                    }
+                                ]
                             },
                             "run": {
                                 "$comment": "Name of the nix app to run as an action.",

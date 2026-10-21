@@ -320,14 +320,16 @@ instance HasCodec ActionSandboxType where
       $ fromList
         [(FastStartup, "fast-startup"), (SharedResources, "shared-resources")]
 
--- | Currently only one value, so we don't even need to inspect it. But we
--- add it for documentation, and so we can remain backwards compatible
--- (otherwise, 'push' will always have to be the default).
-data ActionTrigger = ActionTriggerPush
+-- | 'push' runs as soon as the action's own app is built, concurrently with
+-- the other builds; 'success' runs only after every build of the commit has
+-- succeeded (the same gate as module publishing).
+data ActionTrigger = ActionTriggerPush | ActionTriggerSuccess
   deriving (Eq, Show)
 
 instance HasCodec ActionTrigger where
-  codec = stringConstCodec $ fromList [(ActionTriggerPush, "push")]
+  codec =
+    stringConstCodec
+      $ fromList [(ActionTriggerPush, "push"), (ActionTriggerSuccess, "success")]
 
 data Action = Action
   { _actionName :: PackageName,

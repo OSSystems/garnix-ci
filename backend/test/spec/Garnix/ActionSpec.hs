@@ -383,6 +383,31 @@ spec = do
             let finalReport = report ^?! _last . _2
             finalReport ^. status `shouldBeM` RunReportStatusSuccess
 
+      context "success-triggered actions" $ do
+        let successYaml =
+              cs
+                [i|
+                  actions:
+                    - on: success
+                      run: test-action
+                |]
+        let handleCommitWithYaml ghState yaml flake = do
+              let commitInfo =
+                    defaultCommitInfo
+                      & repoInfo . ghRepoOwner .~ "garnix-io"
+                      & repoInfo . ghRepoName .~ "repo"
+                      & reqUser .~ "garnix-io"
+              GH.withLocalRepo ghState "garnix-io" "repo" identity commitInfo (GH.setupWithConfig flake $ Just yaml) $ \commitInfo -> do
+                let reporter = mkGithubReporter (commitInfo ^. repoInfo) (commitInfo ^. commit)
+                void $ try $ resolve =<< Orchestrator.handleCommit reporter True commitInfo
+                pure commitInfo
+
+        it "runs the action once all builds succeed" $ GH.withFakeGithubInterface $ \ghState -> do
+          void $ handleCommitWithYaml ghState successYaml $ flakeFromScript "echo test-message"
+          report <- GH.getReports ghState >>= GH.assertSingleRunForReport "action test-action"
+          let finalReport = report ^?! _last . _2
+          (finalReport ^. status, finalReport ^. logs) `shouldBeM` (RunReportStatusSuccess, "test-message\n")
+
       context "secrets" $ do
         it "gives access to the secret key for that action"
           $ GH.withFakeGithubInterface
@@ -471,6 +496,53 @@ spec = do
                       . _Just
                       . _2
             privateKey `shouldBeM` "none\n"
+
+  -- A success-triggered action that the gate refuses never starts, so this needs
+  -- no action-runner VM. It lives outside 'withActionRunner' so it still runs
+  -- where that VM is unavailable — which is everywhere in this fork.
+  inM $ aroundM_ suppressLogsWhenPassing $ beforeM_ truncateDBM $ do
+    context "success-triggered actions" $ do
+      it "concludes the action cancelled when a build fails" $ GH.withFakeGithubInterface $ \ghState -> do
+        let yaml =
+              cs
+                [i|
+                  actions:
+                    - on: success
+                      run: test-action
+                |]
+        -- The app itself builds fine, so reaching a cancelled run report can only
+        -- mean the gate refused it. "failing" writes no $out, so its build fails.
+        let flake =
+              cs
+                [i|
+                  { outputs = { self }: {
+                      packages.x86_64-linux.failing = derivation {
+                        name = "failing";
+                        builder = "/bin/sh";
+                        system = "x86_64-linux";
+                        args = [ "-c" "echo failing" ];
+                      };
+                      apps.x86_64-linux.test-action = {
+                        type = "app";
+                        program = builtins.toString (derivation {
+                          name = "never-run";
+                          builder = "/bin/sh";
+                          system = "x86_64-linux";
+                          args = [ "-c" "echo '#!/bin/sh' > $out; chmod +x $out" ];
+                        });
+                      };
+                    };
+                  }
+                |]
+        GH.withLocalRepo ghState "owner" "repo" identity defaultCommitInfo (GH.setupWithConfig flake (Just yaml)) $ \commitInfo -> do
+          let reporter = mkGithubReporter (commitInfo ^. repoInfo) (commitInfo ^. commit)
+          void $ try $ resolve =<< Orchestrator.handleCommit reporter True commitInfo
+        -- The check setupActions registered is the app build; the action's own
+        -- run check never exists, because the action never starts.
+        report <- GH.getReports ghState >>= GH.assertSingleRunForReport "app test-action"
+        let finalReport = report ^?! _last . _2
+        (finalReport ^. status, finalReport ^. logs)
+          `shouldBeM` (RunReportStatusCancelled, "Not run: not all builds succeeded.\n")
 
 packageAndStatus :: [Build] -> [(PackageName, Status)]
 packageAndStatus = catMaybes . fmap go
