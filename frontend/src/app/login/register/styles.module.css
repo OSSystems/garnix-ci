@@ -16,7 +16,17 @@
   display: flex;
   gap: 8px;
   align-items: center;
+}
+
+.callback > :first-child {
+  flex: 1;
+  min-width: 0;
   word-break: break-all;
+}
+
+.callback > button {
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .field {
