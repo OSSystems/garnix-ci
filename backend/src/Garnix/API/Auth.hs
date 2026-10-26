@@ -448,16 +448,21 @@ connect slug session = do
   user <- webSessionUser session
   -- An unknown slug is a 404 before anything is signed.
   _ <- forgeOauth slug
+  (link, cookie) <- startConnect (user ^. id) slug
+  pure $ addHeader cookie $ LoginLinks {_loginLinksGithub = link}
+
+startConnect :: UserId -> ForgeSlug -> M (Text, SetCookie)
+startConnect userId slug = do
   nonce <- newOAuthNonce
   jwtSettings' <- view #jwtSettings
   expiresAt <- addTime oauthStateLifetime <$> liftIO getCurrentTime
   state <-
-    liftIO (makeJWT (ConnectState (user ^. id) slug nonce) jwtSettings' (Just expiresAt)) >>= \case
+    liftIO (makeJWT (ConnectState userId slug nonce) jwtSettings' (Just expiresAt)) >>= \case
       Left e -> throw $ OtherError $ "Failed to sign the connect state: " <> show e
       Right state -> pure $ cs state
   link <- authorizeLink slug (connectStatePrefix <> state)
   cookie <- oauthStateCookie nonce
-  pure $ addHeader cookie $ LoginLinks {_loginLinksGithub = link}
+  pure (link, cookie)
 
 -- | A connect's state names the account and forge of the callback's session
 -- and route.
