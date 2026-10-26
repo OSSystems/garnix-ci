@@ -13,6 +13,7 @@ import { userMessage } from "@/services";
 import { useLoading } from "@/hooks/useLoading";
 import { leaving, useAction } from "@/hooks/useAction";
 import { goTo } from "@/utils/navigate";
+import { followStartAnswer } from "./register/register";
 import styles from "./styles.module.css";
 
 type PageProps = {
@@ -40,15 +41,7 @@ const Page = (props: PageProps) => {
       () => startAuth(url.trim()),
       (answer) => {
         setLoginTargetPage(page ?? "/");
-        if (answer.t === "login") {
-          goTo(answer.link);
-        } else {
-          // The registration page asks again: it trusts no slug or redirect
-          // URI from its own URL.
-          const query = new URLSearchParams({ url: url.trim() });
-          router.push(`/login/register?${query.toString()}`);
-        }
-        return leaving;
+        return followStartAnswer(router, url.trim(), "login")(answer);
       },
     );
 

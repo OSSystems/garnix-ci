@@ -322,13 +322,13 @@ describe("registered forges", () => {
   });
 });
 
-describe("registering a forge from the account", () => {
+describe("adding a forge from the account", () => {
   it("is offered while only GitHub is active", async () => {
     forges = [github];
     identities = [{ forge: "github", login: "alice" }];
     render(<ForgesComponent />);
     expect(
-      await screen.findByText("Register a Gitea/Forgejo instance"),
+      await screen.findByText("Add a Gitea/Forgejo instance"),
     ).toBeVisible();
     expect(screen.getByLabelText("Gitea/Forgejo URL")).toBeVisible();
     expect(
@@ -345,7 +345,7 @@ describe("registering a forge from the account", () => {
       await screen.findByLabelText("Gitea/Forgejo URL"),
       "https://git.new.com",
     );
-    await user.click(screen.getByText("Register"));
+    await user.click(screen.getByText("Add"));
     await waitFor(() => expect(push).toHaveBeenCalled());
     const target = new URL(push.mock.calls[0][0], "https://garnix.example");
     expect(target.pathname).toBe("/login/register");
@@ -357,7 +357,7 @@ describe("registering a forge from the account", () => {
     expect(goTo).not.toHaveBeenCalled();
   });
 
-  it("points to the list for a forge garnix already knows", async () => {
+  it("connects a forge garnix already knows at once", async () => {
     const user = userEvent.setup();
     started = {
       status: 200,
@@ -370,12 +370,12 @@ describe("registering a forge from the account", () => {
       await screen.findByLabelText("Gitea/Forgejo URL"),
       "https://git.acme.com",
     );
-    await user.click(screen.getByText("Register"));
-    expect(await screen.findByTestId("register-known")).toHaveTextContent(
-      /connect it from the list above/,
+    await user.click(screen.getByText("Add"));
+    await waitFor(() =>
+      expect(goTo).toHaveBeenCalledWith("https://git.acme.com/authorize"),
     );
+    expect(window.localStorage.getItem("login-target-page")).toBe("/account");
     expect(push).not.toHaveBeenCalled();
-    expect(goTo).not.toHaveBeenCalled();
   });
 
   it("shows why the backend refuses the URL", async () => {
@@ -393,7 +393,7 @@ describe("registering a forge from the account", () => {
       await screen.findByLabelText("Gitea/Forgejo URL"),
       "https://git.new.com",
     );
-    await user.click(screen.getByText("Register"));
+    await user.click(screen.getByText("Add"));
     expect(await screen.findByTestId("register-error")).toHaveTextContent(
       /^only https URLs can be registered$/,
     );
