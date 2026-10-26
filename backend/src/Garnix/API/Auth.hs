@@ -199,10 +199,18 @@ loginAPI slug =
 -- the response keeps one shape across forges.
 login :: ForgeSlug -> M (Headers '[Header "Set-Cookie" SetCookie] LoginLinks)
 login slug = do
-  nonce <- newOAuthNonce
-  link <- authorizeLink slug (getOAuthNonce nonce)
-  cookie <- oauthStateCookie nonce
+  (link, cookie) <- startOAuth Nothing slug
   pure $ addHeader cookie $ LoginLinks {_loginLinksGithub = link}
+
+startOAuth :: Maybe UserId -> ForgeSlug -> M (Text, SetCookie)
+startOAuth connecting slug = do
+  nonce <- newOAuthNonce
+  state <- case connecting of
+    Nothing -> pure $ getOAuthNonce nonce
+    Just userId -> (connectStatePrefix <>) <$> signConnectState (ConnectState userId slug nonce)
+  link <- authorizeLink slug state
+  cookie <- oauthStateCookie nonce
+  pure (link, cookie)
 
 -- * The OAuth state
 --
@@ -448,21 +456,16 @@ connect slug session = do
   user <- webSessionUser session
   -- An unknown slug is a 404 before anything is signed.
   _ <- forgeOauth slug
-  (link, cookie) <- startConnect (user ^. id) slug
+  (link, cookie) <- startOAuth (Just $ user ^. id) slug
   pure $ addHeader cookie $ LoginLinks {_loginLinksGithub = link}
 
-startConnect :: UserId -> ForgeSlug -> M (Text, SetCookie)
-startConnect userId slug = do
-  nonce <- newOAuthNonce
+signConnectState :: ConnectState -> M Text
+signConnectState state = do
   jwtSettings' <- view #jwtSettings
   expiresAt <- addTime oauthStateLifetime <$> liftIO getCurrentTime
-  state <-
-    liftIO (makeJWT (ConnectState userId slug nonce) jwtSettings' (Just expiresAt)) >>= \case
-      Left e -> throw $ OtherError $ "Failed to sign the connect state: " <> show e
-      Right state -> pure $ cs state
-  link <- authorizeLink slug (connectStatePrefix <> state)
-  cookie <- oauthStateCookie nonce
-  pure (link, cookie)
+  liftIO (makeJWT state jwtSettings' (Just expiresAt)) >>= \case
+    Left e -> throw $ OtherError $ "Failed to sign the connect state: " <> show e
+    Right signed -> pure $ cs signed
 
 -- | A connect's state names the account and forge of the callback's session
 -- and route.

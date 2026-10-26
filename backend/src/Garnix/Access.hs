@@ -14,6 +14,7 @@ module Garnix.Access
     mainIdentity,
     requireGithubIdentity,
     sessionUserOf,
+    webSessionAccount,
     webSessionUser,
     webSessionUserOr,
     withRequiredUser,
@@ -67,8 +68,12 @@ webSessionUser = webSessionUserOr Unauthorized
 webSessionUserOr :: Error -> AuthResult AuthJwtPayload -> M User
 webSessionUserOr refusal = \case
   Authenticated (ApiSession _) -> throw $ ForbiddenWithMessage "This endpoint is not available through the programmatic api."
-  auth@(Authenticated (WebSession _)) -> sessionUserOf auth >>= maybe (throw refusal) pure
-  _ -> throw refusal
+  auth -> webSessionAccount auth >>= maybe (throw refusal) pure
+
+webSessionAccount :: AuthResult AuthJwtPayload -> M (Maybe User)
+webSessionAccount = \case
+  auth@(Authenticated (WebSession _)) -> sessionUserOf auth
+  _ -> pure Nothing
 
 -- | The identity that names the account where one name is shown: its github
 -- one if it has one, else its first.

@@ -38,8 +38,8 @@ import Data.Text qualified as T
 import Data.Text.Encoding qualified as T
 import Data.Time.Format (defaultTimeLocale, formatTime)
 import Data.Word (Word16)
-import Garnix.API.Auth (authorizeLink, getOAuthNonce, newOAuthNonce, oauthCallbackPath, oauthStateCookie, startConnect)
-import Garnix.Access (sessionUserOf, webSessionUser)
+import Garnix.API.Auth (oauthCallbackPath, startOAuth)
+import Garnix.Access (sessionUserOf, webSessionAccount, webSessionUser)
 import Garnix.DB qualified as DB (getUserById)
 import Garnix.DB.Forges qualified as DB
 import Garnix.Forge.OutboundGuard (ForbiddenAddress (..), GuardLimitExceeded (..), PlainHttpRefused (..), isPublicAddress)
@@ -208,15 +208,10 @@ managingAccount authResult = do
         Just session -> DB.getUserById (session ^. id)
     _ -> pure Nothing
 
-webSessionAccount :: AuthResult AuthJwtPayload -> M (Maybe User)
-webSessionAccount = \case
-  authResult@(Authenticated (WebSession _)) -> sessionUserOf authResult
-  _ -> pure Nothing
-
 -- | @POST /api/auth/start@: reads what 'startDecision' needs, and answers
 -- it.
-authStartAPI :: SockAddr -> Maybe Text -> AuthStartRequest -> M (Headers '[Header "Set-Cookie" SetCookie] AuthStartAnswer)
-authStartAPI peer forwardedFor (AuthStartRequest url) = do
+authStartAPI :: SockAddr -> Maybe Text -> AuthResult AuthJwtPayload -> AuthStartRequest -> M (Headers '[Header "Set-Cookie" SetCookie] AuthStartAnswer)
+authStartAPI peer forwardedFor session (AuthStartRequest url) = do
   registration <- view #forgeRegistration
   forM_ registration $ \registration' -> limited (_forgeRegistrationStartLimit registration') peer forwardedFor
   configured <- configuredForHost (hostOf url)
@@ -228,7 +223,7 @@ authStartAPI peer forwardedFor (AuthStartRequest url) = do
       Just . (slug',) . fmap DB.rowStatus <$> DB.getRegisteredForge slug'
     _ -> pure Nothing
   case startDecision configured (isJust registration) registered of
-    LoginThrough slug' -> startLogin slug'
+    LoginThrough slug' -> startOAuthFor session slug'
     RegisterAt slug' -> noHeader . StartRegister slug' <$> callbackUrl slug'
     UnknownForge ->
       throw
@@ -311,12 +306,7 @@ registerForgeAPI peer forwardedFor cookies session request = do
     throw $ ConflictWithMessage $ fromMaybe (getForgeSlug slug' <> " was registered meanwhile; log in through it") refusal'
   log Notice $ "registered the forge " <> getForgeSlug slug' <> " (" <> webUrl' <> "), pending its first login"
   transport <- view #cookieSettings
-  answer <-
-    webSessionAccount session >>= \case
-      Just account -> do
-        (link, cookie) <- startConnect (account ^. id) slug'
-        pure $ addHeader cookie $ StartLogin link
-      Nothing -> startLogin slug'
+  answer <- startOAuthFor session slug'
   pure
     $ addHeader
       defaultSetCookie
@@ -506,14 +496,10 @@ configuredForHost :: Maybe Text -> M (Maybe ForgeSlug)
 configuredForHost Nothing = pure Nothing
 configuredForHost (Just host) = configuredOnHost host <$> view #forges
 
--- | The answer to log in through a forge: its authorize link, and the cookie
--- of the OAuth state that lets this browser, and only it, complete the login
--- (see 'Garnix.API.Auth.login').
-startLogin :: ForgeSlug -> M (Headers '[Header "Set-Cookie" SetCookie] AuthStartAnswer)
-startLogin slug' = do
-  nonce <- newOAuthNonce
-  link <- authorizeLink slug' (getOAuthNonce nonce)
-  cookie <- oauthStateCookie nonce
+startOAuthFor :: AuthResult AuthJwtPayload -> ForgeSlug -> M (Headers '[Header "Set-Cookie" SetCookie] AuthStartAnswer)
+startOAuthFor session slug' = do
+  account <- webSessionAccount session
+  (link, cookie) <- startOAuth ((^. id) <$> account) slug'
   pure $ addHeader cookie $ StartLogin link
 
 callbackUrl :: ForgeSlug -> M Text
