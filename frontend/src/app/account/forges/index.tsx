@@ -1,5 +1,6 @@
 "use client";
 import React, { useState } from "react";
+import { useRouter } from "next/navigation";
 import { Table } from "@/components/table";
 import { Text } from "@/components/text";
 import { Button } from "@/components/button";
@@ -14,6 +15,7 @@ import {
   getConnectLink,
   getCurrentUser,
   getIdentities,
+  setLoginTargetPage,
 } from "@/services/auth";
 import { useUser } from "@/store/userContext";
 import {
@@ -22,6 +24,7 @@ import {
   forgeLabel,
   getForges,
   replaceForgeSecret,
+  startAuth,
 } from "@/services/forges";
 import { goTo } from "@/utils/navigate";
 import styles from "./styles.module.css";
@@ -176,11 +179,12 @@ const ConnectedForges = (props: {
       </Table>
       {onlyIdentity && (
         <Text className={styles.small}>
-          You cannot disconnect the only forge you log in with. Connect another
-          forge first.
+          You cannot disconnect the only forge you log in with. Connect or
+          register another forge first.
         </Text>
       )}
       {error && <Text className={styles.error}>{error}</Text>}
+      <RegisterForge />
       {confirming && (
         <FloatingModal onRequestClose={() => setConfirming(undefined)}>
           <ModalSection>
@@ -210,6 +214,66 @@ const ConnectedForges = (props: {
             </ModalActions>
           </ModalSection>
         </FloatingModal>
+      )}
+    </>
+  );
+};
+
+const RegisterForge = () => {
+  const router = useRouter();
+  const [url, setUrl] = useState("");
+  const [known, setKnown] = useState(false);
+  const { busy, error, go } = useAction();
+
+  const register = () => {
+    setKnown(false);
+    return go(
+      () => startAuth(url.trim()),
+      (answer) => {
+        if (answer.t === "login") {
+          setKnown(true);
+          return;
+        }
+        setLoginTargetPage("/account");
+        const query = new URLSearchParams({ url: url.trim(), from: "account" });
+        router.push(`/login/register?${query.toString()}`);
+        return leaving;
+      },
+    );
+  };
+
+  return (
+    <>
+      <Text type="h3">Register a Gitea/Forgejo instance</Text>
+      <form
+        className={styles.row}
+        onSubmit={(e) => {
+          e.preventDefault();
+          void register();
+        }}
+      >
+        <TextInput
+          aria-label="Gitea/Forgejo URL"
+          type="url"
+          placeholder="https://git.acme.com"
+          required
+          value={url}
+          onChange={setUrl}
+          disabled={busy}
+        />
+        <Button submit loading={busy}>
+          Register
+        </Button>
+      </form>
+      {known && (
+        <Text className={styles.small} data-testid="register-known">
+          garnix already knows this forge: connect it from the list above.
+        </Text>
+      )}
+      {error && (
+        <Text className={styles.error} data-testid="register-error">
+          {error}
+        </Text>
       )}
     </>
   );

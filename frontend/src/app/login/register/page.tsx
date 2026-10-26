@@ -6,10 +6,15 @@ type PageProps = {
   searchParams: Record<string, string>;
 };
 
-// Only the login page's answer opens this page, with the URL it was given.
+// Only the login or account page's answer opens this page, with the URL it was given.
 const Page = (props: PageProps) => {
   const url = props.searchParams.url ?? "";
-  return url === "" ? <ToLogin /> : <Register url={url} />;
+  const from = props.searchParams.from === "account" ? "account" : "login";
+  return url === "" ? (
+    <ToLogin from={from} />
+  ) : (
+    <Register url={url} from={from} />
+  );
 };
 
 export default Page;

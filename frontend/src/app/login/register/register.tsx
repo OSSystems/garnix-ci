@@ -41,22 +41,33 @@ export const registerView = (
   return { t: "form", slug, callback };
 };
 
-export const ToLogin = () => {
+export type RegisterFrom = "login" | "account";
+
+const backTo = (from: RegisterFrom): string =>
+  from === "account" ? "/account" : "/login";
+
+export const ToLogin = ({ from = "login" }: { from?: RegisterFrom }) => {
   const router = useRouter();
   useEffect(() => {
-    router.replace("/login");
-  }, [router]);
+    router.replace(backTo(from));
+  }, [router, from]);
   return null;
 };
 
-export const Register = ({ url }: { url: string }) => {
+export const Register = ({
+  url,
+  from = "login",
+}: {
+  url: string;
+  from?: RegisterFrom;
+}) => {
   const answer = useLoading(useCallback(() => startAuth(url), [url]));
   const view = registerView(answer);
   switch (view.t) {
     case "loading":
       return null;
     case "leave":
-      return <ToLogin />;
+      return <ToLogin from={from} />;
     case "refused":
       return (
         <div className={styles.container}>
@@ -67,7 +78,7 @@ export const Register = ({ url }: { url: string }) => {
                 {view.message}
               </Text>
               <ModalActions align="right">
-                <Link href="/login">Back</Link>
+                <Link href={backTo(from)}>Back</Link>
               </ModalActions>
             </ModalSection>
           </Modal>
@@ -75,7 +86,12 @@ export const Register = ({ url }: { url: string }) => {
       );
     case "form":
       return (
-        <RegisterForm url={url} slug={view.slug} callback={view.callback} />
+        <RegisterForm
+          url={url}
+          slug={view.slug}
+          callback={view.callback}
+          from={from}
+        />
       );
   }
 };
@@ -84,10 +100,12 @@ const RegisterForm = ({
   url,
   slug,
   callback,
+  from,
 }: {
   url: string;
   slug: string;
   callback: string;
+  from: RegisterFrom;
 }) => {
   const [clientId, setClientId] = useState("");
   const [clientSecret, setClientSecret] = useState("");
@@ -170,7 +188,9 @@ const RegisterForm = ({
             />
             <Text className={styles.hint}>
               garnix keeps the secret encrypted and never shows it again. The
-              forge stays pending until you log in through it from this browser.
+              forge stays pending until you{" "}
+              {from === "account" ? "connect it" : "log in through it"} from
+              this browser.
             </Text>
             {error && (
               <Text className={styles.error} data-testid="register-error">
@@ -178,9 +198,11 @@ const RegisterForm = ({
               </Text>
             )}
             <ModalActions align="right">
-              <Link href="/login">Back</Link>
+              <Link href={backTo(from)}>Back</Link>
               <Button submit loading={busy}>
-                Register and log in
+                {from === "account"
+                  ? "Register and connect"
+                  : "Register and log in"}
               </Button>
             </ModalActions>
           </ModalSection>
