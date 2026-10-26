@@ -1,7 +1,6 @@
 "use client";
 import React, { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Table } from "@/components/table";
 import { Text } from "@/components/text";
 import { Button } from "@/components/button";
 import { TextInput } from "@/components/input";
@@ -18,6 +17,7 @@ import {
   setLoginTargetPage,
 } from "@/services/auth";
 import { useUser } from "@/store/userContext";
+import { useConfig } from "@/store/configContext";
 import {
   Forge,
   disableForge,
@@ -28,6 +28,7 @@ import {
 } from "@/services/forges";
 import { goTo } from "@/utils/navigate";
 import { followStartAnswer } from "@/app/login/register/register";
+import { Installations, Status } from "./installations";
 import styles from "./styles.module.css";
 
 type Loaded = { forges: Array<Forge>; identities: Array<Identity> };
@@ -42,8 +43,6 @@ const loadForgesAndIdentities = async (): Promise<APIResult<Loaded>> => {
   return Ok({ forges: forges.data, identities: identities.data });
 };
 
-// The account's identities, one per forge, and the forges it may still
-// connect; and the registered forges the account may manage.
 export const ForgesComponent = () => {
   const loaded = useLoading(loadForgesAndIdentities);
   if (loaded.loading) return null;
@@ -55,41 +54,52 @@ export const ForgesComponent = () => {
     );
   }
   const { forges, identities } = loaded.data.data;
-  const managed = forges.filter((forge) => forge.canManage);
+  const onlyIdentity = identities.length <= 1;
   return (
-    <>
-      <div className={styles.section}>
-        <ConnectedForges
-          forges={forges.filter((forge) => forge.status === "active")}
-          identities={identities}
-          reload={loaded.reload}
-        />
-      </div>
-      {managed.length > 0 && (
-        <div className={styles.section}>
-          <RegisteredForges
-            forges={managed}
+    <div className={styles.section}>
+      <Text type="h2">Forges</Text>
+      <Text className={styles.small}>
+        You log in to this account with any of these. Install garnix where your
+        repositories live, then choose which ones build.
+      </Text>
+      {forges
+        .filter((forge) => forge.status === "active" || forge.canManage)
+        .map((forge) => (
+          <ForgeBlock
+            key={forge.slug}
+            forge={forge}
             identities={identities}
             reload={loaded.reload}
           />
-        </div>
+        ))}
+      {onlyIdentity && (
+        <Text className={`${styles.small} ${styles.note}`}>
+          You cannot disconnect the only forge you log in with. Connect or
+          register another forge first.
+        </Text>
       )}
-    </>
+      <RegisterForge />
+    </div>
   );
 };
 
-const ConnectedForges = (props: {
-  forges: Array<Forge>;
+const ForgeBlock = (props: {
+  forge: Forge;
   identities: Array<Identity>;
   reload: () => void;
 }) => {
+  const { forge } = props;
   const { busy, error, go } = useAction();
-  // The forge whose button the running action belongs to.
-  const [acting, setActing] = useState<string>();
-  const [confirming, setConfirming] = useState<Forge>();
+  const [confirming, setConfirming] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(forge.status === "disabled");
   const { setUser } = useUser();
+  const { githubAppName } = useConfig();
+  const identity = props.identities.find(
+    (identity) => identity.forge === forge.slug,
+  );
   const onlyIdentity = props.identities.length <= 1;
-  const busyOn = (forge: Forge) => busy && acting === forge.slug;
+  const disabled = forge.status === "disabled";
+  const isGithub = forge.kind === "github";
 
   // The account's name is its main identity's login: it may have just gone.
   const refreshUser = async () => {
@@ -97,15 +107,14 @@ const ConnectedForges = (props: {
     if (current.ok && current.data != null) setUser(current.data);
   };
 
-  const disconnect = (forge: Forge, deleteModuleSettings: boolean) => {
-    setActing(forge.slug);
-    // A refusal is shown beside the table, not in the dialog.
-    setConfirming(undefined);
+  const disconnect = (deleteModuleSettings: boolean) => {
+    // A refusal is shown beside the forge, not in the dialog.
+    setConfirming(false);
     return go(
       () => disconnectIdentity(forge.slug, deleteModuleSettings),
       (result) => {
         if (result === "holds-module-settings") {
-          setConfirming(forge);
+          setConfirming(true);
         } else {
           void refreshUser();
           props.reload();
@@ -114,109 +123,110 @@ const ConnectedForges = (props: {
     );
   };
 
-  const connect = (forge: Forge) => {
-    setActing(forge.slug);
-    return go(
+  const connect = () =>
+    go(
       () => getConnectLink(forge.slug),
       (link) => {
         goTo(link);
         return leaving;
       },
     );
-  };
 
   return (
-    <>
-      <Text type="h2">Connected forges</Text>
-      <Text className={styles.small}>
-        You log in to this account with any of these. Connecting a forge logs
-        you in to it there.
-      </Text>
-      <Table className={styles.table}>
-        <thead>
-          <tr>
-            <th>Forge</th>
-            <th>Login</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody>
-          {props.forges.map((forge) => {
-            const identity = props.identities.find(
-              (identity) => identity.forge === forge.slug,
-            );
-            return (
-              <tr key={forge.slug}>
-                <td>{forgeLabel(forge)}</td>
-                <td>{identity?.login ?? "Not connected"}</td>
-                <td>
-                  {identity ? (
-                    <Button
-                      style="warning"
-                      loading={busyOn(forge)}
-                      disabled={onlyIdentity}
-                      title={
-                        onlyIdentity
-                          ? "This is the only forge you log in with. Connect another forge before disconnecting it."
-                          : undefined
-                      }
-                      onClick={() => disconnect(forge, false)}
-                    >
-                      Disconnect
-                    </Button>
-                  ) : (
-                    <Button
-                      loading={busyOn(forge)}
-                      onClick={() => connect(forge)}
-                    >
-                      Connect
-                    </Button>
-                  )}
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </Table>
-      {onlyIdentity && (
-        <Text className={styles.small}>
-          You cannot disconnect the only forge you log in with. Connect or
-          register another forge first.
+    <div className={styles.forge} data-testid={`forge-${forge.slug}`}>
+      <div className={styles.forgeHeader}>
+        <Text type="h3">{forgeLabel(forge)}</Text>
+        <Text type="span" className={styles.small}>
+          {identity?.login ?? (disabled ? "" : "Not connected")}
         </Text>
+        {!isGithub && (
+          <Status ok={!disabled}>{disabled ? "Disabled" : "Active"}</Status>
+        )}
+        <span className={styles.spacer} />
+        {isGithub && identity && githubAppName && (
+          <Button
+            style="secondary"
+            href={`https://github.com/apps/${githubAppName}/installations/new`}
+          >
+            Manage installations
+          </Button>
+        )}
+        {forge.canManage && (
+          <Button
+            style="secondary"
+            onClick={() => setSettingsOpen(!settingsOpen)}
+          >
+            Settings
+          </Button>
+        )}
+        {identity ? (
+          <Button
+            style="warning"
+            loading={busy}
+            disabled={onlyIdentity}
+            title={
+              onlyIdentity
+                ? "This is the only forge you log in with. Connect another forge before disconnecting it."
+                : undefined
+            }
+            onClick={() => disconnect(false)}
+          >
+            Disconnect
+          </Button>
+        ) : (
+          !disabled && (
+            <Button loading={busy} onClick={connect}>
+              Connect
+            </Button>
+          )
+        )}
+      </div>
+      {isGithub ? (
+        identity && (
+          <Text className={styles.small}>
+            Installations and repositories are managed through the garnix GitHub
+            App.
+          </Text>
+        )
+      ) : (
+        <Text className={styles.small}>{forge.webUrl}</Text>
       )}
       {error && <Text className={styles.error}>{error}</Text>}
-      <RegisterForge />
+      {forge.canManage && settingsOpen && (
+        <ForgeSettings
+          forge={forge}
+          identities={props.identities}
+          reload={props.reload}
+        />
+      )}
+      {!isGithub && identity && !disabled && (
+        <Installations forge={forge.slug} />
+      )}
       {confirming && (
-        <FloatingModal onRequestClose={() => setConfirming(undefined)}>
+        <FloatingModal onRequestClose={() => setConfirming(false)}>
           <ModalSection>
-            <Text type="h2">Disconnect {forgeLabel(confirming)}?</Text>
+            <Text type="h2">Disconnect {forgeLabel(forge)}?</Text>
           </ModalSection>
           <ModalSection>
             <Text>
-              Module configurations were saved through your{" "}
-              {forgeLabel(confirming)} login. Disconnecting it deletes them with
-              it. This cannot be undone.
+              Module configurations were saved through your {forgeLabel(forge)}{" "}
+              login. Disconnecting it deletes them with it. This cannot be
+              undone.
             </Text>
           </ModalSection>
           <ModalSection>
             <ModalActions align="right">
-              <Button
-                style="secondary"
-                onClick={() => setConfirming(undefined)}
-              >
+              <Button style="secondary" onClick={() => setConfirming(false)}>
                 Cancel
               </Button>
-              <Button
-                style="warning"
-                onClick={() => disconnect(confirming, true)}
-              >
+              <Button style="warning" onClick={() => disconnect(true)}>
                 Disconnect and delete the configurations
               </Button>
             </ModalActions>
           </ModalSection>
         </FloatingModal>
       )}
-    </>
+    </div>
   );
 };
 
@@ -274,28 +284,7 @@ const RegisterForge = () => {
 const quarantineWarning =
   "If this forge stays disabled for 30 days, registering it again deletes its old identities.";
 
-const RegisteredForges = (props: {
-  forges: Array<Forge>;
-  identities: Array<Identity>;
-  reload: () => void;
-}) => (
-  <>
-    <Text type="h2">Registered forges</Text>
-    <Text className={styles.small}>
-      Gitea/Forgejo instances registered through garnix that you may manage.
-    </Text>
-    {props.forges.map((forge) => (
-      <ManagedForge
-        key={forge.slug}
-        forge={forge}
-        identities={props.identities}
-        reload={props.reload}
-      />
-    ))}
-  </>
-);
-
-const ManagedForge = (props: {
+const ForgeSettings = (props: {
   forge: Forge;
   identities: Array<Identity>;
   reload: () => void;
@@ -318,14 +307,10 @@ const ManagedForge = (props: {
   };
 
   return (
-    <div className={styles.forge} data-testid={`managed-forge-${forge.slug}`}>
-      <div className={styles.forgeHeader}>
-        <Text type="h3">{forge.name}</Text>
-        <Text className={disabled ? styles.disabled : styles.small}>
-          {disabled ? "Disabled" : "Active"}
-        </Text>
-      </div>
-      <Text className={styles.small}>{forge.webUrl}</Text>
+    <div
+      className={styles.settings}
+      data-testid={`managed-forge-${forge.slug}`}
+    >
       {replacing ? (
         <SecretForm
           forge={forge}
