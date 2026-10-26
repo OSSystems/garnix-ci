@@ -51,6 +51,11 @@
   white-space: nowrap;
 }
 
+.grow {
+  flex: 1 1 0;
+  min-width: 200px;
+}
+
 .addForge {
   border-top: 1px solid var(--color-stone-300);
   margin-top: 24px;

@@ -249,6 +249,7 @@ const RegisterForge = () => {
         }}
       >
         <TextInput
+          className={styles.grow}
           aria-label="Gitea/Forgejo URL"
           type="url"
           placeholder="https://git.acme.com"
