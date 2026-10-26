@@ -405,6 +405,17 @@ spec = inM $ beforeM_ truncateDBM $ aroundM_ suppressLogsWhenPassing $ do
         loggedIn <- assert200 $ callbackFrom other link "bob"
         (loggedIn ^? responseBody . key "username" . _String) `shouldBeM` Just "bob"
 
+    it "answers a connect to the account a browser session is logged in to" $ withHttpRegistration $ withFakeGitea $ \port -> withServer $ \server -> do
+      _ <- assert200 $ server.post "/api/forges" (registerBody port)
+      _ <- assert200 $ logInThroughForge server "alice"
+      withServer $ \other -> do
+        account <- other.login
+        started <- assert200 $ other.post "/api/auth/start" (startBody $ fakeUrl port)
+        let link = started ^. responseBody . key "login" . _String
+        ("&state=connect." `T.isInfixOf` link) `shouldBeM` True
+        _ <- assert200 $ callbackFrom other link "bob"
+        accountOf "bob" `shouldReturnM` Just (account ^. id)
+
     it "asks to register an unknown or pending forge, with the callback to give its OAuth app" $ withHttpRegistration $ withFakeGitea $ \port -> withServer $ \server -> do
       unknown <- assert200 $ server.post "/api/auth/start" (startBody $ fakeUrl port)
       (unknown ^? responseBody . key "register" . key "slug" . _String) `shouldBeM` Just "localhost"

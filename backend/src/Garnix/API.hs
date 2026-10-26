@@ -71,7 +71,7 @@ data WholeAPI r = WholeAPI
     forges :: r :- "api" :> "forges" :> Auth '[JWT, Cookie] AuthJwtPayload :> Get '[JSON] [ForgeSummary],
     -- | Which forge a URL names, and whether to log in through it or register
     -- it first ("Garnix.API.Forges").
-    authStart :: r :- "api" :> "auth" :> "start" :> RemoteHost :> Header "X-Forwarded-For" Text :> ReqBody '[JSON] AuthStartRequest :> Post '[JSON] (Headers '[Header "Set-Cookie" SetCookie] AuthStartAnswer),
+    authStart :: r :- "api" :> "auth" :> "start" :> RemoteHost :> Header "X-Forwarded-For" Text :> Auth '[JWT, Cookie] AuthJwtPayload :> ReqBody '[JSON] AuthStartRequest :> Post '[JSON] (Headers '[Header "Set-Cookie" SetCookie] AuthStartAnswer),
     registerForge :: r :- "api" :> "forges" :> RemoteHost :> Header "X-Forwarded-For" Text :> Header "Cookie" Text :> Auth '[JWT, Cookie] AuthJwtPayload :> ReqBody '[JSON] RegisterForgeRequest :> Post '[JSON] (Headers '[Header "Set-Cookie" SetCookie, Header "Set-Cookie" SetCookie] AuthStartAnswer),
     replaceForgeSecret :: r :- "api" :> "forges" :> Capture "slug" ForgeSlug :> "secret" :> Auth '[JWT, Cookie] AuthJwtPayload :> ReqBody '[JSON] ReplaceForgeSecretRequest :> Put '[JSON] (),
     removeForge :: r :- "api" :> "forges" :> Capture "slug" ForgeSlug :> Auth '[JWT, Cookie] AuthJwtPayload :> Delete '[JSON] (),
