@@ -46,6 +46,20 @@ export type RegisterFrom = "login" | "account";
 const backTo = (from: RegisterFrom): string =>
   from === "account" ? "/account" : "/login";
 
+export const followStartAnswer =
+  (router: { push: (href: string) => void }, url: string, from: RegisterFrom) =>
+  (answer: StartAnswer): typeof leaving => {
+    if (answer.t === "login") {
+      goTo(answer.link);
+    } else {
+      const query = new URLSearchParams(
+        from === "account" ? { url, from } : { url },
+      );
+      router.push(`/login/register?${query.toString()}`);
+    }
+    return leaving;
+  };
+
 export const ToLogin = ({ from = "login" }: { from?: RegisterFrom }) => {
   const router = useRouter();
   useEffect(() => {

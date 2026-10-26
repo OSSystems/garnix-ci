@@ -27,6 +27,7 @@ import {
   startAuth,
 } from "@/services/forges";
 import { goTo } from "@/utils/navigate";
+import { followStartAnswer } from "@/app/login/register/register";
 import styles from "./styles.module.css";
 
 type Loaded = { forges: Array<Forge>; identities: Array<Identity> };
@@ -222,29 +223,24 @@ const ConnectedForges = (props: {
 const RegisterForge = () => {
   const router = useRouter();
   const [url, setUrl] = useState("");
-  const [known, setKnown] = useState(false);
   const { busy, error, go } = useAction();
 
-  const register = () => {
-    setKnown(false);
-    return go(
+  const register = () =>
+    go(
       () => startAuth(url.trim()),
       (answer) => {
-        if (answer.t === "login") {
-          setKnown(true);
-          return;
-        }
         setLoginTargetPage("/account");
-        const query = new URLSearchParams({ url: url.trim(), from: "account" });
-        router.push(`/login/register?${query.toString()}`);
-        return leaving;
+        return followStartAnswer(router, url.trim(), "account")(answer);
       },
     );
-  };
 
   return (
-    <>
-      <Text type="h3">Register a Gitea/Forgejo instance</Text>
+    <div className={styles.addForge}>
+      <Text type="h3">Add a Gitea/Forgejo instance</Text>
+      <Text className={styles.small}>
+        Connects it to this account, registering it first if garnix does not
+        know it yet.
+      </Text>
       <form
         className={styles.row}
         onSubmit={(e) => {
@@ -262,20 +258,15 @@ const RegisterForge = () => {
           disabled={busy}
         />
         <Button submit loading={busy}>
-          Register
+          Add
         </Button>
       </form>
-      {known && (
-        <Text className={styles.small} data-testid="register-known">
-          garnix already knows this forge: connect it from the list above.
-        </Text>
-      )}
       {error && (
         <Text className={styles.error} data-testid="register-error">
           {error}
         </Text>
       )}
-    </>
+    </div>
   );
 };
 
