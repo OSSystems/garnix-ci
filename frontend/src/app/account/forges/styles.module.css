@@ -5,11 +5,6 @@
   margin: 48px 0;
 }
 
-.table {
-  width: 95%;
-  margin: 24px auto;
-}
-
 .small {
   color: var(--color-stone-600);
   font-size: 14px;
@@ -20,15 +15,10 @@
   margin-top: 8px;
 }
 
-.disabled {
-  color: var(--color-error);
-  font-size: 14px;
-}
-
 .forge {
   border-top: 1px solid var(--color-stone-300);
   margin-top: 24px;
-  padding-top: 16px;
+  padding-top: 20px;
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -36,8 +26,25 @@
 
 .forgeHeader {
   display: flex;
+  flex-wrap: wrap;
   gap: 16px;
-  align-items: baseline;
+  align-items: center;
+}
+
+.spacer {
+  flex: 1;
+}
+
+.note {
+  margin-top: 16px;
+}
+
+.settings {
+  border: 1px solid var(--color-stone-300);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 
 .row {

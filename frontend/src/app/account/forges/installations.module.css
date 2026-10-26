@@ -1,0 +1,160 @@
+.small {
+  color: var(--color-stone-600);
+  font-size: 14px;
+}
+
+.error {
+  color: var(--color-error);
+  margin-top: 8px;
+}
+
+.status {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.installations {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.subheading {
+  font-size: 15px;
+  line-height: 20px;
+}
+
+.installationList {
+  border: 1px solid var(--color-stone-300);
+}
+
+.installation + .installation {
+  border-top: 1px solid var(--color-stone-300);
+}
+
+.installationRow {
+  display: grid;
+  grid-template-columns: 120px 1fr auto;
+  gap: 16px;
+  align-items: center;
+  padding: 14px 16px;
+}
+
+.open .installationRow {
+  background: #f2f2f2;
+}
+
+.target {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.actions {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+}
+
+.chevron {
+  border: 0;
+  background: none;
+  cursor: pointer;
+  font-size: 20px;
+  color: var(--color-stone-500);
+  transition: transform 0.2s;
+}
+
+.open .chevron {
+  transform: rotate(90deg);
+}
+
+.reason {
+  padding: 0 16px 14px 152px;
+  margin-top: 0;
+  font-size: 14px;
+}
+
+.repos {
+  border-top: 1px solid var(--color-stone-300);
+  padding: 8px 16px 16px;
+}
+
+.tools {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  padding: 8px 0;
+}
+
+.segmented {
+  display: flex;
+}
+
+.segmented > * + * {
+  border-left: 0;
+}
+
+.repoList > :nth-child(odd) {
+  background: #f2f2f2;
+}
+
+.repo {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 16px;
+  align-items: center;
+  padding: 10px 4px;
+}
+
+.repoName {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  overflow: hidden;
+}
+
+.owner {
+  color: var(--color-stone-500);
+}
+
+.lock {
+  opacity: 0.6;
+}
+
+.repoError {
+  grid-column: 1 / -1;
+  margin-top: 0;
+  font-size: 14px;
+}
+
+.pager {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 12px;
+}
+
+.footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--color-stone-200);
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+}
+
+.grow {
+  flex: 1 1 0;
+  min-width: 200px;
+}
