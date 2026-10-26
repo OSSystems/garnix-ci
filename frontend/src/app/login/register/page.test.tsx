@@ -105,6 +105,26 @@ describe("registering a forge", () => {
     expect(screen.queryByText("Register and log in")).toBeNull();
   });
 
+  it("goes back to the account when it came from there", async () => {
+    const user = userEvent.setup();
+    answer = {
+      status: 200,
+      body: JSON.stringify({ login: "https://git.acme.com/authorize" }),
+    };
+    await renderForm({ from: "account" });
+    expect(screen.getByText("Back")).toHaveAttribute("href", "/account");
+    expect(screen.queryByText("Register and log in")).toBeNull();
+    await user.type(screen.getByLabelText("Client ID"), "the-id");
+    await user.type(screen.getByLabelText("Client Secret"), "the-secret");
+    await user.click(screen.getByText("Register and connect"));
+    expect(goTo).toHaveBeenCalledWith("https://git.acme.com/authorize");
+  });
+
+  it("sends whoever opens it from the account without a forge back there", () => {
+    render(<Page searchParams={{ from: "account" }} />);
+    expect(replace).toHaveBeenCalledWith("/account");
+  });
+
   it("takes the forge and its redirect URI from the backend, never from its URL", async () => {
     await renderForm({ slug: "x", callback: "https://wrong.example/cb" });
     expect(JSON.parse(startedWith!)).toEqual({ url: "https://git.acme.com" });

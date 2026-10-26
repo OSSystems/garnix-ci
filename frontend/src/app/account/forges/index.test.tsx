@@ -9,8 +9,9 @@ import { UserProvider, useUser } from "@/store/userContext";
 import { ForgesComponent } from ".";
 
 jest.mock("../../../utils/navigate", () => ({ goTo: jest.fn() }));
+const push = jest.fn();
 jest.mock("next/navigation", () => ({
-  useRouter: () => ({ replace: jest.fn(), push: jest.fn() }),
+  useRouter: () => ({ replace: jest.fn(), push }),
 }));
 
 type Forge = {
@@ -47,6 +48,7 @@ const acme = (overrides: Partial<Forge> = {}): Forge => ({
 let forges: Array<Forge>;
 let identities: Array<{ forge: string; login: string }>;
 let holdsModuleSettings: boolean;
+let started: MockResponseInit;
 const requests: Array<{
   method: string;
   url: string;
@@ -59,6 +61,16 @@ beforeEach(() => {
   jest.clearAllMocks();
   requests.length = 0;
   holdsModuleSettings = false;
+  window.localStorage.clear();
+  started = {
+    status: 200,
+    body: JSON.stringify({
+      register: {
+        slug: "git.new.com",
+        callback: "https://garnix.example/auth/git.new.com/login/cb",
+      },
+    }),
+  };
   fetchMock.doMock(async (req): Promise<MockResponseInit> => {
     const body = req.body ? req.body.toString() : "";
     requests.push({
@@ -82,6 +94,7 @@ beforeEach(() => {
           identities,
         }),
       };
+    if (req.method === "POST" && req.url === "/api/auth/start") return started;
     if (req.method === "GET" && req.url === "/api/auth/git.acme.com/connect")
       return {
         status: 200,
@@ -306,5 +319,84 @@ describe("registered forges", () => {
     expect(requests.find((r) => r.method === "PUT")?.url).toBe(
       "/api/forges/git.acme.com/secret",
     );
+  });
+});
+
+describe("registering a forge from the account", () => {
+  it("is offered while only GitHub is active", async () => {
+    forges = [github];
+    identities = [{ forge: "github", login: "alice" }];
+    render(<ForgesComponent />);
+    expect(
+      await screen.findByText("Register a Gitea/Forgejo instance"),
+    ).toBeVisible();
+    expect(screen.getByLabelText("Gitea/Forgejo URL")).toBeVisible();
+    expect(
+      screen.getByText(/Connect or register another forge first/),
+    ).toBeVisible();
+  });
+
+  it("opens the registration page, coming back to the account", async () => {
+    const user = userEvent.setup();
+    forges = [github];
+    identities = [{ forge: "github", login: "alice" }];
+    render(<ForgesComponent />);
+    await user.type(
+      await screen.findByLabelText("Gitea/Forgejo URL"),
+      "https://git.new.com",
+    );
+    await user.click(screen.getByText("Register"));
+    await waitFor(() => expect(push).toHaveBeenCalled());
+    const target = new URL(push.mock.calls[0][0], "https://garnix.example");
+    expect(target.pathname).toBe("/login/register");
+    expect(target.searchParams.get("url")).toBe("https://git.new.com");
+    expect(target.searchParams.get("from")).toBe("account");
+    const start = requests.find((r) => r.url === "/api/auth/start");
+    expect(JSON.parse(start!.body)).toEqual({ url: "https://git.new.com" });
+    expect(window.localStorage.getItem("login-target-page")).toBe("/account");
+    expect(goTo).not.toHaveBeenCalled();
+  });
+
+  it("points to the list for a forge garnix already knows", async () => {
+    const user = userEvent.setup();
+    started = {
+      status: 200,
+      body: JSON.stringify({ login: "https://git.acme.com/authorize" }),
+    };
+    forges = [github, acme()];
+    identities = [{ forge: "github", login: "alice" }];
+    render(<ForgesComponent />);
+    await user.type(
+      await screen.findByLabelText("Gitea/Forgejo URL"),
+      "https://git.acme.com",
+    );
+    await user.click(screen.getByText("Register"));
+    expect(await screen.findByTestId("register-known")).toHaveTextContent(
+      /connect it from the list above/,
+    );
+    expect(push).not.toHaveBeenCalled();
+    expect(goTo).not.toHaveBeenCalled();
+  });
+
+  it("shows why the backend refuses the URL", async () => {
+    const user = userEvent.setup();
+    started = {
+      status: 400,
+      body: JSON.stringify({
+        message: "Bad Request: only https URLs can be registered",
+      }),
+    };
+    forges = [github];
+    identities = [{ forge: "github", login: "alice" }];
+    render(<ForgesComponent />);
+    await user.type(
+      await screen.findByLabelText("Gitea/Forgejo URL"),
+      "https://git.new.com",
+    );
+    await user.click(screen.getByText("Register"));
+    expect(await screen.findByTestId("register-error")).toHaveTextContent(
+      /^only https URLs can be registered$/,
+    );
+    expect(push).not.toHaveBeenCalled();
   });
 });
