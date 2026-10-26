@@ -286,7 +286,7 @@ registerForgeAPI peer forwardedFor cookies session request = do
   now <- DB.databaseNow
   refusal <- registrationRefusal slug' presentedHash now <$> DB.getRegisteredForge slug'
   forM_ refusal $ throw . ConflictWithMessage
-  probeGitea (_forgeRegistrationManager registration) apiUrl'
+  probeGitea (_forgeRegistrationManager registration) webUrl' apiUrl'
   encryptedSecret <- encryptSecret clientSecret
   token <- randomBase64 32
   stored <-
@@ -509,8 +509,8 @@ callbackUrl slug' = do
 
 -- | Asks @/api/v1/version@, which Gitea and Forgejo both answer, through the
 -- guarded manager.
-probeGitea :: Manager -> Text -> M ()
-probeGitea manager' apiUrl' = do
+probeGitea :: Manager -> Text -> Text -> M ()
+probeGitea manager' webUrl' apiUrl' = do
   let options =
         Wreq.defaults
           & Wreq.manager
@@ -521,12 +521,34 @@ probeGitea manager' apiUrl' = do
           ?~ (\_ _ -> pure ())
       notGitea reason =
         throw $ BadRequest $ apiUrl' <> "/version does not answer like a Gitea or Forgejo instance: " <> reason
-  result <- liftIO $ Control.Exception.try $ Wreq.getWith options (cs $ apiUrl' <> "/version")
-  case result of
+      fetch url = liftIO $ Control.Exception.try $ Wreq.getWith options (cs url)
+      statusOf response = response ^. Wreq.responseStatus . Wreq.statusCode
+      advertisesGiteaOAuth response =
+        response
+          ^? Wreq.responseBody
+          . key "authorization_endpoint"
+          . _String
+          == Just (webUrl' <> "/login/oauth/authorize")
+          && response
+          ^? Wreq.responseBody
+          . key "token_endpoint"
+          . _String
+          == Just (webUrl' <> "/login/oauth/access_token")
+      requiringSignIn code = do
+        let discovery = webUrl' <> "/.well-known/openid-configuration"
+            refused reason = notGitea $ "it answered " <> show code <> ", and " <> discovery <> " " <> reason
+        fetch discovery >>= \case
+          Left e -> refused $ "failed: " <> describeFailure e
+          Right response
+            | statusOf response /= 200 -> refused $ "answered " <> show (statusOf response)
+            | not (advertisesGiteaOAuth response) -> refused "does not name Gitea's OAuth endpoints"
+            | otherwise -> pure ()
+  fetch (apiUrl' <> "/version") >>= \case
     Left e -> notGitea $ describeFailure e
     Right response
-      | response ^. Wreq.responseStatus . Wreq.statusCode /= 200 ->
-          notGitea $ "it answered " <> show (response ^. Wreq.responseStatus . Wreq.statusCode)
+      | statusOf response `elem` [401, 403] -> requiringSignIn (statusOf response)
+      | statusOf response /= 200 ->
+          notGitea $ "it answered " <> show (statusOf response)
       | isNothing (response ^? Wreq.responseBody . key "version" . _String) -> notGitea "its answer has no version"
       | otherwise -> pure ()
   where
