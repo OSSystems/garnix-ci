@@ -32,7 +32,7 @@ import Garnix.TestHelpers
 import Garnix.TestHelpers.Monad
 import Garnix.TestHelpers.WithServer
 import Garnix.Types hiding (message, slug, status, statusCode)
-import Network.HTTP.Types (hAuthorization, hContentType, mkStatus, parseSimpleQuery, status200, status400, status401, status404)
+import Network.HTTP.Types (hAuthorization, hContentType, mkStatus, parseSimpleQuery, status200, status400, status401, status403, status404)
 import Network.Socket (SockAddr (..), tupleToHostAddress, tupleToHostAddress6)
 import Network.Wai qualified as Wai
 import Network.Wai.Handler.Warp (testWithApplication)
@@ -78,6 +78,16 @@ fakeGitea request respond = do
       Just "token root-token" -> json status200 $ user "root"
       _ -> json status401 $ object []
     _ -> json status404 $ object []
+
+fakeGiteaRequiringSignIn :: Text -> Wai.Application
+fakeGiteaRequiringSignIn authorizePath request respond = do
+  let json status' value = respond $ Wai.responseLBS status' [("Content-Type", "application/json"), ("Connection", "close")] (encode value)
+      root = "http://" <> maybe "" cs (Wai.requestHeaderHost request)
+  case Wai.pathInfo request of
+    ["api", "v1", "version"] -> json status403 $ object ["message" .= ("Only signed in user is allowed to call APIs." :: Text)]
+    [".well-known", "openid-configuration"] ->
+      json status200 $ object ["authorization_endpoint" .= (root <> authorizePath), "token_endpoint" .= (root <> "/login/oauth/access_token")]
+    _ -> fakeGitea request respond
 
 -- | Serves the bare repositories under the directory (@<owner>/<name>.git@)
 -- over git's smart HTTP protocol, through @git http-backend@, pushes and the
@@ -376,6 +386,19 @@ spec = inM $ beforeM_ truncateDBM $ aroundM_ suppressLogsWhenPassing $ do
       refused <- server.post "/api/forges" (object ["url" .= T.dropEnd 4 server.apiUrl, "clientId" .= ("client-id" :: Text), "clientSecret" .= clientSecret])
       status refused `shouldBeM` 400
       ("does not answer like a Gitea or Forgejo instance" `T.isInfixOf` message refused) `shouldBeM` True
+      statusOf slug `shouldReturnM` Nothing
+
+    it "registers a Gitea that answers its API to signed-in users only" $ withHttpRegistration $ liftBaseOp (testWithApplication (pure $ fakeGiteaRequiringSignIn "/login/oauth/authorize")) $ \port -> withServer $ \server -> do
+      registered <- assert200 $ server.post "/api/forges" (registerBody port)
+      statusOf slug `shouldReturnM` Just ForgePending
+      _ <- assert200 $ callbackFrom server (registered ^?! responseBody . key "login" . _String) "alice"
+      statusOf slug `shouldReturnM` Just ForgeActive
+
+    it "refuses a URL that requires signing in without naming Gitea's OAuth endpoints" $ withHttpRegistration $ liftBaseOp (testWithApplication (pure $ fakeGiteaRequiringSignIn "/oauth/authorize")) $ \port -> withServer $ \server -> do
+      refused <- server.post "/api/forges" (registerBody port)
+      status refused `shouldBeM` 400
+      ("answered 403" `T.isInfixOf` message refused) `shouldBeM` True
+      ("does not name Gitea's OAuth endpoints" `T.isInfixOf` message refused) `shouldBeM` True
       statusOf slug `shouldReturnM` Nothing
 
     it "rate-limits registrations per client" $ withHttpRegistration $ withFakeGitea $ \port -> withServer $ \server -> do

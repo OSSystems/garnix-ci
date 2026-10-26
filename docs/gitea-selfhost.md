@@ -181,7 +181,12 @@ themselves, to log in through it. It is off by default.
 3. `POST /api/forges` with `{ "url", "clientId", "clientSecret" }`. garnix
    checks that `<url>/api/v1/version` answers like Gitea or Forgejo, stores
    the instance as pending, and answers its authorize URL. It also sets an
-   HttpOnly cookie that ties the registration to this browser.
+   HttpOnly cookie that ties the registration to this browser. An instance
+   that answers its API to signed-in users only (`REQUIRE_SIGNIN_VIEW`)
+   answers that request 401 or 403; garnix then accepts it if
+   `<url>/.well-known/openid-configuration` names
+   `<url>/login/oauth/authorize` and `<url>/login/oauth/access_token` as its
+   OAuth endpoints.
 4. The first successful login through it from that browser, or connect of it
    to the account that browser is logged in to, makes it active, and that
    garnix account its registrant. Until then, logins from other browsers are
