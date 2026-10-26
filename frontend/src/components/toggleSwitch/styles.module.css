@@ -39,4 +39,9 @@
   & input:checked + .toggle::before {
     left: 23px;
   }
+
+  & input:disabled + .toggle {
+    opacity: 0.35;
+    cursor: not-allowed;
+  }
 }
