@@ -38,7 +38,7 @@ import Data.Text qualified as T
 import Data.Text.Encoding qualified as T
 import Data.Time.Format (defaultTimeLocale, formatTime)
 import Data.Word (Word16)
-import Garnix.API.Auth (authorizeLink, getOAuthNonce, newOAuthNonce, oauthCallbackPath, oauthStateCookie)
+import Garnix.API.Auth (authorizeLink, getOAuthNonce, newOAuthNonce, oauthCallbackPath, oauthStateCookie, startConnect)
 import Garnix.Access (sessionUserOf, webSessionUser)
 import Garnix.DB qualified as DB (getUserById)
 import Garnix.DB.Forges qualified as DB
@@ -208,6 +208,11 @@ managingAccount authResult = do
         Just session -> DB.getUserById (session ^. id)
     _ -> pure Nothing
 
+webSessionAccount :: AuthResult AuthJwtPayload -> M (Maybe User)
+webSessionAccount = \case
+  authResult@(Authenticated (WebSession _)) -> sessionUserOf authResult
+  _ -> pure Nothing
+
 -- | @POST /api/auth/start@: reads what 'startDecision' needs, and answers
 -- it.
 authStartAPI :: SockAddr -> Maybe Text -> AuthStartRequest -> M (Headers '[Header "Set-Cookie" SetCookie] AuthStartAnswer)
@@ -262,9 +267,10 @@ registerForgeAPI ::
   SockAddr ->
   Maybe Text ->
   Maybe Text ->
+  AuthResult AuthJwtPayload ->
   RegisterForgeRequest ->
   M (Headers '[Header "Set-Cookie" SetCookie, Header "Set-Cookie" SetCookie] AuthStartAnswer)
-registerForgeAPI peer forwardedFor cookies request = do
+registerForgeAPI peer forwardedFor cookies session request = do
   registration <- view #forgeRegistration >>= maybe (throw NotFound) pure
   limited (_forgeRegistrationRegisterLimit registration) peer forwardedFor
   url' <- either (throw . BadRequest) pure $ normaliseRegistrationUrl (_forgeRegistrationAllowHttp registration) (registerUrl request)
@@ -305,7 +311,12 @@ registerForgeAPI peer forwardedFor cookies request = do
     throw $ ConflictWithMessage $ fromMaybe (getForgeSlug slug' <> " was registered meanwhile; log in through it") refusal'
   log Notice $ "registered the forge " <> getForgeSlug slug' <> " (" <> webUrl' <> "), pending its first login"
   transport <- view #cookieSettings
-  answer <- startLogin slug'
+  answer <-
+    webSessionAccount session >>= \case
+      Just account -> do
+        (link, cookie) <- startConnect (account ^. id) slug'
+        pure $ addHeader cookie $ StartLogin link
+      Nothing -> startLogin slug'
   pure
     $ addHeader
       defaultSetCookie

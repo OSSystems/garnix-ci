@@ -287,6 +287,18 @@ spec = inM $ beforeM_ truncateDBM $ aroundM_ suppressLogsWhenPassing $ do
       registeredBy slug `shouldReturnM` Just (account ^. id)
       accountOf "alice" `shouldReturnM` Just (account ^. id)
 
+    it "answers a connect to the account the browser is logged in to, not a login" $ withHttpRegistration $ withFakeGitea $ \port -> withServer $ \server -> do
+      account <- server.login
+      registered <- assert200 $ server.post "/api/forges" (registerBody port)
+      let link = registered ^?! responseBody . key "login" . _String
+      ("&state=connect." `T.isInfixOf` link) `shouldBeM` True
+      _ <- assert200 $ callbackFrom server link "alice"
+      statusOf slug `shouldReturnM` Just ForgeActive
+      registeredBy slug `shouldReturnM` Just (account ^. id)
+      accountOf "alice" `shouldReturnM` Just (account ^. id)
+      whoami <- assert200 $ server.get "/api/whoami"
+      sort (whoami ^.. responseBody . key "identities" . values . key "forge" . _String) `shouldBeM` ["github", "localhost"]
+
     it "leaves it pending when the OAuth fails" $ withHttpRegistration $ withFakeGitea $ \port -> withServer $ \server -> do
       _ <- assert200 $ server.post "/api/forges" (registerBody port)
       failed <- server.get "/api/auth/localhost/login/cb?code=wrong-code"
