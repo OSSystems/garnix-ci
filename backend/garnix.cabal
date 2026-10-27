@@ -752,6 +752,7 @@ test-suite spec
       Garnix.AttributeSpec
       Garnix.Build.CheckoutSpec
       Garnix.Build.FodCheckSpec
+      Garnix.Build.MetaCheckSpec
       Garnix.Build.ModuleSpec
       Garnix.Build.NixBuildPoolSpec
       Garnix.Build.PrCommentSpec

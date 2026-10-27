@@ -29,6 +29,7 @@ sweepOrphans = do
       sweepRuns live
       sweepStuckMetaChecks live
       sweepEvaluations live
+      sweepUnreportedMetaChecks
 
 sweepBuilds :: [Text] -> M ()
 sweepBuilds live = do
@@ -90,14 +91,20 @@ sweepEvaluations live = do
     log Notice $ "sweepOrphans: " <> show (length evaluations) <> " abandoned evaluation(s)"
     forM_ evaluations $ \(repo, commitHash) ->
       withRepoInfo repo 1 $ \repoInfo -> do
-        let reporter = reporterFor repoInfo commitHash
-        runReporter <- createNewRun reporter MetaCheck
-        MetaCheck.updateFail
-          MetaCheck.NoComment
+        MetaCheck.failAbandoned
+          (reporterFor repoInfo commitHash)
           (minimalCommitInfo repoInfo commitHash)
-          runReporter
-          Nothing
         DB.setCommitStatus repo commitHash Evaluated
+
+sweepUnreportedMetaChecks :: M ()
+sweepUnreportedMetaChecks = do
+  runs <- DB.getUnreportedMetaCheckRuns
+  unless (null runs) $ do
+    log Notice $ "sweepOrphans: " <> show (length runs) <> " meta check run(s) left open past their verdict"
+    forM_ runs $ \(repo, commitHash, generation, ghRunId') ->
+      withRepoInfo repo 1 $ \repoInfo ->
+        MetaCheck.resumeReport (reporterFor repoInfo commitHash) generation ghRunId'
+          >>= MetaCheck.settle (minimalCommitInfo repoInfo commitHash)
 
 withRepoInfo :: RepoId -> Int -> (RepoInfo -> M ()) -> M ()
 withRepoInfo repo subjects action = do

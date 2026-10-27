@@ -199,7 +199,8 @@ truncateDBMNoInsert = do
           runs,
           forges,
           forge_installations,
-          forge_installation_repos
+          forge_installation_repos,
+          meta_check_runs
       |]
 
 truncateDBM :: M ()

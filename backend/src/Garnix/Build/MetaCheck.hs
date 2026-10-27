@@ -1,7 +1,11 @@
 module Garnix.Build.MetaCheck
   ( CommentPolicy (..),
+    MetaCheckRun,
     update,
     newReport,
+    resumeReport,
+    settle,
+    failAbandoned,
     updateFail,
     updateSuccess,
   )
@@ -47,7 +51,8 @@ update reporter commitInfo = do
           (commitInfo ^. repoInfo . repoId)
           (commitInfo ^. commit)
           ( DB.CheckStatusUpdate
-              { _checkStatusUpdateFrom = commit' ^. metaCheck,
+              { _checkStatusUpdateGeneration = Nothing,
+                _checkStatusUpdateFrom = commit' ^. metaCheck,
                 _checkStatusUpdateTo = newStatus
               }
           )
@@ -62,41 +67,80 @@ update reporter commitInfo = do
             reportComplete runReporter status
           Nothing -> pure ()
 
-newReport :: Reporter -> CommitInfo -> M RunReporter
-newReport reporter commitInfo = do
-  void $ DB.newCommit (commitInfo ^. repoInfo . repoId) (commitInfo ^. commit)
-  createNewRun reporter MetaCheck
+data MetaCheckRun = MetaCheckRun DB.MetaCheckGeneration RunReporter
 
-updateFail :: CommentPolicy -> CommitInfo -> RunReporter -> Maybe (Either SomeException ErrorWithContext) -> M ()
-updateFail commentPolicy commitInfo runReporter e = do
+newReport :: Reporter -> CommitInfo -> M MetaCheckRun
+newReport reporter commitInfo = do
+  generation <- DB.newCommit (commitInfo ^. repoInfo . repoId) (commitInfo ^. commit)
+  runReporter <- createNewRun reporter MetaCheck
+  forM_ (Garnix.Monad.ghRunId runReporter) $ DB.recordMetaCheckRun (commitInfo ^. repoInfo . repoId) (commitInfo ^. commit) generation
+  pure $ MetaCheckRun generation runReporter
+
+resumeReport :: Reporter -> DB.MetaCheckGeneration -> GhRunId -> M MetaCheckRun
+resumeReport reporter generation ghRunId' =
+  MetaCheckRun generation <$> resumeRun reporter ghRunId' MetaCheck
+
+updateFail :: CommentPolicy -> CommitInfo -> MetaCheckRun -> Maybe (Either SomeException ErrorWithContext) -> M ()
+updateFail commentPolicy commitInfo metaCheckRun e = do
   case e of
     Just err ->
       log Warning $ "failMetaCheck: uncaught " <> either (const "IO exception: ") (const "monadic error: ") err <> either show show err
     Nothing -> pure ()
+  updated <- setOwnVerdict commitInfo metaCheckRun CheckFail
+  if updated
+    then do
+      complete commitInfo metaCheckRun RunReportStatusFailure
+      case commentPolicy of
+        CommentOnFailure -> PrComment.commentOnFailure commitInfo
+        NoComment -> pure ()
+    else settle commitInfo metaCheckRun
+
+updateSuccess :: CommitInfo -> MetaCheckRun -> M ()
+updateSuccess commitInfo metaCheckRun = do
+  updated <- setOwnVerdict commitInfo metaCheckRun CheckSuccess
+  if updated
+    then complete commitInfo metaCheckRun RunReportStatusSuccess
+    else settle commitInfo metaCheckRun
+
+settle :: CommitInfo -> MetaCheckRun -> M ()
+settle commitInfo metaCheckRun =
+  DB.getCommit (commitInfo ^. repoInfo . repoId) (commitInfo ^. commit) >>= \case
+    Nothing -> pure ()
+    Just commit' ->
+      complete commitInfo metaCheckRun $ case commit' ^. metaCheck of
+        CheckSuccess -> RunReportStatusSuccess
+        CheckFail -> RunReportStatusFailure
+        CheckPending -> RunReportStatusCancelled
+
+failAbandoned :: Reporter -> CommitInfo -> M ()
+failAbandoned reporter commitInfo = do
   updated <-
     DB.setMetaCheck
       (commitInfo ^. repoInfo . repoId)
       (commitInfo ^. commit)
       ( DB.CheckStatusUpdate
-          { _checkStatusUpdateFrom = CheckPending,
+          { _checkStatusUpdateGeneration = Nothing,
+            _checkStatusUpdateFrom = CheckPending,
             _checkStatusUpdateTo = CheckFail
           }
       )
   when updated $ do
+    runReporter <- createNewRun reporter MetaCheck
     reportComplete runReporter RunReportStatusFailure
-    case commentPolicy of
-      CommentOnFailure -> PrComment.commentOnFailure commitInfo
-      NoComment -> pure ()
 
-updateSuccess :: CommitInfo -> RunReporter -> M ()
-updateSuccess commitInfo runReporter = do
-  updated <-
-    DB.setMetaCheck
-      (commitInfo ^. repoInfo . repoId)
-      (commitInfo ^. commit)
-      ( DB.CheckStatusUpdate
-          { _checkStatusUpdateFrom = CheckPending,
-            _checkStatusUpdateTo = CheckSuccess
-          }
-      )
-  when updated $ reportComplete runReporter RunReportStatusSuccess
+setOwnVerdict :: CommitInfo -> MetaCheckRun -> CheckStatus -> M Bool
+setOwnVerdict commitInfo (MetaCheckRun generation _) verdict =
+  DB.setMetaCheck
+    (commitInfo ^. repoInfo . repoId)
+    (commitInfo ^. commit)
+    ( DB.CheckStatusUpdate
+        { _checkStatusUpdateGeneration = Just generation,
+          _checkStatusUpdateFrom = CheckPending,
+          _checkStatusUpdateTo = verdict
+        }
+    )
+
+complete :: CommitInfo -> MetaCheckRun -> RunReportStatus -> M ()
+complete commitInfo (MetaCheckRun generation runReporter) status = do
+  reportComplete runReporter status
+  DB.completeMetaCheckRun (commitInfo ^. repoInfo . repoId) (commitInfo ^. commit) generation
