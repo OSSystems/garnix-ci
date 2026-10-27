@@ -70,7 +70,7 @@ import Network.HTTP.Client.TLS (newTlsManager)
 import Servant.Auth.Server (CookieSettings (..), defaultCookieSettings, defaultJWTSettings, fromSecret)
 import System.Directory (createDirectory, doesFileExist, makeAbsolute)
 import System.Environment (getEnv)
-import System.IO.Temp (withSystemTempDirectory)
+import System.IO.Temp (withSystemTempDirectory, withTempDirectory)
 import System.IO.Unsafe qualified
 import Test.HUnit (assertFailure)
 import Test.Hspec
@@ -235,7 +235,7 @@ withLogLevel logLevel = do
 -- * test `Env`s
 
 withTestEnvironment :: FilePath -> (Env -> IO a) -> IO a
-withTestEnvironment tempDir action = do
+withTestEnvironment tempDir action = withTempDirectory "/dev/shm" "garnix-drv-roots" $ \drvRoots -> do
   Safe.bracket
     mkPool
     Pool.destroyAllResources
@@ -321,7 +321,7 @@ withTestEnvironment tempDir action = do
                   spanCtx = [],
                   metrics = metrics,
                   emptyDir = emptyDir',
-                  drvRootsDir = tempDir </> "drv-roots",
+                  drvRootsDir = drvRoots,
                   hostname = "garnix-server-test",
                   evalInstance = "garnix-server-test#spec",
                   evalHeartbeatInterval = fromSeconds 30,
