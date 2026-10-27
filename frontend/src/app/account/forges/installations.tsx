@@ -6,8 +6,8 @@ import { Button } from "@/components/button";
 import { TextInput } from "@/components/input";
 import { ToggleSwitch } from "@/components/toggleSwitch";
 import { FloatingModal, ModalActions, ModalSection } from "@/components/modal";
-import successIcon from "@/components/icons/success.svg";
-import failureIcon from "@/components/icons/failure.svg";
+import { StatusIcon } from "@/components/statusIcon";
+import arrowIcon from "@/components/icons/arrow-right.svg";
 import lockIcon from "@/components/icons/lock.svg";
 import { useLoading } from "@/hooks/useLoading";
 import { useAction } from "@/hooks/useAction";
@@ -16,8 +16,10 @@ import {
   Installation,
   InstallationKind,
   InstallationRepo,
+  InstallationRepos,
   disableRepo,
   enableRepo,
+  getAllInstallationRepos,
   getInstallable,
   getInstallationRepos,
   getInstallations,
@@ -31,12 +33,7 @@ export const reposPerPage = 20;
 
 export const Status = (props: { ok: boolean; children: React.ReactNode }) => (
   <span className={styles.status}>
-    <Image
-      src={props.ok ? successIcon : failureIcon}
-      alt=""
-      width={16}
-      height={16}
-    />
+    <StatusIcon status={props.ok ? "Success" : "Failure"} />
     <Text type="span" className={styles.small}>
       {props.children}
     </Text>
@@ -52,7 +49,9 @@ type Row = {
 
 const loadRows = async (
   forge: string,
-): Promise<APIResult<{ rows: Array<Row>; all: Array<Installation> }>> => {
+): Promise<
+  APIResult<{ rows: Array<Row>; installations: Array<Installation> }>
+> => {
   const [installable, installations] = await Promise.all([
     getInstallable(forge),
     getInstallations(forge),
@@ -60,7 +59,7 @@ const loadRows = async (
   if (!installable.ok) return installable;
   if (!installations.ok) return installations;
   return Ok({
-    all: installations.data,
+    installations: installations.data,
     rows: installable.data.map((entry) => ({
       kind: entry.kind,
       target: entry.target,
@@ -72,22 +71,23 @@ const loadRows = async (
   });
 };
 
-const kindLabel: Record<InstallationKind, string> = {
-  user: "Your account",
-  org: "Organisation",
-  instance: "Instance",
+const kinds: Record<
+  InstallationKind,
+  { label: string; describe: (target: string) => string }
+> = {
+  user: {
+    label: "Your account",
+    describe: (target) => `the account ${target}`,
+  },
+  org: {
+    label: "Organisation",
+    describe: (target) => `the organisation ${target}`,
+  },
+  instance: { label: "Instance", describe: () => "the whole instance" },
 };
 
-const describe = (kind: InstallationKind, target: string) => {
-  switch (kind) {
-    case "user":
-      return `the account ${target}`;
-    case "org":
-      return `the organisation ${target}`;
-    case "instance":
-      return "the whole instance";
-  }
-};
+const describe = (installation: { kind: InstallationKind; target: string }) =>
+  kinds[installation.kind].describe(installation.target);
 
 const formatDate = (iso: string) =>
   new Date(iso).toLocaleDateString("en-GB", {
@@ -122,7 +122,9 @@ export const Installations = (props: { forge: string }) => {
               key={`${row.kind}/${row.target}`}
               forge={forge}
               row={row}
-              all={loaded.data.ok ? loaded.data.data.all : []}
+              installations={
+                loaded.data.ok ? loaded.data.data.installations : []
+              }
               reload={loaded.reload}
             />
           ))}
@@ -135,13 +137,13 @@ export const Installations = (props: { forge: string }) => {
 const InstallationRow = (props: {
   forge: string;
   row: Row;
-  all: Array<Installation>;
+  installations: Array<Installation>;
   reload: () => void;
 }) => {
   const { forge, row } = props;
   const [open, setOpen] = useState(false);
   const { busy, error, go } = useAction();
-  const installed = row.id;
+  const id = row.id;
   const needsReinstall = row.installation?.status === "needs_reinstall";
 
   const onInstall = () =>
@@ -155,42 +157,41 @@ const InstallationRow = (props: {
       data-testid={`installation-${row.kind}-${row.target}`}
     >
       <div
-        className={styles.installationRow}
-        onClick={installed != null ? () => setOpen(!open) : undefined}
-        style={{ cursor: installed != null ? "pointer" : undefined }}
+        className={`${styles.installationRow} ${id != null ? styles.expandable : ""}`}
+        onClick={id != null ? () => setOpen(!open) : undefined}
       >
         <Text type="span" className={styles.small}>
-          {kindLabel[row.kind]}
+          {kinds[row.kind].label}
         </Text>
         <span className={styles.target}>
           <Text type="code">{row.target || "Whole instance"}</Text>
-          {installed != null && (
+          {id != null && (
             <Status ok={!needsReinstall}>
               {needsReinstall ? "Needs reinstall" : "Active"}
             </Status>
           )}
         </span>
         <span className={styles.actions} onClick={(e) => e.stopPropagation()}>
-          {installed == null ? (
+          {id == null ? (
             <Button loading={busy} onClick={onInstall}>
               Install
             </Button>
           ) : (
             needsReinstall && (
-              <Button loading={busy} onClick={() => onReinstall(installed)}>
+              <Button loading={busy} onClick={() => onReinstall(id)}>
                 Reinstall
               </Button>
             )
           )}
-          {installed != null && (
+          {id != null && (
             <button
               type="button"
               className={styles.chevron}
               aria-expanded={open}
-              aria-label={`Repositories of ${describe(row.kind, row.target)}`}
+              aria-label={`Repositories of ${describe(row)}`}
               onClick={() => setOpen(!open)}
             >
-              ›
+              <Image src={arrowIcon} alt="" />
             </button>
           )}
         </span>
@@ -203,12 +204,13 @@ const InstallationRow = (props: {
       {error && (
         <Text className={`${styles.error} ${styles.reason}`}>{error}</Text>
       )}
-      {open && installed != null && (
+      {open && id != null && (
         <Repos
           forge={forge}
-          id={installed}
-          row={row}
-          all={props.all}
+          id={id}
+          description={describe(row)}
+          installation={row.installation}
+          installations={props.installations}
           onUninstalled={() => {
             setOpen(false);
             props.reload();
@@ -219,60 +221,87 @@ const InstallationRow = (props: {
   );
 };
 
-type ReposState =
-  | { loading: true }
-  | {
-      loading: false;
-      result: APIResult<{ repos: Array<InstallationRepo>; total: number }>;
-    };
+type Loaded<T> = { loading: true } | { loading: false; result: APIResult<T> };
+
+const mapLoaded = <T, U>(loaded: Loaded<T>, f: (t: T) => U): Loaded<U> =>
+  loaded.loading
+    ? loaded
+    : {
+        loading: false,
+        result: loaded.result.ok ? Ok(f(loaded.result.data)) : loaded.result,
+      };
+
+const withEnabledIn = (
+  repos: Array<InstallationRepo>,
+  repo: InstallationRepo,
+  enabledIn: number | null,
+) =>
+  repos.map((r) =>
+    r.owner === repo.owner && r.name === repo.name ? { ...r, enabledIn } : r,
+  );
 
 const Repos = (props: {
   forge: string;
   id: number;
-  row: Row;
-  all: Array<Installation>;
+  description: string;
+  installation?: Installation;
+  installations: Array<Installation>;
   onUninstalled: () => void;
 }) => {
   const { forge, id } = props;
   const [page, setPage] = useState(1);
-  const [state, setState] = useState<ReposState>({ loading: true });
+  const [reloads, setReloads] = useState(0);
+  const [paged, setPaged] = useState<Loaded<InstallationRepos>>({
+    loading: true,
+  });
+  const [everything, setEverything] = useState<Loaded<Array<InstallationRepo>>>(
+    { loading: true },
+  );
   const [filter, setFilter] = useState("");
   const [onlyBuilding, setOnlyBuilding] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const uninstalling = useAction();
+  const needle = filter.trim().toLowerCase();
+  const filtering = needle !== "" || onlyBuilding;
 
   useEffect(() => {
     let current = true;
     void getInstallationRepos(forge, id, page, reposPerPage).then((result) => {
-      if (current) setState({ loading: false, result });
+      if (current) setPaged({ loading: false, result });
     });
     return () => {
       current = false;
     };
-  }, [forge, id, page]);
+  }, [forge, id, page, reloads]);
 
-  const setEnabledIn = (repo: InstallationRepo, enabledIn: number | null) =>
-    setState((state) =>
-      state.loading || !state.result.ok
-        ? state
-        : {
-            loading: false,
-            result: Ok({
-              ...state.result.data,
-              repos: state.result.data.repos.map((r) =>
-                r.owner === repo.owner && r.name === repo.name
-                  ? { ...r, enabledIn }
-                  : r,
-              ),
-            }),
-          },
+  useEffect(() => {
+    if (!filtering) return;
+    let current = true;
+    void getAllInstallationRepos(forge, id).then((result) => {
+      if (current) setEverything({ loading: false, result });
+    });
+    return () => {
+      current = false;
+    };
+  }, [forge, id, filtering, reloads]);
+
+  const setEnabledIn = (repo: InstallationRepo, enabledIn: number | null) => {
+    setPaged((paged) =>
+      mapLoaded(paged, (data) => ({
+        ...data,
+        repos: withEnabledIn(data.repos, repo, enabledIn),
+      })),
     );
+    setEverything((everything) =>
+      mapLoaded(everything, (repos) => withEnabledIn(repos, repo, enabledIn)),
+    );
+  };
 
   const heldBy = (other: number) => {
-    const holder = props.all.find((installation) => installation.id === other);
-    return holder
-      ? describe(holder.kind, holder.target)
-      : "another installation";
+    const holder = props.installations.find(
+      (installation) => installation.id === other,
+    );
+    return holder ? describe(holder) : "another installation";
   };
 
   const doUninstall = () => {
@@ -280,7 +309,15 @@ const Repos = (props: {
     return uninstalling.go(() => uninstall(forge, id), props.onUninstalled);
   };
 
-  const needle = filter.trim().toLowerCase();
+  const shown = filtering
+    ? mapLoaded(everything, (repos) =>
+        repos.filter(
+          (repo) =>
+            `${repo.owner}/${repo.name}`.toLowerCase().includes(needle) &&
+            (!onlyBuilding || repo.enabledIn === id),
+        ),
+      )
+    : mapLoaded(paged, (data) => data.repos);
 
   return (
     <div className={styles.repos}>
@@ -288,7 +325,7 @@ const Repos = (props: {
         <TextInput
           className={styles.grow}
           aria-label="Filter repositories"
-          placeholder="Filter this page"
+          placeholder="Filter repositories"
           value={filter}
           onChange={setFilter}
         />
@@ -307,44 +344,48 @@ const Repos = (props: {
           </Button>
         </div>
       </div>
-      {state.loading ? (
+      {shown.loading ? (
         <Text className={styles.small}>Loading repositories…</Text>
-      ) : !state.result.ok ? (
+      ) : !shown.result.ok ? (
         <Text className={styles.error}>
-          Failed to load the repositories: {userMessage(state.result.error)}
+          Failed to load the repositories: {userMessage(shown.result.error)}
         </Text>
       ) : (
         <>
           <div className={styles.repoList}>
-            {state.result.data.repos
-              .filter(
-                (repo) =>
-                  `${repo.owner}/${repo.name}`.toLowerCase().includes(needle) &&
-                  (!onlyBuilding || repo.enabledIn === id),
-              )
-              .map((repo) => (
-                <RepoRow
-                  key={`${repo.owner}/${repo.name}`}
-                  forge={forge}
-                  id={id}
-                  repo={repo}
-                  heldBy={heldBy}
-                  setEnabledIn={(enabledIn) => setEnabledIn(repo, enabledIn)}
-                />
-              ))}
+            {shown.result.data.map((repo) => (
+              <RepoRow
+                key={`${repo.owner}/${repo.name}`}
+                forge={forge}
+                id={id}
+                repo={repo}
+                heldBy={heldBy}
+                setEnabledIn={(enabledIn) => setEnabledIn(repo, enabledIn)}
+                onRefused={() => setReloads((reloads) => reloads + 1)}
+              />
+            ))}
           </div>
-          <Pager
-            page={page}
-            shown={state.result.data.repos.length}
-            total={state.result.data.total}
-            setPage={setPage}
-          />
+          {filtering
+            ? shown.result.data.length === 0 && (
+                <Text className={`${styles.small} ${styles.pager}`}>
+                  No repositories match.
+                </Text>
+              )
+            : !paged.loading &&
+              paged.result.ok && (
+                <Pager
+                  page={page}
+                  shown={paged.result.data.repos.length}
+                  total={paged.result.data.total}
+                  setPage={setPage}
+                />
+              )}
         </>
       )}
       <div className={styles.footer}>
         <Text className={styles.small}>
-          {props.row.installation &&
-            `Installed by ${props.row.installation.installer} on ${formatDate(props.row.installation.createdAt)}`}
+          {props.installation &&
+            `Installed by ${props.installation.installer} on ${formatDate(props.installation.createdAt)}`}
         </Text>
         <Button
           style="warning"
@@ -360,10 +401,7 @@ const Repos = (props: {
       {confirming && (
         <FloatingModal onRequestClose={() => setConfirming(false)}>
           <ModalSection>
-            <Text type="h2">
-              Uninstall garnix from {describe(props.row.kind, props.row.target)}
-              ?
-            </Text>
+            <Text type="h2">Uninstall garnix from {props.description}?</Text>
           </ModalSection>
           <ModalSection>
             <Text>
@@ -393,22 +431,27 @@ const RepoRow = (props: {
   repo: InstallationRepo;
   heldBy: (other: number) => string;
   setEnabledIn: (enabledIn: number | null) => void;
+  onRefused: () => void;
 }) => {
   const { forge, id, repo } = props;
   const { busy, error, go } = useAction();
   const elsewhere = repo.enabledIn != null && repo.enabledIn !== id;
   const fullName = `${repo.owner}/${repo.name}`;
 
-  const toggle = (on: boolean) =>
-    on
-      ? go(
-          () => enableRepo(forge, id, repo.owner, repo.name),
-          () => props.setEnabledIn(id),
-        )
-      : go(
-          () => disableRepo(forge, id, repo.owner, repo.name),
-          () => props.setEnabledIn(null),
-        );
+  const toggle = async (on: boolean) => {
+    let done = false;
+    await go(
+      () =>
+        on
+          ? enableRepo(forge, id, repo.owner, repo.name)
+          : disableRepo(forge, id, repo.owner, repo.name),
+      () => {
+        done = true;
+        props.setEnabledIn(on ? id : null);
+      },
+    );
+    if (!done) props.onRefused();
+  };
 
   return (
     <div className={styles.repo} data-testid={`repo-${fullName}`}>

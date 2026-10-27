@@ -108,7 +108,6 @@ const ForgeBlock = (props: {
   };
 
   const disconnect = (deleteModuleSettings: boolean) => {
-    // A refusal is shown beside the forge, not in the dialog.
     setConfirming(false);
     return go(
       () => disconnectIdentity(forge.slug, deleteModuleSettings),

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { APIResult, fetchFromAPI } from ".";
+import { APIResult, Ok, fetchFromAPI } from ".";
 
 const kindSchema = z.enum(["user", "org", "instance"]);
 
@@ -101,6 +101,28 @@ export const getInstallationRepos = (
     `${installationPath(forge, id)}/repos`,
     { query: { page: String(page), limit: String(limit) } },
   );
+
+export const maxReposPerPage = 50;
+
+export const getAllInstallationRepos = async (
+  forge: string,
+  id: number,
+): Promise<APIResult<Array<InstallationRepo>>> => {
+  const first = await getInstallationRepos(forge, id, 1, maxReposPerPage);
+  if (!first.ok) return first;
+  const pages = Math.ceil(first.data.total / maxReposPerPage);
+  const rest = await Promise.all(
+    Array.from({ length: Math.max(0, pages - 1) }, (_, i) =>
+      getInstallationRepos(forge, id, i + 2, maxReposPerPage),
+    ),
+  );
+  const repos = [...first.data.repos];
+  for (const page of rest) {
+    if (!page.ok) return page;
+    repos.push(...page.data.repos);
+  }
+  return Ok(repos);
+};
 
 export const enableRepo = (
   forge: string,
