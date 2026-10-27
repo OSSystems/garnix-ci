@@ -21,7 +21,7 @@ spec = inM
     it "keeps the roots of pending builds and drops every other" $ do
       withFakeGithubInterface $ \ghState -> do
         mkRepo ghState "owner" "repo" identity
-        DB.newCommit (RepoId githubForge "owner" "repo") (defaultCommitInfo ^. commit)
+        void $ DB.newCommit (RepoId githubForge "owner" "repo") (defaultCommitInfo ^. commit)
         pending <- newBuild "pending"
         finished <- newBuild "finished"
         now <- liftIO getCurrentTime

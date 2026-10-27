@@ -2,7 +2,9 @@ module Garnix.SweepSpec where
 
 import Control.Lens
 import Data.Map.Strict qualified as Map
+import Data.Maybe (mapMaybe)
 import Database.PostgreSQL.Typed (pgSQL)
+import Garnix.Build.MetaCheck qualified as MetaCheck
 import Garnix.Build.Reporting (reportNameForBuild)
 import Garnix.DB qualified as DB
 import Garnix.Monad
@@ -116,7 +118,7 @@ spec = inM
     it "fails the meta check of an evaluation that never finished" $ do
       withFakeGithubInterface $ \ghState -> do
         mkRepo ghState "owner" "repo" identity
-        local (#evalInstance .~ deadInstance) $ DB.newCommit (RepoId githubForge "owner" "repo") defaultCommit
+        local (#evalInstance .~ deadInstance) $ void $ DB.newCommit (RepoId githubForge "owner" "repo") defaultCommit
         heartbeat
         sweepOrphans
 
@@ -125,10 +127,45 @@ spec = inM
         commit' <- DB.getCommit (RepoId githubForge "owner" "repo") defaultCommit
         ((^. status) <$> commit') `shouldBeM` Just Evaluated
 
+    it "closes a meta check run its process left open after the verdict was written" $ do
+      withFakeGithubInterface $ \ghState -> do
+        mkRepo ghState "owner" "repo" identity
+        void $ local (#evalInstance .~ deadInstance) $ MetaCheck.newReport (reporter defaultCommit) defaultCommitInfo
+        void
+          $ DB.setMetaCheck
+            (RepoId githubForge "owner" "repo")
+            defaultCommit
+            (DB.CheckStatusUpdate Nothing CheckPending CheckFail)
+        heartbeat
+        sweepOrphans
+
+        metaCheckRunStatuses ghState `shouldReturnM` [RunReportStatusFailure]
+
+    it "closes the meta check run of a superseded run whose process is gone" $ do
+      withFakeGithubInterface $ \ghState -> do
+        mkRepo ghState "owner" "repo" identity
+        void $ local (#evalInstance .~ deadInstance) $ MetaCheck.newReport (reporter defaultCommit) defaultCommitInfo
+        newer <- MetaCheck.newReport (reporter defaultCommit) defaultCommitInfo
+        MetaCheck.updateSuccess defaultCommitInfo newer
+        heartbeat
+        sweepOrphans
+
+        metaCheckRunStatuses ghState
+          `shouldReturnM` [RunReportStatusSuccess, RunReportStatusSuccess]
+
+    it "leaves a meta check run alone while its verdict is pending" $ do
+      withFakeGithubInterface $ \ghState -> do
+        mkRepo ghState "owner" "repo" identity
+        void $ MetaCheck.newReport (reporter defaultCommit) defaultCommitInfo
+        heartbeat
+        sweepOrphans
+
+        metaCheckRunStatuses ghState `shouldReturnM` [RunReportStatusInProgress]
+
     it "leaves an evaluation alone while the process running it is alive" $ do
       withFakeGithubInterface $ \ghState -> do
         mkRepo ghState "owner" "repo" identity
-        DB.newCommit (RepoId githubForge "owner" "repo") defaultCommit
+        void $ DB.newCommit (RepoId githubForge "owner" "repo") defaultCommit
         heartbeat
         sweepOrphans
 
@@ -165,7 +202,7 @@ spec = inM
 
     buildOwnedBy :: Text -> M Build
     buildOwnedBy owner = local (#evalInstance .~ owner) $ do
-      DB.newCommit (RepoId githubForge "owner" "repo") defaultCommit
+      void $ DB.newCommit (RepoId githubForge "owner" "repo") defaultCommit
       DB.setCommitStatus (RepoId githubForge "owner" "repo") defaultCommit Evaluated
       build <-
         DB.newBuildDB
@@ -183,6 +220,11 @@ spec = inM
       DB.getBuildsByCommit (RepoId githubForge "owner" "repo") defaultCommit >>= \case
         [build] -> pure build
         builds -> liftIO $ assertFailure $ "expected exactly one build, got " <> Prelude.show (length builds)
+
+    metaCheckRunStatuses :: GithubFakeState -> M [RunReportStatus]
+    metaCheckRunStatuses ghState =
+      mapMaybe (fmap (^. status) . (^? _last) . filter ((== "All Garnix checks") . (^. name)) . map snd)
+        <$> getReports ghState
 
     statusOf :: GithubFakeState -> Text -> M (Maybe RunReportStatus)
     statusOf ghState name = do

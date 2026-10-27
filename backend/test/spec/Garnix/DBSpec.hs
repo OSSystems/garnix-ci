@@ -401,8 +401,8 @@ spec = do
 
     it "keeps separate commits" $ do
       (onGithub, onOther) <- freshRepos
-      DB.newCommit onGithub sharedCommit
-      DB.newCommit onOther sharedCommit
+      void $ DB.newCommit onGithub sharedCommit
+      void $ DB.newCommit onOther sharedCommit
       DB.setCommitStatus onGithub sharedCommit Evaluated
       (fmap (^. status) <$> DB.getCommit onGithub sharedCommit) `shouldReturnM` Just Evaluated
       (fmap (^. status) <$> DB.getCommit onOther sharedCommit) `shouldReturnM` Just Evaluating
@@ -486,7 +486,7 @@ spec = do
       script <- T.unlines <$> readRevert
       -- The tables later changes add are gone, by their own reverts, before
       -- this one runs.
-      tables <- filter (`notElem` ["forge_installation_repos", "forge_installations"]) <$> forgeTables
+      tables <- filter (`notElem` ["forge_installation_repos", "forge_installations", "meta_check_runs"]) <$> forgeTables
       length tables `shouldBeM` 14
       filter (\t -> not (("FROM " <> t <> " WHERE forge <> 'github'") `T.isInfixOf` script)) tables
         `shouldBeM` []

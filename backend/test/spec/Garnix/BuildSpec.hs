@@ -809,7 +809,7 @@ spec = do
               )
       context "commits table" $ do
         it "writes and reads commits to and from the db correctly" $ do
-          DB.newCommit (RepoId githubForge "owner" "repo") "aaaaaa"
+          void $ DB.newCommit (RepoId githubForge "owner" "repo") "aaaaaa"
           DB.setCommitStatus (RepoId githubForge "owner" "repo") "aaaaaa" Evaluated
           commit <- DB.getCommit (RepoId githubForge "owner" "repo") "aaaaaa"
           commit

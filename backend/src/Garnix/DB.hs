@@ -650,26 +650,30 @@ getCommit (RepoId forge' owner name) commit =
       [] -> pure Nothing
       _ -> throw $ OtherError "Impossible: more than one result"
 
-newCommit :: RepoId -> CommitHash -> M ()
+newCommit :: RepoId -> CommitHash -> M MetaCheckGeneration
 newCommit (RepoId forge' owner name) commit = do
   evalHost <- view #hostname
   evalInstance <- view #evalInstance
   now <- liftIO getCurrentTime
-  void
-    $ pgExec
-      [pgSQL|
-        INSERT INTO commits
-          (forge, repo_user, repo_name, git_commit, status, meta_check,
-           eval_host, eval_instance, started_at)
-        VALUES
-            (${forge'}, ${owner}, ${name}, ${commit}, 'evaluating', 'pending',
-             ${evalHost}, ${evalInstance}, ${now})
-        ON CONFLICT (forge, repo_user, repo_name, git_commit) DO UPDATE
-          SET meta_check = 'pending',
-              eval_host = ${evalHost},
-              eval_instance = ${evalInstance},
-              started_at = ${now}
-      |]
+  pgQuery
+    [pgSQL|
+      INSERT INTO commits
+        (forge, repo_user, repo_name, git_commit, status, meta_check,
+         eval_host, eval_instance, started_at)
+      VALUES
+          (${forge'}, ${owner}, ${name}, ${commit}, 'evaluating', 'pending',
+           ${evalHost}, ${evalInstance}, ${now})
+      ON CONFLICT (forge, repo_user, repo_name, git_commit) DO UPDATE
+        SET meta_check = 'pending',
+            meta_check_generation = commits.meta_check_generation + 1,
+            eval_host = ${evalHost},
+            eval_instance = ${evalInstance},
+            started_at = ${now}
+      RETURNING meta_check_generation
+    |]
+    >>= \case
+      [generation] -> pure $ MetaCheckGeneration generation
+      _ -> throw $ OtherError "Impossible: upserting a commit did not return exactly one row"
 
 setCommitStatus :: RepoId -> CommitHash -> CommitStatus -> M ()
 setCommitStatus (RepoId forge' owner name) commit st =
@@ -684,8 +688,12 @@ setCommitStatus (RepoId forge' owner name) commit st =
           AND git_commit = ${commit}
       |]
 
+newtype MetaCheckGeneration = MetaCheckGeneration Int64
+  deriving stock (Show, Eq)
+
 data CheckStatusUpdate = CheckStatusUpdate
-  { _checkStatusUpdateFrom :: CheckStatus,
+  { _checkStatusUpdateGeneration :: Maybe MetaCheckGeneration,
+    _checkStatusUpdateFrom :: CheckStatus,
     _checkStatusUpdateTo :: CheckStatus
   }
 
@@ -707,21 +715,80 @@ data CheckStatusUpdate = CheckStatusUpdate
 -- As it is, buildA's thread would still attempt to set the check to CheckFail, but only if its current
 -- state is CheckPending, which is not. So no change will happen, which is what we want.
 setMetaCheck :: RepoId -> CommitHash -> CheckStatusUpdate -> M Bool
-setMetaCheck (RepoId forge' owner name) commit (CheckStatusUpdate {_checkStatusUpdateFrom = from, _checkStatusUpdateTo = to}) = do
+setMetaCheck (RepoId forge' owner name) commit (CheckStatusUpdate {_checkStatusUpdateGeneration = generation, _checkStatusUpdateFrom = from, _checkStatusUpdateTo = to}) = do
   if from == to
     then pure False
     else
-      (== 1)
-        <$> pgExec
-          [pgSQL|
-            UPDATE commits
-              SET meta_check = ${to}
-            WHERE forge = ${forge'}
-              AND repo_user = ${owner}
-              AND repo_name = ${name}
-              AND git_commit = ${commit}
-              AND meta_check = ${from}
-          |]
+      (== 1) <$> case generation of
+        Nothing ->
+          pgExec
+            [pgSQL|
+              UPDATE commits
+                SET meta_check = ${to}
+              WHERE forge = ${forge'}
+                AND repo_user = ${owner}
+                AND repo_name = ${name}
+                AND git_commit = ${commit}
+                AND meta_check = ${from}
+            |]
+        Just (MetaCheckGeneration generation') ->
+          pgExec
+            [pgSQL|
+              UPDATE commits
+                SET meta_check = ${to}
+              WHERE forge = ${forge'}
+                AND repo_user = ${owner}
+                AND repo_name = ${name}
+                AND git_commit = ${commit}
+                AND meta_check = ${from}
+                AND meta_check_generation = ${generation'}
+            |]
+
+recordMetaCheckRun :: RepoId -> CommitHash -> MetaCheckGeneration -> GhRunId -> M ()
+recordMetaCheckRun (RepoId forge' owner name) commit (MetaCheckGeneration generation) ghRunId =
+  void
+    $ pgExec
+      [pgSQL|
+        INSERT INTO meta_check_runs
+          (forge, repo_user, repo_name, git_commit, generation, github_run_id)
+        VALUES
+          (${forge'}, ${owner}, ${name}, ${commit}, ${generation}, ${ghRunId})
+        ON CONFLICT (forge, repo_user, repo_name, git_commit, generation) DO UPDATE
+          SET github_run_id = ${ghRunId},
+              completed = false
+      |]
+
+completeMetaCheckRun :: RepoId -> CommitHash -> MetaCheckGeneration -> M ()
+completeMetaCheckRun (RepoId forge' owner name) commit (MetaCheckGeneration generation) =
+  void
+    $ pgExec
+      [pgSQL|
+        UPDATE meta_check_runs
+          SET completed = true
+        WHERE forge = ${forge'}
+          AND repo_user = ${owner}
+          AND repo_name = ${name}
+          AND git_commit = ${commit}
+          AND generation = ${generation}
+      |]
+
+getUnreportedMetaCheckRuns :: M [(RepoId, CommitHash, MetaCheckGeneration, GhRunId)]
+getUnreportedMetaCheckRuns =
+  map (\(forge', owner, name, commit, generation, ghRunId) -> (RepoId forge' owner name, commit, MetaCheckGeneration generation, ghRunId))
+    <$> pgQuery
+      [pgSQL|
+        SELECT r.forge, r.repo_user, r.repo_name, r.git_commit, r.generation, r.github_run_id
+        FROM meta_check_runs r
+        JOIN commits c
+          ON c.forge = r.forge
+          AND c.repo_user = r.repo_user
+          AND c.repo_name = r.repo_name
+          AND c.git_commit = r.git_commit
+        WHERE NOT r.completed
+          AND c.meta_check <> 'pending'
+        ORDER BY c.started_at
+        LIMIT 200
+      |]
 
 -- | Atomically claim the right to post the pull request failure comment for
 -- this commit. Returns True exactly once per commit, even across re-runs -
