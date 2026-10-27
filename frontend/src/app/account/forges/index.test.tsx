@@ -748,6 +748,10 @@ describe("installations", () => {
       ),
     ).toBeVisible();
     expect(toggle).not.toBeChecked();
+    expect(
+      await org.findByText("Builds through another installation"),
+    ).toBeVisible();
+    expect(toggle).toBeDisabled();
   });
 
   it("pages through the repositories", async () => {
@@ -779,27 +783,41 @@ describe("installations", () => {
     expect(await org.findByText("1–20 of 25")).toBeVisible();
   });
 
-  it("filters the page by name and by whether it builds", async () => {
+  it("filters every repository by name and by whether it builds", async () => {
     const user = userEvent.setup();
     connected();
     installable = [{ kind: "org", target: "acme" }];
     installations = [installation({ id: 5, kind: "org", target: "acme" })];
     reposOf = {
-      5: [repo("acme", "firmware"), repo("acme", "docs"), repo("acme", "dash")],
+      5: [
+        ...Array.from({ length: 58 }, (_, i) => repo("acme", `lib-${i + 1}`)),
+        repo("acme", "docs"),
+        repo("acme", "dash"),
+      ],
     };
     enabled = { "acme/docs": 5 };
     render(<ForgesComponent />);
     const org = await expand(user, await rowOf("org", "acme"));
-    await org.findByTestId("repo-acme/firmware");
+    await org.findByTestId("repo-acme/lib-1");
+    expect(org.queryByTestId("repo-acme/docs")).toBeNull();
     await user.type(org.getByLabelText("Filter repositories"), "D");
-    expect(org.queryByTestId("repo-acme/firmware")).toBeNull();
-    expect(org.getByTestId("repo-acme/docs")).toBeVisible();
+    expect(await org.findByTestId("repo-acme/docs")).toBeVisible();
     expect(org.getByTestId("repo-acme/dash")).toBeVisible();
+    expect(org.queryByTestId("repo-acme/lib-1")).toBeNull();
+    expect(org.queryByText("Next")).toBeNull();
     await user.click(org.getByText("Building"));
     expect(org.queryByTestId("repo-acme/dash")).toBeNull();
     expect(org.getByTestId("repo-acme/docs")).toBeVisible();
+    await user.type(org.getByLabelText("Filter repositories"), "x");
+    expect(org.getByText("No repositories match.")).toBeVisible();
+    await user.clear(org.getByLabelText("Filter repositories"));
     await user.click(org.getByText("All"));
-    expect(org.getByTestId("repo-acme/dash")).toBeVisible();
+    expect(await org.findByText("1–20 of 60")).toBeVisible();
+    expect(
+      requests
+        .filter((r) => r.url.includes("limit=50"))
+        .map((r) => new URL(r.url, "https://garnix.example").search),
+    ).toEqual(["?page=1&limit=50", "?page=2&limit=50"]);
   });
 
   it("uninstalls only once confirmed", async () => {

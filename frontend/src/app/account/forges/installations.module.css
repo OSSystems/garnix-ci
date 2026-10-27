@@ -42,8 +42,12 @@
   padding: 14px 16px;
 }
 
+.expandable {
+  cursor: pointer;
+}
+
 .open .installationRow {
-  background: #f2f2f2;
+  background: var(--color-primary-1);
 }
 
 .target {
@@ -63,8 +67,9 @@
   border: 0;
   background: none;
   cursor: pointer;
-  font-size: 20px;
-  color: var(--color-stone-500);
+  display: flex;
+  padding: 0;
+  opacity: 0.6;
   transition: transform 0.2s;
 }
 
@@ -99,7 +104,7 @@
 }
 
 .repoList > :nth-child(odd) {
-  background: #f2f2f2;
+  background: var(--color-primary-1);
 }
 
 .repo {
