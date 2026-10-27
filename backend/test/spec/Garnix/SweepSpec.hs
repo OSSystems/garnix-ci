@@ -74,6 +74,21 @@ spec = inM
         (untouched ^. status) `shouldBeM` Nothing
         liftIO $ (untouched ^. endTime) `shouldSatisfy` isNothing
 
+    it "leaves a rerun build alone while the process that took it is alive" $ do
+      withFakeGithubInterface $ \ghState -> do
+        mkRepo ghState "owner" "repo" identity
+        original <- abandonedBuild
+        now <- liftIO getCurrentTime
+        DB.reportBuildResultDB (original & status ?~ Failure & endTime ?~ now)
+        ghRunId' <- maybe (liftIO $ assertFailure "original build has no github run id") pure (original ^. githubRunId)
+        rerun <- DB.makeNewBuildForGithubRunId (GhLogin "alice") ghRunId' "this-host"
+        heartbeat
+        sweepOrphans
+
+        untouched <- DB.getBuild (rerun ^. id)
+        (untouched ^. status) `shouldBeM` Nothing
+        liftIO $ (untouched ^. endTime) `shouldSatisfy` isNothing
+
     it "does nothing at all when no process is recorded as alive" $ do
       withFakeGithubInterface $ \ghState -> do
         mkRepo ghState "owner" "repo" identity
