@@ -331,6 +331,7 @@ getOriginalBuildForDrvPath user adminForges drvPath = do
 makeNewBuildForGithubRunId :: GhLogin -> GhRunId -> Text -> M Build
 makeNewBuildForGithubRunId reqUser ghRunId evalHost = do
   now <- liftIO getCurrentTime
+  evalInstance <- view #evalInstance
   res <-
     pgQueryPrism
       _Build
@@ -356,6 +357,7 @@ makeNewBuildForGithubRunId reqUser ghRunId evalHost = do
         persistence_name,
         wants_incrementalism,
         eval_host,
+        eval_instance,
         uploaded_to_cache)
       SELECT
         forge,
@@ -378,6 +380,7 @@ makeNewBuildForGithubRunId reqUser ghRunId evalHost = do
         NULL,
         wants_incrementalism,
         ${evalHost},
+        ${evalInstance},
         FALSE
       FROM builds
       WHERE github_run_id = ${ghRunId}
