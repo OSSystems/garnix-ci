@@ -44,6 +44,7 @@ import Garnix.Monad.KeyedMutex (newKeyedMutex)
 import Garnix.Monad.Metrics (registerMetrics, serveMetrics)
 import Garnix.Monad.NoThrow (forkForever)
 import Garnix.Monad.Pool qualified
+import Garnix.Nix.DrvRoot (removeStaleDrvRoots)
 import Garnix.NixConfig (defaultNixConfig, githubAccessTokenNixConfig)
 import Garnix.Prelude
 import Garnix.S3Cache (runCacheMaintenance)
@@ -278,6 +279,7 @@ withEnv testFeatures buildLogsDir buildLogsReportingPort action = do
     lookupEnv "GITHUB_CLIENT_SECRET"
       >>= maybe (cs <$> readFile (secretFile "github_client_secret")) (pure . cs)
   Just emptyDir' <- lookupEnv "EMPTY_DIR"
+  stateDir <- maybe getCurrentDirectory pure =<< lookupEnv "STATE_DIRECTORY"
   ghClientId <-
     lookupEnv "GITHUB_CLIENT_ID"
       >>= maybe (cs <$> readFile (secretFile "github_client_id")) (pure . cs)
@@ -545,6 +547,7 @@ withEnv testFeatures buildLogsDir buildLogsReportingPort action = do
               spanCtx = [],
               metrics = metrics,
               emptyDir = emptyDir',
+              drvRootsDir = stateDir </> "drv-roots",
               hostname = hostname,
               evalInstance,
               evalHeartbeatInterval = fromSeconds @Int 30,
@@ -633,6 +636,7 @@ runWith opts = do
         void $ forkForever heartbeatInterval heartbeat
         sweepInterval <- view #evalSweepInterval
         void $ forkForever sweepInterval sweepOrphans
+        void $ forkForever sweepInterval removeStaleDrvRoots
 
       let settings =
             Warp.defaultSettings

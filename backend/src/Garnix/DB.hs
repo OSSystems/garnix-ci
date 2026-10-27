@@ -497,6 +497,11 @@ setBuildUploaded buildId = do
         WHERE id = ${buildId}
       |]
 
+isBuildPending :: BuildId -> M Bool
+isBuildPending buildId =
+  pgQuery [pgSQL| SELECT status IS NULL FROM builds WHERE id = ${buildId} |]
+    <&> (== [Just True])
+
 getLatestBuildsForBranch :: RepoId -> Branch -> M [Build]
 getLatestBuildsForBranch (RepoId forge' owner name) branch = do
   pgQueryPrism

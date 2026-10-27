@@ -321,6 +321,7 @@ withTestEnvironment tempDir action = do
                   spanCtx = [],
                   metrics = metrics,
                   emptyDir = emptyDir',
+                  drvRootsDir = tempDir </> "drv-roots",
                   hostname = "garnix-server-test",
                   evalInstance = "garnix-server-test#spec",
                   evalHeartbeatInterval = fromSeconds 30,
