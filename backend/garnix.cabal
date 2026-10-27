@@ -113,6 +113,7 @@ library
       Garnix.Monad.Pool
       Garnix.Monad.SubProcess
       Garnix.Monad.SubProcess.Deprecated
+      Garnix.Nix.DrvRoot
       Garnix.Nix.PathInfo
       Garnix.Nix.Plan
       Garnix.Nix.StorePath
@@ -783,6 +784,7 @@ test-suite spec
       Garnix.Monad.PoolSpec
       Garnix.Monad.SubProcessSpec
       Garnix.MonadSpec
+      Garnix.Nix.DrvRootSpec
       Garnix.Nix.StorePathSpec
       Garnix.PreludeSpec
       Garnix.ProcessLogsSpec
@@ -899,6 +901,7 @@ test-suite spec
       Garnix.Monad.Pool
       Garnix.Monad.SubProcess
       Garnix.Monad.SubProcess.Deprecated
+      Garnix.Nix.DrvRoot
       Garnix.Nix.PathInfo
       Garnix.Nix.Plan
       Garnix.Nix.StorePath

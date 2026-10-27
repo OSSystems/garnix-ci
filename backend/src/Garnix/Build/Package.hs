@@ -23,6 +23,7 @@ import Garnix.Monad.Concurrency
 import Garnix.Monad.Metrics
 import Garnix.Monad.Pool (withPoolM)
 import Garnix.Monad.SubProcess
+import Garnix.Nix.DrvRoot (addDrvRoot, withDrvRoot)
 import Garnix.Nix.Types (DrvPath)
 import Garnix.NixConfig (addNixConfigEnvironment)
 import Garnix.Prelude
@@ -164,7 +165,7 @@ buildPkg ::
   M Build
 buildPkg = curry6
   $ mockable #buildPkgMock
-  $ \(fodChecker, runReporter, buildKind, flakeDir, repoConfig, build) -> do
+  $ \(fodChecker, runReporter, buildKind, flakeDir, repoConfig, build) -> withDrvRoot (build ^. id) $ \drvRoot -> do
     incrementEvent #packageBuildsAttempted
     cacheDir <- getNixXdgCacheDir
     attr <- localAttr flakeDir . addNixosExtension . attribute $ build
@@ -173,6 +174,7 @@ buildPkg = curry6
     case evalRes of
       Right evaluationResult -> do
         let drvPath' = evaluationResult ^. #derivation
+        addDrvRoot drvRoot drvPath'
         FodCheck.fodCheck fodChecker drvPath'
         build <-
           if null $ evaluationResult ^. #toUpload

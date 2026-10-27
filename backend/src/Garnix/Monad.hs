@@ -139,6 +139,7 @@ data Env = Env
     s3UploadPool :: Garnix.Monad.Pool.Pool GhRepoOwner,
     mocks :: Maybe EnvMocks,
     emptyDir :: FilePath,
+    drvRootsDir :: FilePath,
     spanCtx :: [(Text, Text)],
     metrics :: Metrics,
     hostname :: Text,

@@ -45,7 +45,7 @@ import Network.HTTP.Types.Header (hContentType)
 import Network.Wai (Application, getRequestBodyChunk, pathInfo, responseLBS)
 import Network.Wai.Handler.Warp (testWithApplication)
 import Network.Wai.Handler.Warp qualified as Warp
-import System.Directory (copyFile, createDirectoryIfMissing)
+import System.Directory (copyFile, createDirectoryIfMissing, listDirectory)
 import System.Environment (setEnv, unsetEnv)
 import System.Random
 import Test.HUnit
@@ -467,6 +467,45 @@ spec = do
             _ <- try $ testHandleCommit commitInfo
             result <- liftIO $ readMVar mvar
             cs result `shouldContainM` "Cannot delete path"
+
+      it "keeps the evaluated derivation until its build runs" $ do
+        random :: Int <- randomIO
+        deletion <- liftIO newEmptyMVar
+        let flake =
+              cs
+                [i|
+                  { outputs = {self}: {
+                      packages.x86_64-linux.output = derivation {
+                        name = "output";
+                        builder = "/bin/sh";
+                        system = "x86_64-linux";
+                        args = [ "-c" "echo #{random} > $out" ];
+                      };
+                    };
+                  }
+                |]
+            deleteDrvFromStore (_, drv) = do
+              let path = Nix.getStorePath $ Nix.getDrvPath drv
+                  waitForOpenFilesToClose (n :: Int) = do
+                    StdoutRaw roots <- run $ cmd "nix-store" & addArgs ["--query", "--roots", path]
+                    when (n > 0 && any ("/proc/" `T.isPrefixOf`) (T.lines (cs roots))) $ do
+                      threadDelay (fromMilliSeconds @Int 50)
+                      waitForOpenFilesToClose (n - 1)
+              waitForOpenFilesToClose 600
+              (_ :: ExitCode, StderrRaw err) <-
+                run $ cmd "nix" & addArgs ["store", "delete", path, "--extra-experimental-features", "nix-command flakes"]
+              liftIO $ putMVar deletion (cs err :: String)
+        GH.withFakeGithubInterface $ \ghState -> do
+          user <- DB.newUser (ForgeLogin githubForge (GhLogin "owner")) "owner@owner.com"
+          withMock #fodCheckMock deleteDrvFromStore
+            $ GH.withLocalRepo ghState "owner" "repo" identity defaultCommitInfo (GH.simpleSetup flake)
+            $ \commitInfo -> testHandleCommit commitInfo
+          builds <- DB.getBuilds user
+          (builds ^.. each . filtered ((== PackageName "output") . (^. package)) . status) `shouldBeM` [Just Success]
+          deletionOutput <- liftIO $ readMVar deletion
+          deletionOutput `shouldContainM` "Cannot delete path"
+          drvRootsDir <- view #drvRootsDir
+          liftIO (listDirectory drvRootsDir) `shouldReturnM` []
 
       describe "flakes in subdirectories" $ do
         let setupWithConfiguredFlakeDir :: FlakeDir -> FilePath -> FilePath -> M ()
