@@ -23,8 +23,9 @@ import Garnix.Prelude
 import Garnix.TestHelpers hiding (shouldReturn)
 import Garnix.TestHelpers.Monad
 import Garnix.Types (Error (OtherError))
-import System.Directory (doesDirectoryExist)
+import System.Directory (doesDirectoryExist, removeDirectoryRecursive)
 import System.IO.Silently (capture, hSilence)
+import System.IO.Temp (createTempDirectory, getCanonicalTemporaryDirectory)
 import Test.Hspec
 
 spec :: Spec
@@ -69,6 +70,13 @@ spec = before (newMVar def :: IO (MVar TestResourcesManager)) $ do
         pure resource
       readMVar result `shouldReturn` TRM 1 (Set.singleton resource) mempty
 
+    it "releases resources when the action throws" $ \man -> do
+      result <- Safe.try $ runForkT $ do
+        _resource <- safeAcquire (acquire man) (release man)
+        throwIO $ ErrorCall "test error"
+      result `shouldBe` (Left (ErrorCall "test error") :: Either ErrorCall ())
+      readMVar man `shouldReturn` TRM 1 mempty [0]
+
     it "releases subsequent resources when release handlers crash" $ \man -> do
       result <- Safe.try $ runForkT $ do
         _resource0 <- safeAcquire (acquire man) (release man)
@@ -77,6 +85,16 @@ spec = before (newMVar def :: IO (MVar TestResourcesManager)) $ do
         pure ()
       result `shouldBe` Left (ErrorCall "test error")
       readMVar man `shouldReturn` TRM 3 (Set.singleton 1) [2, 0]
+
+    it "removes leftovers of a previous process by template" $ \_man -> do
+      tmp <- getCanonicalTemporaryDirectory
+      leftover <- createTempDirectory tmp "garnix-leftover-spec"
+      kept <- createTempDirectory tmp "garnix-kept-spec"
+      removed <- removeLeftoverTemporaries ["garnix-leftover-spec"]
+      removed `shouldBe` [leftover]
+      doesDirectoryExist leftover `shouldReturn` False
+      doesDirectoryExist kept `shouldReturn` True
+      removeDirectoryRecursive kept
 
     describe "using in M" $ do
       it "releases resources when threads throw runtime exceptions" $ \man -> do
