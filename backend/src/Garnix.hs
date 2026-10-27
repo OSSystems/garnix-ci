@@ -40,6 +40,7 @@ import Garnix.Hosting.ServerPool (reconcilePool)
 import Garnix.Hosting.Types (HostingBudget (..), ServerTier, WarmPoolTargets, parseServerTier)
 import Garnix.LocalProvisioner (localProvisionerInterface)
 import Garnix.Monad
+import Garnix.Monad.ForkT (removeLeftoverTemporaries)
 import Garnix.Monad.KeyedMutex (newKeyedMutex)
 import Garnix.Monad.Metrics (registerMetrics, serveMetrics)
 import Garnix.Monad.NoThrow (forkForever)
@@ -609,6 +610,20 @@ runWith opts = do
         Right _ -> pure ()
         Left problem ->
           hPutStrLn stderr $ "Failed to clean up unready claimed guests: " <> show problem
+
+      -- A run's checkout, nix cache and netrc are removed when the run ends,
+      -- but not when the process dies mid-run, and the result links in the
+      -- checkout keep the run's closure rooted in the store.
+      catchAny
+        ( do
+            leftovers <- removeLeftoverTemporaries ["garnix-runs", "garnix-cache", "garnix-netrc"]
+            unless (null leftovers)
+              $ hPutStrLn stderr
+              $ "Removed "
+              <> show (length leftovers)
+              <> " temporary path(s) left behind by a previous process"
+        )
+        (\problem -> hPutStrLn stderr $ "Failed to remove leftover temporary paths: " <> show problem)
 
       -- PR deploys are reaped on idleness rather than by a deploy plan: an
       -- open PR nobody pushes to again would otherwise keep its guest forever.

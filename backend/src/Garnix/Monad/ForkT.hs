@@ -8,6 +8,7 @@ module Garnix.Monad.ForkT
     safeAcquire,
     safeSystemTempDirectory,
     safeSystemTempFile,
+    removeLeftoverTemporaries,
   )
 where
 
@@ -16,7 +17,7 @@ import Control.Exception.Safe qualified as Safe
 import Control.Monad.Base
 import Control.Monad.Trans.Control
 import Garnix.Prelude
-import System.Directory (removeDirectoryRecursive, removeFile)
+import System.Directory (listDirectory, removeDirectoryRecursive, removeFile, removePathForcibly)
 import System.IO (hClose, openTempFile)
 import System.IO.Temp (createTempDirectory, getCanonicalTemporaryDirectory)
 
@@ -43,20 +44,21 @@ newtype ForkT m a = ForkT (ReaderT (MVar ForkState) m a)
       MonadMask
     )
 
-runForkT :: (MonadBase IO m) => ForkT m a -> m a
+runForkT :: (MonadBase IO m, MonadMask m) => ForkT m a -> m a
 runForkT (ForkT inner) = do
   mvar <- newMVar def
-  a <- runReaderT inner mvar
-  ForkState {threads, releasers} <- readMVar mvar
-  forM_ threads $ \thread -> do
-    takeMVar thread
-  results :: [Either SomeException ()] <- forM releasers $ \releaser -> do
-    liftBase $ Safe.try releaser
-  forM_ results $ \result -> do
-    case result of
-      Left exception -> liftBase $ Safe.throwIO exception
-      Right () -> pure ()
-  pure a
+  runReaderT inner mvar `finally` releaseAll mvar
+  where
+    releaseAll mvar = do
+      ForkState {threads, releasers} <- readMVar mvar
+      forM_ threads $ \thread -> do
+        takeMVar thread
+      results :: [Either SomeException ()] <- forM releasers $ \releaser -> do
+        liftBase $ Safe.try releaser
+      forM_ results $ \result -> do
+        case result of
+          Left exception -> liftBase $ Safe.throwIO exception
+          Right () -> pure ()
 
 class (MonadBaseControl IO m, MonadMask m) => HasForkT m where
   forkTAsk :: m (MVar ForkState)
@@ -105,3 +107,16 @@ safeSystemTempFile snippet = do
   safeAcquire
     (liftBase $ openTempFile systemTempDir snippet)
     (\(path, handle) -> liftBase (hClose handle >> removeFile path))
+
+-- | Removes paths that 'safeSystemTempDirectory' and 'safeSystemTempFile'
+-- created under these templates. Releasers do not run when the process is
+-- killed, so a new process calls this before it acquires any of its own.
+removeLeftoverTemporaries :: (MonadIO m) => [String] -> m [FilePath]
+removeLeftoverTemporaries templates = liftIO $ do
+  systemTempDir <- getCanonicalTemporaryDirectory
+  leftovers <-
+    map (systemTempDir </>)
+      . filter (\name -> any (`isPrefixOf` name) templates)
+      <$> listDirectory systemTempDir
+  forM_ leftovers removePathForcibly
+  pure leftovers
