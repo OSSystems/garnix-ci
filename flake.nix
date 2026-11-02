@@ -65,31 +65,34 @@
           haskellPackages =
             with outerPrev.haskell.lib;
             outerPrev.haskellPackages.override {
-              overrides = final: prev: {
-                hashids = doJailbreak (
-                  prev.hashids.overrideAttrs (old: {
-                    meta = old.meta // {
-                      broken = false;
-                    };
-                  })
-                );
-                generic-random = prev.callPackage ./nix/packages/generic-random.nix { };
-                HDBC = prev.callPackage ./nix/packages/HDBC.nix { };
-                servant-github-webhook = prev.callPackage ./nix/packages/servant-github-webhook.nix { };
-                generics-eot = dontCheck (prev.callPackage ./nix/packages/generics-eot.nix { });
-                iso-deriving = prev.callPackage ./nix/packages/iso-deriving.nix { };
-                github-app = prev.callPackage ./nix/packages/github-app.nix { };
-                github-webhooks = prev.callPackage ./nix/packages/github-webhooks.nix { };
-                oauth2-simple = prev.callPackage ./nix/packages/oauth2-simple.nix { };
-                cradle = cradle.lib.${outerPrev.stdenv.hostPlatform.system}.mkCradle final;
-                garnix =
-                  (dontHaddock (
-                    disableLibraryProfiling (
+              # Haddock -j4 deadlocks at random and holds the store locks of
+              # every check that needs the package. Nobody reads these docs, and
+              # the packages below are always built locally, so skip them.
+              overrides =
+                final: prev:
+                outerPrev.lib.mapAttrs (_: dontHaddock) {
+                  hashids = doJailbreak (
+                    prev.hashids.overrideAttrs (old: {
+                      meta = old.meta // {
+                        broken = false;
+                      };
+                    })
+                  );
+                  generic-random = prev.callPackage ./nix/packages/generic-random.nix { };
+                  HDBC = prev.callPackage ./nix/packages/HDBC.nix { };
+                  servant-github-webhook = prev.callPackage ./nix/packages/servant-github-webhook.nix { };
+                  generics-eot = dontCheck (prev.callPackage ./nix/packages/generics-eot.nix { });
+                  iso-deriving = prev.callPackage ./nix/packages/iso-deriving.nix { };
+                  github-app = prev.callPackage ./nix/packages/github-app.nix { };
+                  github-webhooks = prev.callPackage ./nix/packages/github-webhooks.nix { };
+                  oauth2-simple = prev.callPackage ./nix/packages/oauth2-simple.nix { };
+                  cradle = cradle.lib.${outerPrev.stdenv.hostPlatform.system}.mkCradle final;
+                  garnix =
+                    (disableLibraryProfiling (
                       disableExecutableProfiling (final.callPackage ./nix/packages/garnix.nix { })
-                    )
-                  )).overrideAttrs
-                    (old: { });
-              };
+                    )).overrideAttrs
+                      (old: { });
+                };
             };
         })
         (final: prev: {
