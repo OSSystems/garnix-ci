@@ -2,8 +2,9 @@
 
 module Garnix.Monad.PoolSpec where
 
-import Control.Concurrent (MVar, modifyMVar_, newChan, newEmptyMVar, newMVar, putMVar, readChan, readMVar, takeMVar, writeChan)
-import Control.Concurrent.Async.Lifted (async)
+import Control.Concurrent (Chan, MVar, modifyMVar_, newChan, newEmptyMVar, newMVar, putMVar, readChan, readMVar, takeMVar, writeChan)
+import Control.Concurrent.Async.Lifted (async, cancel)
+import Garnix.Async (timeout)
 import Garnix.Duration
 import Garnix.Monad
 import Garnix.Monad.Async (joinAll_, resolve, spawn)
@@ -87,6 +88,52 @@ spec = do
       liftIO $ readChan started `shouldReturn` 'a'
       terminateA3
 
+    it "runs an action taking several slots once they are all free" $ runTestM $ do
+      started <- liftIO newChan
+      metrics <- view #metrics
+      pool <- newPool 2 metrics #evalQueueWaitTime #evalQueueLen
+      releaseA <- holdSlots started pool 'a' 1
+      liftIO $ readChan started `shouldReturn` 'a'
+      releaseB <- holdSlots started pool 'b' 2
+      nothingStarts started
+      releaseA
+      liftIO $ readChan started `shouldReturn` 'b'
+      releaseB
+
+    it "keeps freed slots for a waiter taking several, so that one-slot waiters do not starve it" $ runTestM $ do
+      started <- liftIO newChan
+      metrics <- view #metrics
+      pool <- newPool 2 metrics #evalQueueWaitTime #evalQueueLen
+      releaseA1 <- holdSlots started pool 'a' 1
+      releaseA2 <- holdSlots started pool 'a' 1
+      replicateM_ 2 $ liftIO $ readChan started `shouldReturn` 'a'
+      releaseB <- holdSlots started pool 'b' 2
+      releaseA3 <- holdSlots started pool 'a' 1
+      releaseA1
+      nothingStarts started
+      releaseA2
+      liftIO $ readChan started `shouldReturn` 'b'
+      releaseB
+      liftIO $ readChan started `shouldReturn` 'a'
+      releaseA3
+
+    it "takes at most all of its slots" $ runTestM $ do
+      metrics <- view #metrics
+      pool <- newPool 2 metrics #evalQueueWaitTime #evalQueueLen
+      timeout (fromSeconds 10) (withPoolSlots pool 5 () $ pure ()) `shouldReturnM` Just ()
+
+    it "gives back the slots of a waiter cancelled in the queue" $ runTestM $ do
+      started <- liftIO newChan
+      metrics <- view #metrics
+      pool <- newPool 1 metrics #evalQueueWaitTime #evalQueueLen
+      releaseA <- holdSlots started pool 'a' 1
+      liftIO $ readChan started `shouldReturn` 'a'
+      waiter <- async $ withPool pool 'b' $ pure ()
+      threadDelay $ fromMilliSeconds 80
+      cancel waiter
+      releaseA
+      timeout (fromSeconds 10) (withPool pool 'c' $ pure ()) `shouldReturnM` Just ()
+
     it "adds wait time to the metrics" $ runTestM $ do
       metrics <- view #metrics
       pool <- newPool 1 metrics #evalQueueWaitTime #evalQueueLen
@@ -133,6 +180,22 @@ spec = do
       waitFor (fromSeconds 10) $ getCurrentGaugeCount `shouldReturnM` (-2)
       liftIO $ putMVar mvar ()
       waitFor (fromSeconds 10) $ getCurrentGaugeCount `shouldReturnM` (-3)
+
+-- | Starts an action holding @slots@ slots, which reports its key on
+-- @started@ once it runs, and returns the action that releases them.
+holdSlots :: Chan Char -> Pool Char -> Char -> Int -> M (M ())
+holdSlots started pool key slots = do
+  oneshot <- liftIO newEmptyMVar
+  _ <- async $ withPoolSlots pool slots key $ liftIO $ do
+    writeChan started key
+    readMVar oneshot
+  threadDelay $ fromMilliSeconds 80
+  pure $ liftIO $ putMVar oneshot ()
+
+nothingStarts :: Chan Char -> M ()
+nothingStarts started = do
+  threadDelay $ fromMilliSeconds 80
+  liftIO $ timeout (fromMilliSeconds 0) (readChan started) `shouldReturn` Nothing
 
 type ConcurrencyGauge = MVar (Int, Int)
 
