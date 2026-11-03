@@ -344,6 +344,7 @@ withTestEnvironment tempDir action = withTempDirectory "/dev/shm" "garnix-drv-ro
                   guestSubnetPrefix = "10.111.0.",
                   nixBuildPool,
                   evalStrategy = defaultEvalStrategy,
+                  serviceMemoryBudget = Memory maxBound,
                   evalBatch = Nothing
                 }
         action env

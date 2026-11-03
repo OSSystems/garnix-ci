@@ -18,6 +18,7 @@ module Garnix.Build.BatchEval
     lookupBatched,
     buildJobsetExpr,
     parseEvalJobsOutput,
+    workerMemoryMegabytes,
   )
 where
 
@@ -113,6 +114,8 @@ evaluateFlakeBatch repoConfig repoOwner flakeDir gcRootsDir attributes = do
   -- Each worker is an evaluator, so it takes a slot of the per-attribute pool.
   evaluators <- views #nixEvalPool poolSize
   let workers = minimum [Limits.evalJobsWorkers, length attributes, evaluators]
+  budget <- view #serviceMemoryBudget
+  let workerMemory = workerMemoryMegabytes budget evaluators (repoConfig ^. maxEvalMemory)
   result <-
     timingAs #evalFlakeBatchTime
       $ withPoolSlotsM nixEvalPool workers repoOwner
@@ -120,9 +123,19 @@ evaluateFlakeBatch repoConfig repoOwner flakeDir gcRootsDir attributes = do
       $ logDuration "nix-eval-jobs"
       $ withTextSpan ("phase", "eval-batch")
       $ lockedFlakeUrl absFlakeDir
-      >>= traverse (runEvalJobs repoConfig gcRootsDir workers . flip buildJobsetExpr attributes)
+      >>= traverse (runEvalJobs repoConfig gcRootsDir workers workerMemory . flip buildJobsetExpr attributes)
   when (isNothing result) $ log Warning "nix-eval-jobs timed out; evaluating per attribute instead"
   pure $ parseEvalJobsOutput <$> join result
+
+-- | Megabytes of heap past which a worker restarts once its attribute is done.
+--
+-- A worker keeps its heap between attributes, unlike a per-attribute @nix@
+-- that exits after one. So it may keep only its slot's share of the server's
+-- memory: then a full pool fits in that memory whichever way it evaluates. And
+-- at most half the repo's limit, so that the heap it keeps does not run into it.
+workerMemoryMegabytes :: Memory -> Int -> Memory -> Int64
+workerMemoryMegabytes budget slots repoLimit =
+  max 1 $ min (toBytes budget `div` fromIntegral (max 1 slots)) (toBytes repoLimit `div` 2) `div` (1024 * 1024)
 
 -- | The locked URL nix resolves @\<dir\>@ to, e.g.
 -- @git+file:\/\/\<repo\>?dir=sub&rev=...@, so that the run can be pure like the
@@ -213,10 +226,9 @@ parseEvalJobsOutput stdout =
 
 -- | Runs under the same sandbox and @prlimit --as@ as the per-attribute eval.
 -- The limit is per process, so it binds each worker as it binds each
--- per-attribute @nix@; workers restart at half of it so that heap they keep
--- between attributes does not run into it.
-runEvalJobs :: RepoConfig -> FilePath -> Int -> Text -> M ByteString
-runEvalJobs repoConfig gcRootsDir workers = mockable #evalJobsMock $ \expr -> do
+-- per-attribute @nix@. Workers restart past 'workerMemoryMegabytes'.
+runEvalJobs :: RepoConfig -> FilePath -> Int -> Int64 -> Text -> M ByteString
+runEvalJobs repoConfig gcRootsDir workers workerMemory = mockable #evalJobsMock $ \expr -> do
   cacheDir <- getNixXdgCacheDir
   nixConfig <- view #userNixConfig
   workingDir <- view #workingDir
@@ -237,7 +249,7 @@ runEvalJobs repoConfig gcRootsDir workers = mockable #evalJobsMock $ \expr -> do
           "--workers",
           show workers,
           "--max-memory-size",
-          show (maxEvalMemory' `div` (2 * 1024 * 1024)),
+          show workerMemory,
           "--expr",
           cs expr
         ]
