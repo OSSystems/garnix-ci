@@ -777,6 +777,7 @@ test-suite spec
       Garnix.GithubInterfaceSpec
       Garnix.GithubUserTokenSpec
       Garnix.IncrementalSpec
+      Garnix.LimitsSpec
       Garnix.Modules.SchemaSpec
       Garnix.ModulesSpec
       Garnix.Monad.BubblingSpec

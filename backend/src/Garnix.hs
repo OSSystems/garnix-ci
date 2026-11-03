@@ -44,6 +44,7 @@ import Garnix.Monad.ForkT (removeLeftoverTemporaries)
 import Garnix.Monad.KeyedMutex (newKeyedMutex)
 import Garnix.Monad.Metrics (registerMetrics, serveMetrics)
 import Garnix.Monad.NoThrow (forkForever)
+import Garnix.Limits qualified as Limits
 import Garnix.Monad.Pool qualified
 import Garnix.Nix.DrvRoot (removeStaleDrvRoots)
 import Garnix.NixConfig (defaultNixConfig, githubAccessTokenNixConfig)
@@ -425,6 +426,7 @@ withEnv testFeatures buildLogsDir buildLogsReportingPort action = do
   githubCheckLogs <- githubCheckLogsFromEnv
   evalMemoryConfig <- evalMemoryConfigFromEnv
   evalStrategy <- evalStrategyFromEnv
+  serviceMemoryBudget <- Limits.serviceMemoryBudget
   jwtKey <-
     lookupEnv "JWT_KEY"
       >>= maybe (BSC.readFile (secretFile "garnix-jwt-key")) BSC.readFile
@@ -580,6 +582,7 @@ withEnv testFeatures buildLogsDir buildLogsReportingPort action = do
               guestSubnetPrefix,
               nixBuildPool,
               evalStrategy,
+              serviceMemoryBudget,
               evalBatch = Nothing
             }
     env <- pure $ env & #forges %~ (<> Map.fromList otherForges)

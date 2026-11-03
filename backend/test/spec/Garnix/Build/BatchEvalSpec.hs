@@ -35,6 +35,16 @@ spec = do
       Map.keys (parseEvalJobsOutput jsonl)
         `shouldBe` ["checks.x86_64-linux.bad", "packages.x86_64-linux.foo"]
 
+  describe "workerMemoryMegabytes" $ do
+    it "gives a worker its slot's share of the server's memory" $ do
+      workerMemoryMegabytes (fromGigabytes 32) 16 (fromGigabytes 16) `shouldBe` 2048
+
+    it "keeps a worker under half the repo's limit" $ do
+      workerMemoryMegabytes (fromGigabytes 64) 2 (fromGigabytes 8) `shouldBe` 4096
+
+    it "restarts a worker after every attribute rather than never" $ do
+      workerMemoryMegabytes (Memory 1024) 16 (fromGigabytes 8) `shouldBe` 1
+
   describe "buildJobsetExpr" $ do
     it "names each entry by its batchKey" $ do
       buildJobsetExpr "git+file:///repo" [attr "packages.x86_64-linux.foo"]

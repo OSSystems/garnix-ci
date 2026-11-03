@@ -186,6 +186,9 @@ data Env = Env
     nixBuildPool :: Garnix.Monad.Pool.Pool GhRepoOwner,
     -- | How flake attributes are evaluated to derivations. See 'EvalStrategy'.
     evalStrategy :: EvalStrategy,
+    -- | Memory the server's evaluations share; see
+    -- 'Garnix.Limits.serviceMemoryBudget'.
+    serviceMemoryBudget :: Memory,
     -- | The nix-eval-jobs run for the commit being built, if any. Set with
     -- 'local' while a flake builds; 'Nothing' everywhere else.
     evalBatch :: Maybe BatchRun
