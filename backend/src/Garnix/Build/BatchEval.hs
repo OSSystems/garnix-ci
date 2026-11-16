@@ -41,6 +41,7 @@ import Garnix.Nix.Types qualified as Nix
 import Garnix.NixConfig (addNixConfigEnvironment)
 import Garnix.Prelude
 import Garnix.Sandbox
+import Garnix.Supersede (unlessCancelled)
 import Garnix.Types
 import System.IO.Temp (withSystemTempDirectory)
 
@@ -57,7 +58,8 @@ batchKey = review asAttribute
 
 -- | Run nix-eval-jobs over the batchable builds beside @action@, which sees
 -- the run through 'evalBatch'. Does nothing under 'PerAttr'. The run is
--- cancelled with @action@, and its @.drv@s stay rooted until then: builds
+-- cancelled with @action@, or when the commit's run gives up its work to a
+-- newer commit, and its @.drv@s stay rooted until @action@ is done: builds
 -- dry-run and build them after the run has exited, possibly minutes later.
 withBatchEval :: RepoConfig -> CommitInfo -> FlakeDir -> [Build] -> M a -> M a
 withBatchEval repoConfig commitInfo flakeDir builds action = do
@@ -67,7 +69,7 @@ withBatchEval repoConfig commitInfo flakeDir builds action = do
       | strategy == Batch,
         not (null attributes) ->
           withSystemTempDirectory "garnix-eval-jobs-roots" $ \gcRootsDir ->
-            withAsync (evaluateFlakeBatch repoConfig (commitInfo ^. repoInfo . repoId . repoUser) flakeDir gcRootsDir attributes)
+            withAsync (either (const Nothing) identity <$> unlessCancelled (evaluateFlakeBatch repoConfig (commitInfo ^. repoInfo . repoId . repoUser) flakeDir gcRootsDir attributes))
               $ \batch -> local (#evalBatch ?~ batch) action
     _ -> action
 

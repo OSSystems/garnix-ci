@@ -3,15 +3,19 @@ module Garnix.SandboxSpec
   )
 where
 
+import Control.Concurrent.Async.Lifted (async, cancel)
 import Control.Monad.Trans.Control (liftBaseOp_)
 import Cradle
 import Data.String.Interpolate
 import Data.Text qualified as T
 import Garnix.Build.Helpers (withInternalCacheToken, withNetRcEntries)
 import Garnix.DB qualified as DB
+import Garnix.Duration (fromSeconds)
+import Garnix.Monad (M)
 import Garnix.NixConfig (NetRcEntry (..), addNixConfigEnvironment, nixConfDefaults)
 import Garnix.Prelude
 import Garnix.Sandbox
+import Garnix.TestHelpers (waitFor)
 import Garnix.TestHelpers.Monad
 import Garnix.Types
 import System.Directory (createDirectoryIfMissing)
@@ -311,6 +315,26 @@ spec = inM $ do
               & pure
               & inNixSandbox [] Nothing
           out `shouldBeM` "nix.conf"
+
+    -- Cancelling a superseded build cancels the thread running its nix: that
+    -- has to take the sandboxed process down, and what it started with it.
+    it "kills the sandboxed processes when the thread running them is cancelled" $ do
+      seconds <- liftIO $ (\n -> show (100000 + abs n `mod` 100000)) <$> (randomIO :: IO Int)
+      let sleeping :: M Int
+          sleeping = do
+            StdoutRaw out <- liftIO $ run $ cmd "ps" & addArgs ["-eo", "args" :: String]
+            pure $ length $ filter (== "sleep " <> seconds) $ T.lines $ cs out
+      let sleepInSandbox :: M ExitCode
+          sleepInSandbox =
+            (>>= run)
+              $ cmd "sh"
+              & addArgs ["-c", "sleep " <> seconds <> " & sleep " <> seconds <> "; wait"]
+              & pure
+              & inNixSandbox [] Nothing
+      sandboxed <- async sleepInSandbox
+      waitFor (fromSeconds @Int 10) $ sleeping `shouldReturnM` 2
+      cancel sandboxed
+      waitFor (fromSeconds @Int 10) $ sleeping `shouldReturnM` 0
 
 failIfErr :: (MonadIO m, HasCallStack) => m (output, StderrRaw, ExitCode) -> m output
 failIfErr action = do

@@ -46,7 +46,7 @@ spec = describe "ProcessLogs" $ do
                 & addStderrHandle logHandle
           getLogsForFlake flake = runTestM $ do
             (collector, getLogs) <- mkCollector
-            processor <- buildInternalLogProcessor collector <$> mkInternalLogProcessorState
+            processor <- buildInternalLogProcessor collector (\_ _ -> pure ()) (\_ -> pure ()) <$> mkInternalLogProcessorState
             buildFlake flake processor
             getLogs
           mkPackageName baseName = do

@@ -62,6 +62,7 @@ import Garnix.Monad.Metrics (registerMetrics)
 import Garnix.Monad.Pool qualified
 import Garnix.NixConfig (defaultNixConfig, githubAccessTokenNixConfig)
 import Garnix.Prelude
+import Garnix.Supersede (newSupersession)
 import Garnix.TestHelpers.GithubInterface.Deprecated qualified as Deprecated
 import Garnix.Types hiding (pending)
 import GitHub.App.Auth (AppAuth (..))
@@ -266,6 +267,7 @@ withTestEnvironment tempDir action = withTempDirectory "/dev/shm" "garnix-drv-ro
       deployMutex <- newKeyedMutex
       githubPublicityCache <- newTVarIO mempty
       nixBuildPool <- Garnix.Monad.Pool.newPool 40 metrics #nixBuildQueueWaitTime #nixBuildQueueLen
+      supersession <- newSupersession True
       withDefaultLogger $ \defaultLogger -> do
         ghInterface <- Deprecated.testGithubInterface tempDir buildRef
         let env =
@@ -345,7 +347,10 @@ withTestEnvironment tempDir action = withTempDirectory "/dev/shm" "garnix-drv-ro
                   nixBuildPool,
                   evalStrategy = defaultEvalStrategy,
                   serviceMemoryBudget = Memory maxBound,
-                  evalBatch = Nothing
+                  evalBatch = Nothing,
+                  supersession,
+                  lineRun = Nothing,
+                  buildProgress = Nothing
                 }
         action env
   where

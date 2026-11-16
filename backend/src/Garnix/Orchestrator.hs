@@ -22,6 +22,8 @@ import Garnix.Monad.Async (emptyPromise, resolve, spawn)
 import Garnix.Prelude
 import Garnix.Reporters.GithubReporter (mkGithubReporter)
 import Garnix.Reporters.OpenSearchReporter (openSearchReporter)
+import Garnix.Supersede (onLine)
+import Garnix.Supersede.Types (Line (..))
 import Garnix.Types as Types hiding (ghRunId)
 
 -- | What a forge's webhook asks garnix to do, in terms every forge can
@@ -69,7 +71,7 @@ handlePullRequest reporter commitInfo prId = do
     -- created it — but that push deployed under its BRANCH, so the PR still
     -- needs its own rollout to get a pull-N deployment.
     if isJust (commitInfo ^. prFromFork)
-      then buildFlake reporter commitInfo >>= resolve
+      then onLine (PullRequestLine (commitInfo ^. repoInfo . repoId) prId) (commitInfo ^. commit) True (buildFlake reporter commitInfo) >>= resolve
       else deployPrServers
   where
     deployPrServers =
@@ -93,6 +95,10 @@ handleCommit reporter allowDuplicateRun commitInfo = do
             (commitInfo ^. repoInfo . repoId)
             (commitInfo ^. commit)
             branch
+    let onBranch supersedes =
+          case commitInfo ^. branch of
+            Just branch' -> onLine (BranchLine (commitInfo ^. repoInfo . repoId) branch') (commitInfo ^. commit) supersedes
+            Nothing -> identity
     case (allowDuplicateRun, pushResult) of
       (False, Just DB.AlreadyPushed) -> do
         log Informational "handleCommit: This repoOwner, repoName, commit, branch combination has already been pushed before. Skipping build"
@@ -100,10 +106,32 @@ handleCommit reporter allowDuplicateRun commitInfo = do
       (False, Nothing) -> do
         log Informational "handleCommit: CommitInfo is missing branch, but allowDuplicateRun is set. Skipping build"
         emptyPromise
-      (False, Just DB.NewPush) -> do
-        buildFlake reporter commitInfo <?> "Build flake"
+      -- Only a commit newly pushed to the branch supersedes the branch's
+      -- other runs: one asked to be built again may well be an old one.
+      (_, Just DB.NewPush) -> do
+        onBranch True (buildFlake reporter commitInfo) <?> "Build flake"
+      -- The commit was superseded before it was built. Either the branch is
+      -- back on it, or this is a late duplicate of the event that first
+      -- pushed it, which must not supersede what came after.
+      (False, Just DB.SupersededPush) ->
+        backOnSupersededCommit >>= \case
+          True -> onBranch True (buildFlake reporter commitInfo) <?> "Build flake"
+          False -> do
+            log Informational "handleCommit: the commit was superseded and is not the head of the branch. Skipping build"
+            emptyPromise
       (True, _) -> do
-        buildFlake reporter commitInfo <?> "Build flake"
+        onBranch False (buildFlake reporter commitInfo) <?> "Build flake"
+  where
+    backOnSupersededCommit = case commitInfo ^. branch of
+      Nothing -> pure False
+      Just branch' -> do
+        let repo = commitInfo ^. repoInfo . repoId
+        isHead <-
+          ((== commitInfo ^. commit) <$> getHeadCommit (commitInfo ^. repoInfo . ghToken) repo branch')
+            `catchError` (\e -> logError e $> False)
+        if isHead
+          then DB.claimSupersededPush repo (commitInfo ^. commit) branch'
+          else pure False
 
 handleRerun :: (HasCallStack) => RerunEvent -> M ()
 handleRerun ev = do

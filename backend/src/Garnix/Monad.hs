@@ -52,6 +52,7 @@ import Garnix.Nix.Types (StoreHash)
 import Garnix.Nix.Types qualified as Nix
 import Garnix.Prelude
 import Garnix.RateLimit (RateLimiter)
+import Garnix.Supersede.Types (BuildProgress, LineRun, Supersession)
 import Garnix.Types hiding (ghRunId, statusCode)
 import GitHub qualified as GH
 import GitHub.App.Auth (InstallationAuth)
@@ -191,7 +192,15 @@ data Env = Env
     serviceMemoryBudget :: Memory,
     -- | The nix-eval-jobs run for the commit being built, if any. Set with
     -- 'local' while a flake builds; 'Nothing' everywhere else.
-    evalBatch :: Maybe BatchRun
+    evalBatch :: Maybe BatchRun,
+    -- | The runs in flight on each branch and pull request, so that a newer
+    -- commit can cancel what is left of the older ones. See "Garnix.Supersede".
+    supersession :: Supersession,
+    -- | The run of the commit being built, if it is on a line. Set with
+    -- 'local' while a flake builds.
+    lineRun :: Maybe LineRun,
+    -- | Where the build being run is. Set with 'local' while a build runs.
+    buildProgress :: Maybe BuildProgress
   }
   deriving stock (Generic)
 
@@ -347,7 +356,9 @@ data EnvMocks = EnvMocks
     rebuildFodMock :: Maybe (Mock (System, Nix.DrvPath) (Either Text Text)),
     -- | Mocks the raw nix-eval-jobs invocation: maps the jobset expression to
     -- the raw JSONL stdout. Keeps 'EnvMocks' free of BatchEval types.
-    evalJobsMock :: Maybe (Mock Text ByteString)
+    evalJobsMock :: Maybe (Mock Text ByteString),
+    -- | Mocks the @nix build@ of a build's drvPath, once it holds a build slot.
+    nixBuildMock :: Maybe (Mock (Build, Nix.DrvPath) Status)
   }
   deriving (Generic)
 
@@ -363,7 +374,8 @@ emptyMocks =
       s3CacheUploadMock = Nothing,
       fodCheckMock = Nothing,
       rebuildFodMock = Nothing,
-      evalJobsMock = Nothing
+      evalJobsMock = Nothing,
+      nixBuildMock = Nothing
     }
 
 data Mock arg result = Mock

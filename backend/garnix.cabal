@@ -132,6 +132,8 @@ library
       Garnix.S3Cache
       Garnix.SafeUnix
       Garnix.Sandbox
+      Garnix.Supersede
+      Garnix.Supersede.Types
       Garnix.Sweep
       Garnix.Types
       Garnix.Types.ExternalLenses
@@ -758,6 +760,7 @@ test-suite spec
       Garnix.Build.ModuleSpec
       Garnix.Build.NixBuildPoolSpec
       Garnix.Build.PrCommentSpec
+      Garnix.Build.SupersedeSpec
       Garnix.BuildSpec
       Garnix.DB.FeatureFlagsSpec
       Garnix.DB.HostingSpec
@@ -924,6 +927,8 @@ test-suite spec
       Garnix.S3Cache
       Garnix.SafeUnix
       Garnix.Sandbox
+      Garnix.Supersede
+      Garnix.Supersede.Types
       Garnix.Sweep
       Garnix.Types
       Garnix.Types.ExternalLenses

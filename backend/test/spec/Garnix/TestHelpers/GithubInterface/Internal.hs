@@ -174,14 +174,6 @@ mkFakeGithubInterface = do
                   <> "/"
                   <> getGhRepoName repoName
               Just repo -> do
-                when (repo ^. #defaultBranch /= Just branch)
-                  $ throw
-                  $ OtherError
-                  $ "fakeGithubInterface/getHeadCommit: can only get head commit for default branch ("
-                  <> show (repo ^. #defaultBranch)
-                  <> ") but got "
-                  <> show branch
-
                 case repo ^. #localPath of
                   Nothing -> throw $ OtherError "fakeGithubInterface/getHeadCommit: can only get head commit for local repos (localPath must be set up)"
                   Just path -> do

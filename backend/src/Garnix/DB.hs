@@ -553,7 +553,12 @@ getLatestBuildsForBranch (RepoId forge' owner name) branch = do
       AND repo_is_public = TRUE
   |]
 
-data RegisterPushResult = NewPush | AlreadyPushed
+data RegisterPushResult
+  = NewPush
+  | AlreadyPushed
+  | -- | Pushed before, but its run gave up its work to a newer commit on the
+    -- branch. See 'markPushSuperseded'.
+    SupersededPush
   deriving stock (Eq, Show, Generic)
 
 registerPush :: RepoId -> CommitHash -> Branch -> M RegisterPushResult
@@ -578,9 +583,55 @@ registerPush (RepoId forge' repoOwner repoName) commit branch = do
       RETURNING True
     |]
     >>= \case
-      [] -> pure AlreadyPushed
       [_ :: Maybe Bool] -> pure NewPush
+      [] ->
+        pgQuery
+          [pgSQL|
+            SELECT superseded_at IS NOT NULL
+            FROM pushes
+            WHERE forge = ${forge'}
+              AND repo_user = ${repoOwner}
+              AND repo_name = ${repoName}
+              AND git_commit = ${commit}
+              AND branch = ${branch}
+          |]
+          <&> \case
+            [Just True] -> SupersededPush
+            _ -> AlreadyPushed
       _ -> throw $ OtherError "Impossible: more than one result"
+
+-- | Marks the push as one whose run gave up its work to a newer commit on
+-- the branch: the commit is not built, though it was pushed.
+markPushSuperseded :: RepoId -> CommitHash -> Branch -> M ()
+markPushSuperseded (RepoId forge' repoOwner repoName) commit branch =
+  void
+    $ pgExec
+      [pgSQL|
+        UPDATE pushes
+        SET superseded_at = now()
+        WHERE forge = ${forge'}
+          AND repo_user = ${repoOwner}
+          AND repo_name = ${repoName}
+          AND git_commit = ${commit}
+          AND branch = ${branch}
+      |]
+
+-- | Takes the mark of 'markPushSuperseded' back, to build the commit again.
+-- 'False' when it was not there: another event for the same push took it.
+claimSupersededPush :: RepoId -> CommitHash -> Branch -> M Bool
+claimSupersededPush (RepoId forge' repoOwner repoName) commit branch =
+  (== 1)
+    <$> pgExec
+      [pgSQL|
+        UPDATE pushes
+        SET superseded_at = NULL
+        WHERE forge = ${forge'}
+          AND repo_user = ${repoOwner}
+          AND repo_name = ${repoName}
+          AND git_commit = ${commit}
+          AND branch = ${branch}
+          AND superseded_at IS NOT NULL
+      |]
 
 getCommitsByOwnerAndRepo :: RepoId -> M [CommitSummary]
 getCommitsByOwnerAndRepo (RepoId repoForge repoOwner repoName) = do

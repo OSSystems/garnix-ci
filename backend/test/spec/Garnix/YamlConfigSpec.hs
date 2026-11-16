@@ -177,6 +177,31 @@ spec = do
         let actual = (^. incrementalizeBuildsSection) <$> decodeConfig config
         actual `shouldBe` Right (IncrementalBuildsExcludeBranches (ExcludeBranches ["main"]))
 
+    describe "cancelSuperseded" $ do
+      let parse :: Text -> Either String (Maybe CancelSuperseded)
+          parse config = (^. cancelSuperseded) <$> decodeConfig (cs config)
+
+      it "is unset by default" $ do
+        parse "{}" `shouldBe` Right Nothing
+
+      it "parses the boolean values" $ do
+        parse "cancelSuperseded: true" `shouldBe` Right (Just (CancelSuperseded True))
+        parse "cancelSuperseded: false" `shouldBe` Right (Just (CancelSuperseded False))
+
+      it "parses the branches to build every commit of" $ do
+        let config =
+              cs
+                [i|
+                  cancelSuperseded:
+                    excludeBranches:
+                      - main
+                      - release
+                |]
+        parse config `shouldBe` Right (Just (CancelSupersededExceptOn (ExcludeBranches ["main", "release"])))
+
+      it "rejects anything else" $ do
+        parse "cancelSuperseded: sometimes" `shouldSatisfy` isLeft
+
     describe "server section" $ do
       let roundtripTest :: (Show a, Eq a, HasCodec a) => a -> IO ()
           roundtripTest a = do
