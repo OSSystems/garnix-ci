@@ -14,6 +14,7 @@ import Garnix.Build.Helpers
 import Garnix.Build.MetaCheck qualified as MetaCheck
 import Garnix.Build.Package (doBuild)
 import Garnix.Build.Reporting
+import Garnix.BuildLogs.Types (mkLogLine)
 import Garnix.DB qualified as DB
 import Garnix.GetAttributes
 import Garnix.Hosting.Deploy (rolloutNewServerVersion)
@@ -23,8 +24,9 @@ import Garnix.Modules qualified as Modules
 import Garnix.Monad
 import Garnix.Monad.Async (joinAll, joinAll_, resolve, spawn)
 import Garnix.Prelude
+import Garnix.Supersede (cancellableUntil, isCancelling, knowBuilds, supersededMessage, watchSupersession)
 import Garnix.Types as Types
-import Garnix.YamlConfig (Action, ExcludeBranches (..), GarnixConfig, IncrementalizeBuildsSection (..), commentOnFailure, flakeDir, incrementalizeBuildsSection)
+import Garnix.YamlConfig (Action, ExcludeBranches (..), GarnixConfig, IncrementalizeBuildsSection (..), cancelSuperseded, commentOnFailure, flakeDir, incrementalizeBuildsSection)
 
 runBuildFlake :: (HasCallStack) => Reporter -> BuildKind -> CommitInfo -> Remote -> M ()
 runBuildFlake reporter buildKind commitInfo withCheckout = do
@@ -48,82 +50,105 @@ runBuildFlake reporter buildKind commitInfo withCheckout = do
                   then MetaCheck.CommentOnFailure
                   else MetaCheck.NoComment
           liftIO $ writeIORef commentPolicy policy
-          withAuthorization (config ^. flakeDir) repoConfig commitInfo $ do
-            initialBuilds <- setupBuilds reporter commitInfo config
-            initialActions <- setupActions reporter commitInfo config
-            updatedBuild <-
-              liftIO getCurrentTime <&> \now ->
-                startingBuild
-                  & status ?~ Success
-                  & endTime ?~ now
-            DB.setCommitStatus (commitInfo ^. repoInfo . repoId) (commitInfo ^. commit) Evaluated
-            reportBuildResult startingBuildRunReporter updatedBuild
+          watchSupersession commitInfo (config ^. cancelSuperseded) $ do
+            outcome <- cancellableUntil $ \startBuilds ->
+              withAuthorization (config ^. flakeDir) repoConfig commitInfo $ do
+                attributes <- attributesToBuild commitInfo config
+                -- Past this point, the run's builds are cancelled one by one.
+                startBuilds
+                initialBuilds <- forM attributes $ setupBuild reporter config commitInfo
+                initialActions <- setupActions reporter commitInfo config
+                knowBuilds (length initialBuilds + length initialActions)
+                updatedBuild <-
+                  liftIO getCurrentTime <&> \now ->
+                    startingBuild
+                      & status ?~ Success
+                      & endTime ?~ now
+                DB.setCommitStatus (commitInfo ^. repoInfo . repoId) (commitInfo ^. commit) Evaluated
+                reportBuildResult startingBuildRunReporter updatedBuild
+                runBuilds config repoConfig policy metaCheckRun initialBuilds initialActions
+            case outcome of
+              Right () -> pure ()
+              Left by -> do
+                reportLogs startingBuildRunReporter $ mkLogLine $ supersededMessage by
+                cancelledBuild <-
+                  liftIO getCurrentTime <&> \now ->
+                    startingBuild
+                      & status ?~ Cancelled
+                      & endTime ?~ now
+                reportBuildResult startingBuildRunReporter cancelledBuild
+                DB.setCommitStatus (commitInfo ^. repoInfo . repoId) (commitInfo ^. commit) Evaluated
+                MetaCheck.updateCancelled commitInfo metaCheckRun
+  where
+    runBuilds config repoConfig policy metaCheckRun initialBuilds initialActions =
+      withBatchEval repoConfig commitInfo (config ^. flakeDir) (map fst initialBuilds) $ FodCheck.withFodChecker reporter commitInfo $ \fodChecker -> do
+        buildPromises <- forM initialBuilds $ \(initialBuild, runReporter) -> do
+          spawn $ doBuild fodChecker runReporter buildKind (config ^. flakeDir) repoConfig initialBuild
+        actionPromises <- forM initialActions $ \(initialBuild, runReporter, actionConfig) -> do
+          spawn
+            $ buildAndRunAction
+              reporter
+              fodChecker
+              runReporter
+              commitInfo
+              buildKind
+              (config ^. flakeDir)
+              repoConfig
+              initialBuild
+              actionConfig
+        builds <- joinAll buildPromises >>= resolve
+        joinAll_ actionPromises >>= resolve
 
-            withBatchEval repoConfig commitInfo (config ^. flakeDir) (map fst initialBuilds) $ FodCheck.withFodChecker reporter commitInfo $ \fodChecker -> do
-              buildPromises <- forM initialBuilds $ \(initialBuild, runReporter) -> do
-                spawn $ doBuild fodChecker runReporter buildKind (config ^. flakeDir) repoConfig initialBuild
-              actionPromises <- forM initialActions $ \(initialBuild, runReporter, actionConfig) -> do
-                spawn
-                  $ buildAndRunAction
-                    reporter
-                    fodChecker
-                    runReporter
-                    commitInfo
-                    buildKind
-                    (config ^. flakeDir)
-                    repoConfig
-                    initialBuild
-                    actionConfig
-              builds <- joinAll buildPromises >>= resolve
-              joinAll_ actionPromises >>= resolve
+        let allBuildsSucceeded = all (\build -> build ^. status == Just Success) builds
 
-              let allBuildsSucceeded = all (\build -> build ^. status == Just Success) builds
+        isCancelling >>= \case
+          -- The newer commit publishes and deploys, and has the verdict.
+          Just _
+            | allBuildsSucceeded -> MetaCheck.updateSuccess commitInfo metaCheckRun
+            | otherwise -> MetaCheck.updateCancelled commitInfo metaCheckRun
+          Nothing -> do
+            when allBuildsSucceeded $ do
+              Modules.publish reporter config commitInfo
 
-              when allBuildsSucceeded $ do
-                Modules.publish reporter config commitInfo
+            deployments <- case (commitInfo ^. prFromFork, commitInfo ^. branch) of
+              (Nothing, Just branch') ->
+                if allBuildsSucceeded
+                  then rolloutNewServerVersion reporter commitInfo (BranchDeployment branch')
+                  else pure []
+              (Just _, Nothing) -> do
+                -- A fork PR's code would run on a guest holding this repo's
+                -- deploy key, so it never gets one.
+                log Notice "PR is from a fork; not deploying servers"
+                pure []
+              _ -> do
+                log Critical "Commit has neither, or both, of a branch and a fork; not deploying servers"
+                pure []
 
-              deployments <- case (commitInfo ^. prFromFork, commitInfo ^. branch) of
-                (Nothing, Just branch') ->
-                  if allBuildsSucceeded
-                    then rolloutNewServerVersion reporter commitInfo (BranchDeployment branch')
-                    else pure []
-                (Just _, Nothing) -> do
-                  -- A fork PR's code would run on a guest holding this repo's
-                  -- deploy key, so it never gets one.
-                  log Notice "PR is from a fork; not deploying servers"
-                  pure []
-                _ -> do
-                  log Critical "Commit has neither, or both, of a branch and a fork; not deploying servers"
-                  pure []
+            let allDeploymentsSucceeded =
+                  all
+                    ( \server ->
+                        isJust (_serverInfoReadyAt server)
+                          && isNothing (_serverInfoEndedAt server)
+                    )
+                    deployments
 
-              let allDeploymentsSucceeded =
-                    all
-                      ( \server ->
-                          isJust (_serverInfoReadyAt server)
-                            && isNothing (_serverInfoEndedAt server)
-                      )
-                      deployments
+            if allBuildsSucceeded && allDeploymentsSucceeded
+              then MetaCheck.updateSuccess commitInfo metaCheckRun
+              else MetaCheck.updateFail policy commitInfo metaCheckRun Nothing
 
-              if allBuildsSucceeded && allDeploymentsSucceeded
-                then MetaCheck.updateSuccess commitInfo metaCheckRun
-                else MetaCheck.updateFail policy commitInfo metaCheckRun Nothing
-
-setupBuilds :: Reporter -> CommitInfo -> GarnixConfig -> M [(Build, RunReporter)]
-setupBuilds reporter commitInfo config = do
-  toBuild <- do
-    attributes <- getAttributesToBuild commitInfo config
-    maxPackages <- liftIO Limits.maxPackagesPerFlake
-    when (length attributes > fromIntegral maxPackages) $ do
-      throw
-        $ OtherError
-        $ "Number of packages too large. Maximum is "
-        <> show maxPackages
-        <> ", you have "
-        <> show (length attributes)
-    pure attributes
-  log Informational $ "Will build the following attributes: " <> show toBuild
-  forM toBuild $ \attr -> do
-    setupBuild reporter config commitInfo attr
+attributesToBuild :: CommitInfo -> GarnixConfig -> M [Attribute]
+attributesToBuild commitInfo config = do
+  attributes <- getAttributesToBuild commitInfo config
+  maxPackages <- liftIO Limits.maxPackagesPerFlake
+  when (length attributes > fromIntegral maxPackages) $ do
+    throw
+      $ OtherError
+      $ "Number of packages too large. Maximum is "
+      <> show maxPackages
+      <> ", you have "
+      <> show (length attributes)
+  log Informational $ "Will build the following attributes: " <> show attributes
+  pure attributes
 
 setupActions :: Reporter -> CommitInfo -> GarnixConfig -> M [(Build, RunReporter, Action)]
 setupActions reporter commitInfo config = do
@@ -145,7 +170,9 @@ buildAndRunAction ::
   M ()
 buildAndRunAction reporter fodChecker runReporter commitInfo buildKind flakeDir repoConfig initialBuild actionConfig = do
   build <- doBuild fodChecker runReporter buildKind flakeDir repoConfig initialBuild
-  Action.run flakeDir repoConfig reporter commitInfo (attribute build) actionConfig build
+  isCancelling >>= \case
+    Just _ -> log Informational "superseded; not running the action"
+    Nothing -> Action.run flakeDir repoConfig reporter commitInfo (attribute build) actionConfig build
 
 newBuild :: Reporter -> CommitInfo -> PackageInfo -> Bool -> M (Build, RunReporter)
 newBuild reporter commitInfo packageInfo wantsIncrementalism = withSpan packageInfo $ do

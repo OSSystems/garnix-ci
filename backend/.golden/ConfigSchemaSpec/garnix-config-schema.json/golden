@@ -96,6 +96,30 @@
                         }
                     ]
                 },
+                "cancelSuperseded": {
+                    "$comment": "Whether to stop building a commit once a newer commit is pushed to the same branch, or to the same pull request from a fork. Its evaluation and the builds that have not started are cancelled, and their checks reported as cancelled. A build that is already running carries on while it builds something the newer commit needs too. `true` cancels on every branch, `false` builds every commit to the end, and `excludeBranches` lists the branches whose commits are always built to the end. Unset, superseded commits are cancelled on every branch but the repository's default branch.",
+                    "oneOf": [
+                        {
+                            "type": "boolean"
+                        },
+                        {
+                            "$comment": "CancelSupersededExcludeBranches",
+                            "properties": {
+                                "excludeBranches": {
+                                    "$comment": "Branches whose commits are always built to the end",
+                                    "items": {
+                                        "type": "string"
+                                    },
+                                    "type": "array"
+                                }
+                            },
+                            "required": [
+                                "excludeBranches"
+                            ],
+                            "type": "object"
+                        }
+                    ]
+                },
                 "commentOnFailure": {
                     "$comment": "Whether to post a comment on the pull request when the garnix checks for a commit fail. Requires the garnix app to have write access to pull requests.",
                     "type": "boolean"

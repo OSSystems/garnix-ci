@@ -536,6 +536,18 @@ in
       '';
     };
 
+    cancelSuperseded = lib.mkOption {
+      type = lib.types.bool;
+      default = true;
+      description = ''
+        Whether a commit pushed to a branch, or to a pull request from a fork, cancels
+        what is left of the older commits there: their evaluation, and the builds that
+        have not started. Each repository still decides with `cancelSuperseded` in its
+        garnix.yaml, which is off on its default branch unless set. When false, no
+        superseded commit is cancelled, whatever the repositories ask for.
+      '';
+    };
+
     acmeEmail = lib.mkOption {
       type = lib.types.nullOr lib.types.str;
       default = null;
@@ -983,6 +995,7 @@ in
         ) "GARNIX_SESSION_LIFETIME=${toString cfg.sessionLifetimeSeconds}"
         ++ lib.optional (cfg.githubCheckLogs != null) "GARNIX_GITHUB_CHECK_LOGS=${cfg.githubCheckLogs}"
         ++ lib.optional (cfg.evalStrategy != null) "GARNIX_EVAL_STRATEGY=${cfg.evalStrategy}"
+        ++ lib.optional (!cfg.cancelSuperseded) "GARNIX_CANCEL_SUPERSEDED=false"
         ++ lib.optional (
           cfg.evalMemory.defaultGigabytes != null
         ) "GARNIX_DEFAULT_EVAL_MEMORY_GB=${toString cfg.evalMemory.defaultGigabytes}"

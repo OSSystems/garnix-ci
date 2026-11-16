@@ -50,6 +50,7 @@ import Garnix.Nix.DrvRoot (removeStaleDrvRoots)
 import Garnix.NixConfig (defaultNixConfig, githubAccessTokenNixConfig)
 import Garnix.Prelude
 import Garnix.S3Cache (runCacheMaintenance)
+import Garnix.Supersede (newSupersession)
 import Garnix.Sweep (heartbeat, sweepOrphans)
 import Garnix.Types
 import Garnix.UserLogs
@@ -505,6 +506,9 @@ withEnv testFeatures buildLogsDir buildLogsReportingPort action = do
   -- while small self-hosted ones set it near their builder's core count.
   nixBuildPoolSize <- Garnix.Monad.Pool.poolSizeFromEnv "GARNIX_NIX_BUILD_POOL_SIZE" 50
   nixBuildPool <- Garnix.Monad.Pool.newPool nixBuildPoolSize metrics #nixBuildQueueWaitTime #nixBuildQueueLen
+  -- Repositories still decide with cancelSuperseded; off, no repository's
+  -- superseded commits are cancelled.
+  supersession <- newSupersession =<< lookupEnvBool "GARNIX_CANCEL_SUPERSEDED" True
   withDefaultLogger $ \defaultLogger -> do
     let env =
           Env
@@ -583,7 +587,10 @@ withEnv testFeatures buildLogsDir buildLogsReportingPort action = do
               nixBuildPool,
               evalStrategy,
               serviceMemoryBudget,
-              evalBatch = Nothing
+              evalBatch = Nothing,
+              supersession,
+              lineRun = Nothing,
+              buildProgress = Nothing
             }
     env <- pure $ env & #forges %~ (<> Map.fromList otherForges)
     action env

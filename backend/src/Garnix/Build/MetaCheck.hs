@@ -8,6 +8,7 @@ module Garnix.Build.MetaCheck
     failAbandoned,
     updateFail,
     updateSuccess,
+    updateCancelled,
   )
 where
 
@@ -93,6 +94,15 @@ updateFail commentPolicy commitInfo metaCheckRun e = do
       case commentPolicy of
         CommentOnFailure -> PrComment.commentOnFailure commitInfo
         NoComment -> pure ()
+    else settle commitInfo metaCheckRun
+
+-- | For a run that gave up its work to a newer commit. That is no failure of
+-- the commit, so it gets no comment either.
+updateCancelled :: CommitInfo -> MetaCheckRun -> M ()
+updateCancelled commitInfo metaCheckRun = do
+  updated <- setOwnVerdict commitInfo metaCheckRun CheckFail
+  if updated
+    then complete commitInfo metaCheckRun RunReportStatusCancelled
     else settle commitInfo metaCheckRun
 
 updateSuccess :: CommitInfo -> MetaCheckRun -> M ()

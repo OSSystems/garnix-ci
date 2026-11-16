@@ -29,6 +29,7 @@ import Garnix.NixConfig (addNixConfigEnvironment)
 import Garnix.Prelude
 import Garnix.S3Cache qualified as S3Cache
 import Garnix.Sandbox
+import Garnix.Supersede (buildActivityStarted, buildActivityStopped, buildEvaluated, cancellableBuild, startedBuilding, supersededMessage)
 import Garnix.Types as Types
 import System.Random (randomIO)
 
@@ -54,11 +55,28 @@ doBuild fodChecker runReporter buildKind flakeDir repoConfig initialBuild = do
 
     runBuild :: M Build
     runBuild = do
-      build <- buildPkg fodChecker runReporter buildKind flakeDir repoConfig initialBuild <?> "Starting build"
-      persistence <- getPersistenceName flakeDir build
-      let updatedBuild = build & persistenceName .~ persistence
-      reportBuildResult runReporter updatedBuild <?> "Reporting final build result"
-      pure updatedBuild
+      outcome <-
+        cancellableBuild
+          $ abortOnCancellation initialBuild
+          $ buildPkg fodChecker runReporter buildKind flakeDir repoConfig initialBuild
+          <?> "Starting build"
+      case outcome of
+        Right (Right build) -> do
+          persistence <- getPersistenceName flakeDir build
+          let updatedBuild = build & persistenceName .~ persistence
+          reportBuildResult runReporter updatedBuild <?> "Reporting final build result"
+          pure updatedBuild
+        Right (Left ()) -> returnCancelledBuild
+        Left by -> do
+          reportLogs runReporter $ mkLogLine $ supersededMessage by
+          returnCancelledBuild
+
+    returnCancelledBuild :: M Build
+    returnCancelledBuild = do
+      now <- liftIO getCurrentTime
+      let build = initialBuild & status ?~ Cancelled & endTime ?~ now
+      reportBuildResult runReporter build
+      pure build
 
 getPersistenceName :: FlakeDir -> Build -> M (Maybe Text)
 getPersistenceName flakeDir b = do
@@ -171,6 +189,7 @@ buildPkg = curry6
     attr <- localAttr flakeDir . addNixosExtension . attribute $ build
     workingDir <- view #workingDir
     evalRes <- evaluateAttribute repoConfig cacheDir workingDir build attr
+    buildEvaluated $ either (const Nothing) (Just . view #derivation) evalRes
     case evalRes of
       Right evaluationResult -> do
         let drvPath' = evaluationResult ^. #derivation
@@ -185,17 +204,12 @@ buildPkg = curry6
                 & status ?~ Success
                 & alreadyBuilt ?~ True
             else do
-              let builder = runNixBuild runReporter cacheDir workingDir build drvPath'
-              status' <- withAsync builder $ \q -> do
-                abortOnCancellation build q
+              status' <- runNixBuild runReporter cacheDir workingDir build drvPath'
               log Informational "buildPkg: build finished, checking status"
               forkM $ do
                 S3Cache.upload runReporter (buildRepoId build) evaluationResult (build ^. repoIsPublic)
                 DB.setBuildUploaded (build ^. id)
-              case status' of
-                Failure -> log Warning "build failed"
-                Cancelled -> log Notice "build cancelled"
-                _ -> pure ()
+              when (status' == Failure) $ log Warning "build failed"
               pure $ build
                 & status ?~ status'
                 & alreadyBuilt ?~ False
@@ -277,34 +291,40 @@ buildPkg = curry6
             reportLogs runReporter $ mkLogLine "failed parsing nix outputs: too many results"
             pure build
 
-abortOnCancellation :: Build -> Async (Either ErrorWithContext Status) -> M Status
-abortOnCancellation build builder = do
-  let go = do
-        b <- DB.getBuild $ build ^. id
-        case b ^. status of
-          Just Cancelled -> pure ()
-          _ -> threadDelay (fromSeconds @Int 30) >> go
-  withAsync go $ \isCancelled -> do
-    result <- waitEither builder isCancelled
-    pure $ case result of
-      Left status -> status
-      Right _ -> Cancelled
+-- | Runs @action@ until the build is cancelled in the DB, e.g. through the
+-- API: then 'Left'. That includes its evaluation and its wait for a slot.
+abortOnCancellation :: Build -> M a -> M (Either () a)
+abortOnCancellation build action = race isCancelled action
+  where
+    isCancelled = do
+      b <- DB.getBuild $ build ^. id
+      case b ^. status of
+        Just Cancelled -> pure ()
+        _ -> threadDelay (fromSeconds @Int 30) >> isCancelled
 
 runNixBuild :: RunReporter -> String -> FilePath -> Build -> DrvPath -> M Status
-runNixBuild runReporter cacheDir workingDir build drvPath = do
+runNixBuild runReporter cacheDir workingDir build drvPath =
+  -- Acquire a build slot *outside* the timeout: a backlogged build waits here
+  -- untimed, and only starts its build-timeout clock once it can actually run.
+  -- Keyed by repo owner for the same round-robin fairness as the eval pool.
+  withPoolM nixBuildPool (build ^. repoUser) $ do
+    startedBuilding
+    runNixBuildInSlot runReporter cacheDir workingDir (build, drvPath)
+
+runNixBuildInSlot :: RunReporter -> String -> FilePath -> (Build, DrvPath) -> M Status
+runNixBuildInSlot runReporter cacheDir workingDir = mockable #nixBuildMock $ \(build, drvPath) -> do
   nixConfig <- view #userNixConfig
   log Informational $ "runNixBuild: using nixConfig '" <> show nixConfig <> "'"
-  processor <- buildInternalLogProcessor (reportLogs runReporter) <$> mkInternalLogProcessorState <?> "runNixBuild: buildInternalLogProcessor"
+  processor <-
+    buildInternalLogProcessor (reportLogs runReporter) buildActivityStarted buildActivityStopped
+      <$> mkInternalLogProcessorState
+      <?> "runNixBuild: buildInternalLogProcessor"
   -- This is a unique ID for the outlink (which is stored in the working dir) so
   -- that nothing gets garbage collected until the working dir is.
   uuid :: UUID <- randomIO
   buildTimeoutDuration <- liftIO Limits.buildTimeout
-  -- Acquire a build slot *outside* the timeout: a backlogged build waits here
-  -- untimed, and only starts its build-timeout clock once it can actually run.
-  -- Keyed by repo owner for the same round-robin fairness as the eval pool.
   mExitCode <-
-    withPoolM nixBuildPool (build ^. repoUser)
-      $ withTextSpan ("phase", "build")
+    withTextSpan ("phase", "build")
       $ withUtf8LinesStream processor
       $ \logHandle ->
         timeout buildTimeoutDuration

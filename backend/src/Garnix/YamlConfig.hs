@@ -11,6 +11,7 @@ module Garnix.YamlConfig
     withRepoContents,
     AttributeMatcher (..),
     BuildSection (..),
+    CancelSuperseded (..),
     DeploySection (OnBranch, OnPullRequest),
     ExcludeBranches (..),
     GarnixConfig,
@@ -22,6 +23,7 @@ module Garnix.YamlConfig
     asAttributeMatcher,
     branchSection,
     buildSections,
+    cancelSuperseded,
     configuration,
     decodeConfig,
     deploySection,
@@ -227,6 +229,32 @@ instance HasCodec IncrementalizeBuildsSection where
 instance Default IncrementalizeBuildsSection where
   def = IncrementalizeBuilds False
 
+-- | Whether what is left of a commit's evaluation and builds is cancelled
+-- once a newer commit is pushed to its branch, or to its pull request from a
+-- fork. See "Garnix.Supersede". Unset, it is on every branch but the
+-- repository's default one.
+data CancelSuperseded
+  = CancelSuperseded Bool
+  | CancelSupersededExceptOn ExcludeBranches
+  deriving stock (Eq, Show, Generic)
+
+instance HasCodec CancelSuperseded where
+  codec = dimapCodec there back $ disjointEitherCodec boolCodec exceptOn
+    where
+      exceptOn =
+        object "CancelSupersededExcludeBranches"
+          $ ExcludeBranches
+          <$> requiredField
+            "excludeBranches"
+            "Branches whose commits are always built to the end"
+          .= _excludeBranchesExcludeBranches
+      there = \case
+        Left v -> CancelSuperseded v
+        Right v -> CancelSupersededExceptOn v
+      back = \case
+        CancelSuperseded v -> Left v
+        CancelSupersededExceptOn v -> Right v
+
 -- | One entry of the @servers:@ list: which @nixosConfiguration@ to deploy,
 -- and when.
 --
@@ -376,12 +404,13 @@ data GarnixConfig = GarnixConfig
     _garnixConfigModuleSection :: ModuleSection,
     _garnixConfigFodChecks :: Bool,
     _garnixConfigCommentOnFailure :: Bool,
-    _garnixConfigFlakeDir :: FlakeDir
+    _garnixConfigFlakeDir :: FlakeDir,
+    _garnixConfigCancelSuperseded :: Maybe CancelSuperseded
   }
   deriving stock (Eq, Show, Generic)
 
 instance Default GarnixConfig where
-  def = GarnixConfig [def] def [] [] def False False (FlakeDir ".")
+  def = GarnixConfig [def] def [] [] def False False (FlakeDir ".") Nothing
 
 instance FromJSON GarnixConfig where
   parseJSON = parseJSONViaCodec
@@ -461,6 +490,21 @@ instance HasCodec GarnixConfig where
                   (FlakeDir ".")
                   "The directory containing your flake.nix relative from the repo root (if not in the repo root)."
                   .= _garnixConfigFlakeDir
+              )
+          <*> ( optionalField
+                  "cancelSuperseded"
+                  ( "Whether to stop building a commit once a newer commit is pushed "
+                      <> "to the same branch, or to the same pull request from a fork. "
+                      <> "Its evaluation and the builds that have not started are "
+                      <> "cancelled, and their checks reported as cancelled. A build "
+                      <> "that is already running carries on while it builds something "
+                      <> "the newer commit needs too. `true` cancels on every branch, "
+                      <> "`false` builds every commit to the end, and `excludeBranches` "
+                      <> "lists the branches whose commits are always built to the end. "
+                      <> "Unset, superseded commits are cancelled on every branch but "
+                      <> "the repository's default branch."
+                  )
+                  .= _garnixConfigCancelSuperseded
               )
 
 instance Loggable GarnixConfig where

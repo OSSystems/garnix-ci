@@ -44,14 +44,23 @@ data InternalLogProcessorState = InternalLogProcessorState (MVar (Map LogsIntern
 mkInternalLogProcessorState :: M InternalLogProcessorState
 mkInternalLogProcessorState = liftIO $ InternalLogProcessorState <$> newMVar mempty <*> newMVar mempty
 
-buildInternalLogProcessor :: (LogLine -> M ()) -> InternalLogProcessorState -> (String -> M ())
-buildInternalLogProcessor consumer (InternalLogProcessorState phaseById pkgsById) internalLogLine = do
+-- | Also tells @started@ and @stopped@ which derivations nix is building.
+buildInternalLogProcessor ::
+  (LogLine -> M ()) ->
+  (LogsInternal.InternalId -> Text -> M ()) ->
+  (LogsInternal.InternalId -> M ()) ->
+  InternalLogProcessorState ->
+  (String -> M ())
+buildInternalLogProcessor consumer started stopped (InternalLogProcessorState phaseById pkgsById) internalLogLine = do
   let jsonStr = BS.stripPrefix "@nix" (cs internalLogLine)
       parsedLine = case jsonStr of
         Just line -> eitherDecode' line
         Nothing -> Left $ "Expected internal log line from nix but got: " <> internalLogLine
   case parsedLine of
-    Right (LogsInternal.Start id _ (LogsInternal.Build drvPath _)) -> setPackage id $ drvPathToPkgName drvPath
+    Right (LogsInternal.Start id _ (LogsInternal.Build drvPath _)) -> do
+      setPackage id $ drvPathToPkgName drvPath
+      started id drvPath
+    Right (LogsInternal.Stop id) -> stopped id
     Right (LogsInternal.Result id (LogsInternal.SetPhase phase)) -> setPhase id phase
     Right (LogsInternal.Result id (LogsInternal.LogLine log)) -> LogLine <$> getPkgForId id <*> getPhaseForId id <*> pure log >>= consumer
     Right (LogsInternal.Msg log) -> consumer $ mkLogLine log

@@ -968,7 +968,7 @@ instance Project Text Branch where prj = cs
 instance Isomorphic Text Branch
 
 newtype GhPullRequestId = GhPullRequestId {getGhPullRequestId :: Int64}
-  deriving stock (Eq, Show)
+  deriving stock (Eq, Ord, Show)
   deriving newtype
     ( Num,
       ToJSON,
