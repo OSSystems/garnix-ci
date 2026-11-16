@@ -35,6 +35,7 @@ import Garnix.Nix.Types qualified as Nix
 import Garnix.NixConfig (addNixConfigEnvironment)
 import Garnix.Prelude hiding (Alternative)
 import Garnix.Reporters.Utils (recordRunCheckRun)
+import Garnix.Supersede (unlessCancelled)
 import Garnix.Types
 import Garnix.YamlConfig qualified as YamlConfig
 import System.Metrics.Prometheus.Metric.Histogram qualified as Prometheus
@@ -109,7 +110,8 @@ fodCheck = curry $ mockable #fodCheckMock $ \(fodChecker, drvPath) -> do
             log Critical "withFodChecker already exited"
             pure Nothing
           Just promises -> do
-            new <- spawn (runFodCheck fodChecker drvPath)
+            -- A run that gives up its work has no verdict to check FODs for.
+            new <- spawn (either (const (Right ())) identity <$> unlessCancelled (runFodCheck fodChecker drvPath))
             pure $ Just (new : promises)
 
 runFodCheck :: FodChecker -> Nix.DrvPath -> M (Either [(Nix.DrvPath, Text)] ())

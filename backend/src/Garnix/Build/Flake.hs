@@ -24,7 +24,7 @@ import Garnix.Modules qualified as Modules
 import Garnix.Monad
 import Garnix.Monad.Async (joinAll, joinAll_, resolve, spawn)
 import Garnix.Prelude
-import Garnix.Supersede (cancellableUntil, isCancelling, knowBuilds, supersededMessage, watchSupersession)
+import Garnix.Supersede (cancellableUntil, cancelledBy, knowBuilds, supersededMessage, watchSupersession)
 import Garnix.Types as Types
 import Garnix.YamlConfig (Action, ExcludeBranches (..), GarnixConfig, IncrementalizeBuildsSection (..), cancelSuperseded, commentOnFailure, flakeDir, incrementalizeBuildsSection)
 
@@ -59,24 +59,14 @@ runBuildFlake reporter buildKind commitInfo withCheckout = do
                 initialBuilds <- forM attributes $ setupBuild reporter config commitInfo
                 initialActions <- setupActions reporter commitInfo config
                 knowBuilds (length initialBuilds + length initialActions)
-                updatedBuild <-
-                  liftIO getCurrentTime <&> \now ->
-                    startingBuild
-                      & status ?~ Success
-                      & endTime ?~ now
                 DB.setCommitStatus (commitInfo ^. repoInfo . repoId) (commitInfo ^. commit) Evaluated
-                reportBuildResult startingBuildRunReporter updatedBuild
+                void $ reportBuildEnded startingBuildRunReporter Success startingBuild
                 runBuilds config repoConfig policy metaCheckRun initialBuilds initialActions
             case outcome of
               Right () -> pure ()
               Left by -> do
                 reportLogs startingBuildRunReporter $ mkLogLine $ supersededMessage by
-                cancelledBuild <-
-                  liftIO getCurrentTime <&> \now ->
-                    startingBuild
-                      & status ?~ Cancelled
-                      & endTime ?~ now
-                reportBuildResult startingBuildRunReporter cancelledBuild
+                void $ reportBuildEnded startingBuildRunReporter Cancelled startingBuild
                 DB.setCommitStatus (commitInfo ^. repoInfo . repoId) (commitInfo ^. commit) Evaluated
                 MetaCheck.updateCancelled commitInfo metaCheckRun
   where
@@ -101,7 +91,7 @@ runBuildFlake reporter buildKind commitInfo withCheckout = do
 
         let allBuildsSucceeded = all (\build -> build ^. status == Just Success) builds
 
-        isCancelling >>= \case
+        cancelledBy >>= \case
           -- The newer commit publishes and deploys, and has the verdict.
           Just _
             | allBuildsSucceeded -> MetaCheck.updateSuccess commitInfo metaCheckRun
@@ -170,7 +160,7 @@ buildAndRunAction ::
   M ()
 buildAndRunAction reporter fodChecker runReporter commitInfo buildKind flakeDir repoConfig initialBuild actionConfig = do
   build <- doBuild fodChecker runReporter buildKind flakeDir repoConfig initialBuild
-  isCancelling >>= \case
+  cancelledBy >>= \case
     Just _ -> log Informational "superseded; not running the action"
     Nothing -> Action.run flakeDir repoConfig reporter commitInfo (attribute build) actionConfig build
 

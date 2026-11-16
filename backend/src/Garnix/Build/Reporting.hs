@@ -1,6 +1,7 @@
 module Garnix.Build.Reporting
   ( reportOnError,
     reportBuildResult,
+    reportBuildEnded,
     reportNameForBuild,
   )
 where
@@ -45,6 +46,14 @@ reportBuildResult runReporter build = do
         Just Timeout -> RunReportStatusTimeout
         Just Cancelled -> RunReportStatusCancelled
   ignoringAllErrors $ reportComplete runReporter status'
+
+-- | Ends the build now with the status, and reports it.
+reportBuildEnded :: RunReporter -> Status -> Build -> M Build
+reportBuildEnded runReporter status' build = do
+  now <- liftIO getCurrentTime
+  let ended = build & status ?~ status' & endTime ?~ now
+  reportBuildResult runReporter ended
+  pure ended
 
 reportOnError :: RunReporter -> Build -> CommitInfo -> M a -> M a
 reportOnError runReporter build commitInfo io = do

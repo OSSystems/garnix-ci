@@ -2,6 +2,7 @@
 -- "Garnix.Supersede" so that 'Garnix.Monad.Env' can hold it.
 module Garnix.Supersede.Types
   ( Line (..),
+    Arrival (..),
     Supersession (..),
     LineRun (..),
     BuildProgress (..),
@@ -23,6 +24,18 @@ data Line
   = BranchLine RepoId Branch
   | PullRequestLine RepoId GhPullRequestId
   deriving stock (Eq, Ord, Show)
+
+-- | How a run of a commit comes onto its line.
+data Arrival
+  = -- | Pushed as the line's head: supersedes the line's runs of other
+    -- commits.
+    NewHead
+  | -- | Pushed, but the line's head is already the given commit, which
+    -- supersedes it from the start.
+    Behind CommitHash
+  | -- | Asked to be built again: supersedes nothing.
+    Rebuilt
+  deriving stock (Eq, Show)
 
 -- | The runs this server process has in flight, by line.
 data Supersession = Supersession

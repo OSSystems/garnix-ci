@@ -4,7 +4,9 @@
 -- from a fork) as soon as its webhook is handled, before the checkout. A run
 -- of a newly pushed commit supersedes the line's runs of other commits right
 -- then, whatever they are doing, so that a run still checking out cannot
--- miss it.
+-- miss it. Webhooks can arrive late, so when the line has runs of other
+-- commits the forge is asked which commit is its head ('arrivalOn'): a late
+-- one is superseded by the head instead of superseding it.
 --
 -- Whether a superseded run gives up its work is up to its own garnix.yaml
 -- ('Garnix.YamlConfig.CancelSuperseded'), which it only knows after the
@@ -19,16 +21,18 @@
 --     live run needs, since killing it would only make that run build it
 --     again from scratch instead of waiting for it. While the runs on its
 --     own line have not all evaluated, that is not known yet, and it carries
---     on as well.
+--     on as well, as it does while it builds no derivation at all (it
+--     starts, substitutes, or waits for a lock).
 --
 -- The state is per server process: a restart loses the runs anyway.
 module Garnix.Supersede
   ( newSupersession,
+    arrivalOn,
     onLine,
     watchSupersession,
     cancellableUntil,
     unlessCancelled,
-    isCancelling,
+    cancelledBy,
     supersededMessage,
     knowBuilds,
     cancellableBuild,
@@ -70,14 +74,33 @@ newSupersession enabled =
     <*> newTVarIO 0
     <*> newMVar (NeededClosure mempty mempty)
 
+-- | How a newly pushed commit comes onto the line. Only when the line has
+-- runs of other commits, which it would supersede, does it ask @lineHead@
+-- for the line's head. If that is not known, the commit is taken as the
+-- head.
+arrivalOn :: Line -> CommitHash -> M (Maybe CommitHash) -> M Arrival
+arrivalOn line commit' lineHead = do
+  supersession <- view #supersession
+  contended <-
+    liftIO
+      $ atomically
+      $ any ((/= commit') . lineRunCommit)
+      . Map.findWithDefault [] line
+      <$> readTVar (supersessionLines supersession)
+  if supersessionEnabled supersession && contended
+    then
+      lineHead <&> \case
+        Just head' | head' /= commit' -> Behind head'
+        _ -> NewHead
+    else pure NewHead
+
 -- | Starts a run of the commit on the line with @start@, which sees the run
 -- in 'lineRun', and keeps the run registered until the promise @start@ gives
--- resolves. A run of a newly pushed commit (@supersedes@) supersedes the
--- line's runs of other commits.
-onLine :: Line -> CommitHash -> Bool -> M (Promise a) -> M (Promise a)
-onLine line commit' supersedes start = do
+-- resolves.
+onLine :: Line -> CommitHash -> Arrival -> M (Promise a) -> M (Promise a)
+onLine line commit' arrival start = do
   supersession <- view #supersession
-  (run, superseded) <- liftIO $ register supersession line commit' supersedes
+  (run, superseded) <- liftIO $ register supersession line commit' arrival
   unless (null superseded)
     $ log Notice
     $ getCommitHash commit'
@@ -85,6 +108,9 @@ onLine line commit' supersedes start = do
     <> T.intercalate ", " (map (getCommitHash . lineRunCommit) superseded)
     <> " on "
     <> show line
+  case arrival of
+    Behind head' | supersessionEnabled supersession -> log Notice $ getCommitHash commit' <> " arrived behind the head of " <> show line <> ", " <> getCommitHash head'
+    _ -> pure ()
   let unregister = liftIO $ atomically $ modifyTVar' (supersessionLines supersession) (Map.update (without run) line)
   promise <- local (#lineRun ?~ run) start `onError` unregister
   spawn $ resolve promise `finally` unregister
@@ -93,21 +119,22 @@ onLine line commit' supersedes start = do
       [] -> Nothing
       rest -> Just rest
 
-register :: Supersession -> Line -> CommitHash -> Bool -> IO (LineRun, [LineRun])
-register supersession line commit' supersedes = do
+register :: Supersession -> Line -> CommitHash -> Arrival -> IO (LineRun, [LineRun])
+register supersession line commit' arrival = do
+  let enabled = supersessionEnabled supersession
   run <-
     LineRun
       <$> atomically (readTVar (supersessionNextRunId supersession) <* modifyTVar' (supersessionNextRunId supersession) (+ 1))
       <*> pure line
       <*> pure commit'
-      <*> newTVarIO Nothing
+      <*> newTVarIO (case arrival of Behind head' | enabled -> Just head'; _ -> Nothing)
       <*> newTVarIO Nothing
       <*> newTVarIO Nothing
       <*> newTVarIO mempty
   atomically $ do
     others <- Map.findWithDefault [] line <$> readTVar (supersessionLines supersession)
     superseded <-
-      if supersedes && supersessionEnabled supersession
+      if arrival == NewHead && enabled
         then flip filterM others $ \other ->
           if lineRunCommit other == commit'
             then pure False
@@ -123,9 +150,7 @@ register supersession line commit' supersedes = do
 -- for as long as @action@ runs.
 watchSupersession :: CommitInfo -> Maybe CancelSuperseded -> M a -> M a
 watchSupersession commitInfo policy action =
-  view #lineRun >>= \case
-    Nothing -> action
-    Just run -> withAsync (decide run) (const action)
+  withLineRun action $ \run -> withAsync (decide run) (const action)
   where
     decide run = do
       by <- liftIO $ atomically $ readTVar (lineRunSupersededBy run) >>= maybe retry pure
@@ -172,15 +197,13 @@ settledCancelling run =
     Nothing -> pure False
     Just _ -> readTVar (lineRunCancelling run) >>= maybe retry pure
 
--- | Whether the current run gives up its work. Only within
--- 'watchSupersession', which decides it.
-isCancelling :: M (Maybe CommitHash)
-isCancelling =
-  view #lineRun >>= \case
-    Nothing -> pure Nothing
-    Just run -> liftIO $ atomically $ do
-      cancels <- settledCancelling run
-      if cancels then readTVar (lineRunSupersededBy run) else pure Nothing
+-- | The commit the current run gives up its work to, if it does. Only
+-- within 'watchSupersession', which decides it.
+cancelledBy :: M (Maybe CommitHash)
+cancelledBy =
+  withLineRun (pure Nothing) $ \run -> liftIO $ atomically $ do
+    cancels <- settledCancelling run
+    if cancels then readTVar (lineRunSupersededBy run) else pure Nothing
 
 -- | Runs @action@, unless the current run gives up its work first. Then
 -- 'Left' with the commit that superseded it.
@@ -192,19 +215,17 @@ unlessCancelled action = cancellableUntil (const action)
 -- the run is cancelled there rather than after it.
 cancellableUntil :: (M () -> M a) -> M (Either CommitHash a)
 cancellableUntil action =
-  view #lineRun >>= \case
-    Nothing -> Right <$> action (pure ())
-    Just run -> do
-      committed <- liftIO $ newTVarIO False
-      let commitTo = liftIO $ atomically $ do
-            cancels <- settledCancelling run
-            when cancels retry
-            writeTVar committed True
-          cancelled = liftIO $ atomically $ do
-            by <- awaitCancelling run
-            readTVar committed >>= \c -> when c retry
-            pure by
-      race cancelled (action commitTo)
+  withLineRun (Right <$> action (pure ())) $ \run -> do
+    committed <- liftIO $ newTVarIO False
+    let commitTo = liftIO $ atomically $ do
+          cancels <- settledCancelling run
+          when cancels retry
+          writeTVar committed True
+        cancelled = liftIO $ atomically $ do
+          by <- awaitCancelling run
+          readTVar committed >>= \c -> when c retry
+          pure by
+    race cancelled (action commitTo)
 
 supersededMessage :: CommitHash -> Text
 supersededMessage by =
@@ -216,23 +237,19 @@ supersededMessage by =
 -- 'buildEvaluated'.
 knowBuilds :: Int -> M ()
 knowBuilds count =
-  view #lineRun >>= \case
-    Nothing -> pure ()
-    Just run -> liftIO $ atomically $ writeTVar (lineRunUnevaluated run) (Just count)
+  withLineRun (pure ()) $ \run -> liftIO $ atomically $ writeTVar (lineRunUnevaluated run) (Just count)
 
 -- | Runs a build of the current run, cancelled when the run gives up its
 -- work: at once while it evaluates or waits for a build slot, and once its
--- @nix build@ is no longer building anything a live run needs after that.
+-- @nix build@ builds derivations, none of which a live run needs, after that.
 cancellableBuild :: M a -> M (Either CommitHash a)
 cancellableBuild action = do
   progress <- liftIO $ BuildProgress <$> newTVarIO False <*> newTVarIO Nothing
   let action' = local (#buildProgress ?~ progress) action
-  view #lineRun >>= \case
-    Nothing -> Right <$> action'
-    Just run -> do
-      supersession <- view #supersession
-      race (cancelWhenUnneeded supersession run progress) action'
-        `finally` liftIO (atomically $ markEvaluated run progress Nothing)
+  withLineRun (Right <$> action') $ \run -> do
+    supersession <- view #supersession
+    race (cancelWhenUnneeded supersession run progress) action'
+      `finally` liftIO (atomically $ markEvaluated run progress Nothing)
 
 cancelWhenUnneeded :: Supersession -> LineRun -> BuildProgress -> M CommitHash
 cancelWhenUnneeded supersession run progress = do
@@ -241,9 +258,9 @@ cancelWhenUnneeded supersession run progress = do
   case building of
     Nothing -> pure by
     Just _ -> do
-      log Informational "superseded while its nix build runs; waiting until nothing it builds is needed"
+      log Informational "superseded while its nix build runs; waiting until it builds only what no live run needs"
       waitUntilUnneeded
-      log Informational "superseded, and nothing its nix build is building is needed any more"
+      log Informational "superseded, and its nix build builds only what no live run needs"
       pure by
   where
     snapshot :: STM (Set Nix.DrvPath, Set Text)
@@ -256,7 +273,7 @@ cancelWhenUnneeded supersession run progress = do
       seen@(drvs, active) <- liftIO $ atomically snapshot
       needed <- neededClosure supersession drvs
       case needed of
-        Just paths | all (`Set.notMember` paths) active -> pure ()
+        Just paths | not (null active), all (`Set.notMember` paths) active -> pure ()
         _ -> do
           liftIO $ atomically $ snapshot >>= \now -> when (now == seen) retry
           waitUntilUnneeded
@@ -339,6 +356,9 @@ buildActivityStarted activity drv = withProgress $ \progress ->
 buildActivityStopped :: InternalId -> M ()
 buildActivityStopped activity = withProgress $ \progress ->
   modifyTVar' (buildProgressBuilding progress) (fmap (Map.delete activity))
+
+withLineRun :: M a -> (LineRun -> M a) -> M a
+withLineRun outside inside = view #lineRun >>= maybe outside inside
 
 withProgress :: (BuildProgress -> STM ()) -> M ()
 withProgress f = view #buildProgress >>= traverse_ (liftIO . atomically . f)
