@@ -61,22 +61,15 @@ doBuild fodChecker runReporter buildKind flakeDir repoConfig initialBuild = do
           $ buildPkg fodChecker runReporter buildKind flakeDir repoConfig initialBuild
           <?> "Starting build"
       case outcome of
-        Right (Right build) -> do
+        Right (Just build) -> do
           persistence <- getPersistenceName flakeDir build
           let updatedBuild = build & persistenceName .~ persistence
           reportBuildResult runReporter updatedBuild <?> "Reporting final build result"
           pure updatedBuild
-        Right (Left ()) -> returnCancelledBuild
+        Right Nothing -> reportBuildEnded runReporter Cancelled initialBuild
         Left by -> do
           reportLogs runReporter $ mkLogLine $ supersededMessage by
-          returnCancelledBuild
-
-    returnCancelledBuild :: M Build
-    returnCancelledBuild = do
-      now <- liftIO getCurrentTime
-      let build = initialBuild & status ?~ Cancelled & endTime ?~ now
-      reportBuildResult runReporter build
-      pure build
+          reportBuildEnded runReporter Cancelled initialBuild
 
 getPersistenceName :: FlakeDir -> Build -> M (Maybe Text)
 getPersistenceName flakeDir b = do
@@ -293,8 +286,9 @@ buildPkg = curry6
 
 -- | Runs @action@ until the build is cancelled in the DB, e.g. through the
 -- API: then 'Left'. That includes its evaluation and its wait for a slot.
-abortOnCancellation :: Build -> M a -> M (Either () a)
-abortOnCancellation build action = race isCancelled action
+-- | Runs @action@, unless the build is cancelled through the API first.
+abortOnCancellation :: Build -> M a -> M (Maybe a)
+abortOnCancellation build action = either (const Nothing) Just <$> race isCancelled action
   where
     isCancelled = do
       b <- DB.getBuild $ build ^. id

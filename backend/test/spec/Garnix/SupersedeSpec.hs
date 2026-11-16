@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedRecordDot #-}
 
-module Garnix.Build.SupersedeSpec (spec) where
+module Garnix.SupersedeSpec (spec) where
 
 import Control.Concurrent (MVar, newEmptyMVar, putMVar, takeMVar, tryReadMVar)
 import Control.Concurrent.Async.Lifted (async, wait)
@@ -69,6 +69,27 @@ spec = inM . aroundM_ suppressLogsWhenPassing . beforeM_ truncateDBM $ do
         within $ push commitA >>= resolve
         (fmap (^. status) <$> pkgBuildOf user commitA) `shouldReturnM` Just (Just Success)
 
+    it "is superseded from the start when its webhook arrives after the newer commit's" $ GH.withFakeGithubInterface $ \ghState -> do
+      user <- newOwner
+      randomness <- liftIO randomIO
+      GH.withLocalRepo ghState "owner" "repo" identity defaultCommitInfo (writeFlake randomness "a" Nothing) $ \commitA -> do
+        onFeatureBranch ghState
+        commitB <- nextCommit ghState commitA (writeFlake randomness "b" Nothing)
+        builds <- blockingBuilds commitA (Just . cs)
+        withMock #nixBuildMock builds.mock $ do
+          promiseB <- push commitB
+          within $ liftIO $ takeMVar builds.bRunning
+          within $ push commitA >>= resolve
+          liftIO $ putMVar builds.releaseB ()
+          within $ resolve promiseB
+
+        buildsA <- buildsOf user commitA
+        map (\b -> (b ^. packageType, b ^. status)) buildsA `shouldBeM` [(TypeOverall, Just Cancelled)]
+        (fmap (^. status) <$> pkgBuildOf user commitB) `shouldReturnM` Just (Just Success)
+        reports <- GH.getSimpleReports ghState
+        finalStatus reports commitA "All Garnix checks" `shouldBeM` Just RunReportStatusCancelled
+        finalStatus reports commitB "All Garnix checks" `shouldBeM` Just RunReportStatusSuccess
+
     describe "under the batch strategy" $ aroundM_ (local (#evalStrategy .~ Batch)) $ do
       it "stops its nix-eval-jobs run and cancels the builds waiting on it" $ GH.withFakeGithubInterface $ \ghState -> do
         user <- newOwner
@@ -131,7 +152,7 @@ spec = inM . aroundM_ suppressLogsWhenPassing . beforeM_ truncateDBM $ do
       shared <- sharedDepDrv randomness
       GH.withLocalRepo ghState "owner" "repo" identity defaultCommitInfo (writeFlake randomness "a" Nothing) $ \commitA -> do
         onFeatureBranch ghState
-        builds <- blockingBuilds commitA (const shared)
+        builds <- blockingBuilds commitA (const (Just shared))
         commitB <- withMock #nixBuildMock builds.mock $ do
           promiseA <- push commitA
           within $ liftIO $ takeMVar builds.aRunning
@@ -152,12 +173,32 @@ spec = inM . aroundM_ suppressLogsWhenPassing . beforeM_ truncateDBM $ do
         finalStatus reports commitA "All Garnix checks" `shouldBeM` Just RunReportStatusSuccess
         finalStatus reports commitB pkgCheck `shouldBeM` Just RunReportStatusSuccess
 
+    it "keeps a running build while it builds no derivation" $ GH.withFakeGithubInterface $ \ghState -> do
+      user <- newOwner
+      randomness <- liftIO randomIO
+      GH.withLocalRepo ghState "owner" "repo" identity defaultCommitInfo (writeFlake randomness "a" Nothing) $ \commitA -> do
+        onFeatureBranch ghState
+        builds <- blockingBuilds commitA (const Nothing)
+        withMock #nixBuildMock builds.mock $ do
+          promiseA <- push commitA
+          within $ liftIO $ takeMVar builds.aRunning
+          commitB <- nextCommit ghState commitA (writeFlake randomness "b" Nothing)
+          promiseB <- push commitB
+          within $ liftIO $ takeMVar builds.bRunning
+          threadDelay (fromSeconds @Int 3)
+          liftIO (tryReadMVar builds.aKilled) `shouldReturnM` Nothing
+          liftIO $ putMVar builds.releaseA ()
+          liftIO $ putMVar builds.releaseB ()
+          within $ resolve promiseA >> resolve promiseB
+
+        (fmap (^. status) <$> pkgBuildOf user commitA) `shouldReturnM` Just (Just Success)
+
     it "kills a running build of nothing the newer commit needs" $ GH.withFakeGithubInterface $ \ghState -> do
       user <- newOwner
       randomness <- liftIO randomIO
       GH.withLocalRepo ghState "owner" "repo" identity defaultCommitInfo (writeFlake randomness "a" Nothing) $ \commitA -> do
         onFeatureBranch ghState
-        builds <- blockingBuilds commitA cs
+        builds <- blockingBuilds commitA (Just . cs)
         withMock #nixBuildMock builds.mock $ do
           promiseA <- push commitA
           within $ liftIO $ takeMVar builds.aRunning
@@ -184,7 +225,7 @@ spec = inM . aroundM_ suppressLogsWhenPassing . beforeM_ truncateDBM $ do
           randomness <- liftIO randomIO
           GH.withLocalRepo ghState "owner" "repo" identity defaultCommitInfo (writeFlake randomness "a" garnixYaml) $ \commitA -> do
             when onFeature $ onFeatureBranch ghState
-            builds <- blockingBuilds commitA cs
+            builds <- blockingBuilds commitA (Just . cs)
             withMock #nixBuildMock builds.mock $ do
               promiseA <- push commitA
               within $ liftIO $ takeMVar builds.aRunning
@@ -209,7 +250,7 @@ spec = inM . aroundM_ suppressLogsWhenPassing . beforeM_ truncateDBM $ do
         let fromFork ci = ci & branch .~ Nothing & prFromFork ?~ PrFromFork "forker/repo"
             commitA = fromFork onBranch
             pushToPr ci = handlePullRequest (reporterFor ci) ci (GhPullRequestId 7)
-        builds <- blockingBuilds commitA cs
+        builds <- blockingBuilds commitA (Just . cs)
         withMock #nixBuildMock builds.mock $ do
           promiseA <- pushToPr commitA
           within $ liftIO $ takeMVar builds.aRunning
@@ -254,10 +295,10 @@ spec = inM . aroundM_ suppressLogsWhenPassing . beforeM_ truncateDBM $ do
             let line = BranchLine (RepoId githubForge "owner" "repo") "feature"
             pending <- liftIO newEmptyMVar
             runA <- liftIO newEmptyMVar
-            _ <- onLine line (CommitHash "aaaa") True $ do
+            _ <- onLine line (CommitHash "aaaa") NewHead $ do
               view #lineRun >>= liftIO . putMVar runA
               pure $ Promise pending
-            _ <- onLine line (CommitHash "bbbb") True emptyPromise
+            _ <- onLine line (CommitHash "bbbb") NewHead emptyPromise
             by <-
               liftIO (takeMVar runA) >>= \case
                 Just run -> liftIO $ readTVarIO (lineRunSupersededBy run)
@@ -364,9 +405,9 @@ within action =
     Nothing -> liftIO $ assertFailure "timed out"
 
 -- | A @nix build@ mock under which the older commit's build runs, reporting
--- the derivation @building@ picks from its drvPath as the one it builds,
--- until it is killed or released, and the newer commit's build until it is
--- released.
+-- the derivation @building@ picks from its drvPath, if any, as the one it
+-- builds, until it is killed or released, and the newer commit's build until
+-- it is released.
 data BlockingBuilds = BlockingBuilds
   { mock :: (Build, Nix.DrvPath) -> M Status,
     aRunning :: MVar (),
@@ -376,7 +417,7 @@ data BlockingBuilds = BlockingBuilds
     releaseB :: MVar ()
   }
 
-blockingBuilds :: CommitInfo -> (Nix.DrvPath -> Text) -> M BlockingBuilds
+blockingBuilds :: CommitInfo -> (Nix.DrvPath -> Maybe Text) -> M BlockingBuilds
 blockingBuilds older building = do
   aRunning <- liftIO newEmptyMVar
   aKilled <- liftIO newEmptyMVar
@@ -385,7 +426,7 @@ blockingBuilds older building = do
   releaseB <- liftIO newEmptyMVar
   let mock (build, drv)
         | build ^. gitCommit == older ^. commit = do
-            buildActivityStarted (InternalId 1) (building drv)
+            for_ (building drv) $ buildActivityStarted (InternalId 1)
             liftIO $ putMVar aRunning ()
             (liftIO (takeMVar releaseA) $> Success) `onException` liftIO (putMVar aKilled ())
         | otherwise = do
