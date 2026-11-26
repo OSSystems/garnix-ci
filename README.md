@@ -67,6 +67,8 @@ variants.
 
 - [Hosting deployed servers](docs/hosting-selfhost.md) — `servers:` in
   `garnix.yaml`, DNS, the gateway, guest lifecycle and limits
+- [Build slots](docs/build-slots-selfhost.md) — how many checks build at
+  once, and which one goes next
 - [Monitoring](docs/monitoring-selfhost.md) — Prometheus, Grafana, loopback and
   split-machine setups
 - [OpenSearch](docs/opensearch-selfhost.md) — build logs storage
