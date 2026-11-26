@@ -722,6 +722,40 @@ in
       };
     };
 
+    maxConcurrentBuilds = lib.mkOption {
+      type = lib.types.nullOr lib.types.ints.positive;
+      default =
+        let
+          hosts = cfg.remoteBuilders.hosts;
+          slots = lib.foldl' (total: host: total + host.maxJobs) 0 hosts;
+          systemsOf = host: lib.sort lib.lessThan host.systems;
+          sameSystems = lib.all (host: systemsOf host == systemsOf (lib.head hosts)) hosts;
+        in
+        if hosts != [ ] && !config.garnix.devMode.enable && sameSystems && slots > 0 then slots else null;
+      defaultText = lib.literalMD ''
+        the sum of `maxJobs` over `remoteBuilders.hosts` when they all build
+        the same systems, `null` otherwise
+      '';
+      description = ''
+        How many checks garnix builds at once (`GARNIX_NIX_BUILD_POOL_SIZE`).
+        The others wait in garnix's queue: a freed slot goes to the next
+        repository owner in turn, and within an owner to the check that has
+        waited longest. When more checks build at once than the builders can
+        run, they wait inside Nix instead, which hands out the builders in no
+        particular order, so a commit with one check left can wait behind a
+        newer commit with many.
+
+        A check holds its slot for its whole `nix build`, including time spent
+        fetching from caches or waiting for another check that builds the same
+        dependency. Raise this if the builders sit idle while checks wait.
+
+        All systems share the one queue. With builders for different systems,
+        checks for a system with few builders could take every slot while the
+        other builders sit idle, so the default is `null` there. `null` keeps
+        the server's own default of 50.
+      '';
+    };
+
     actionRunner = {
       host = lib.mkOption {
         type = lib.types.str;
@@ -996,6 +1030,9 @@ in
         ++ lib.optional (cfg.githubCheckLogs != null) "GARNIX_GITHUB_CHECK_LOGS=${cfg.githubCheckLogs}"
         ++ lib.optional (cfg.evalStrategy != null) "GARNIX_EVAL_STRATEGY=${cfg.evalStrategy}"
         ++ lib.optional (!cfg.cancelSuperseded) "GARNIX_CANCEL_SUPERSEDED=false"
+        ++ lib.optional (
+          cfg.maxConcurrentBuilds != null
+        ) "GARNIX_NIX_BUILD_POOL_SIZE=${toString cfg.maxConcurrentBuilds}"
         ++ lib.optional (
           cfg.evalMemory.defaultGigabytes != null
         ) "GARNIX_DEFAULT_EVAL_MEMORY_GB=${toString cfg.evalMemory.defaultGigabytes}"
